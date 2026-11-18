@@ -252,10 +252,12 @@ pub(crate) fn install(send: impl Fn(bool) -> bool + 'static, held: impl Fn() + '
     let _ = (send, held);
 }
 
-/// Whether a window is guarded against closing (`Tx::guard_close`), as of the loop's last turn.
+/// macOS: whether a window holds back its close (`App::on_close_request`), as of the end of
+/// the loop's last turn. AppKit asks about a quit between turns, with no way to the windows.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 static GUARDED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) fn set_guarded(on: bool) { GUARDED.store(on, std::sync::atomic::Ordering::Relaxed); }
 
 /// Whether the event loop is inside one of its handlers, on the UI thread: a session message

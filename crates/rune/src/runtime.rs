@@ -782,8 +782,6 @@ pub struct Runtime<S: 'static> {
     pub(crate) clipboard: Option<crate::clipboard::MemoryClipboard>,
     /// A handler or `update` asked to close the window or quit (the shell takes it).
     pub shell_request: Option<Shell>,
-    /// `Tx::guard_close`: a close runs `App::on_close_request` instead of closing.
-    pub close_guard: bool,
     /// A handler or `update` asked to minimize the window (`Tx::minimize`); the shell takes it,
     /// after a show the same turn asked for (`window::Minimize`).
     pub(crate) minimize: crate::window::Minimize,
@@ -1111,7 +1109,6 @@ impl<S: 'static> Runtime<S> {
             clear_secret_request: false,
             clipboard: None,
             shell_request: None,
-            close_guard: false,
             minimize: Default::default(),
             url_requests: Vec::new(),
             open_urls_natively: false,

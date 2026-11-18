@@ -145,8 +145,8 @@ pub(crate) enum WakeEvent {
     /// with `true` the session ends now and the windows close.
     #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
     Quit(bool),
-    /// macOS: a Quit was held back because a window is guarded (`Tx::guard_close`); the
-    /// guarded windows run `App::on_close_request`.
+    /// macOS: a Quit was held back because a window is guarded (`App::on_close_request`); the
+    /// guarded windows ask.
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     QuitHeld,
     /// An assistive client asked something of a surface's accessibility tree (`crate::a11y`):
@@ -182,9 +182,9 @@ pub(crate) trait AnyHost {
     fn vanish(&mut self) {}
     /// The close about to come ends the app (`Host::close`).
     fn closing_ends_app(&mut self) {}
-    /// Whether a close or a quit runs `App::on_close_request` instead (`Tx::guard_close`).
-    fn close_guarded(&self) -> bool { false }
-    /// A macOS Quit was held back for the guarded windows: runs `App::on_close_request`.
+    /// Whether the window holds back its close now (`App::on_close_request`).
+    fn close_guarded(&mut self) -> bool { false }
+    /// A macOS Quit was held back: a guarded window asks (`App::on_close_request`).
     fn close_request(&mut self) {}
     /// Ends a tracking pop-up menu and answers waiting ones `None`, before the host drops or
     /// the loop exits.
@@ -445,7 +445,8 @@ impl ApplicationHandler<WakeEvent> for Windows {
         // putting off behind another window's.
         let now = Instant::now();
         for host in self.hosts.iter_mut().flatten() { host.turn_ends(event_loop, now); }
-        crate::quit::set_guarded(self.hosts.iter().flatten().any(|h| h.close_guarded()));
+        #[cfg(target_os = "macos")]
+        crate::quit::set_guarded(self.hosts.iter_mut().flatten().any(|h| h.close_guarded()));
         // Layer surfaces have no redraw events: keep turning while one animates (its vsync
         // paces the loop). Hosts whose only motion is an ambient loop sleep until its next step.
         let deadline = self.hosts.iter().flatten().filter_map(|host| host.wake_deadline()).min();
@@ -511,7 +512,7 @@ struct Host<S: 'static> {
     /// Its close ends the app (`Windows::window_event`): the last window of a fast-exiting app.
     ends_app: bool,
     on_close: Option<fn(&mut S, &mut Tx)>,
-    on_close_request: Option<fn(&mut S, &mut Tx)>,
+    close_guard: Option<crate::app::CloseGuard<S>>,
     /// `App::on_rest`.
     on_rest: Option<fn(&mut S, &mut Tx) -> bool>,
     on_quit: Option<fn(&mut S, &mut Tx)>,
@@ -592,7 +593,7 @@ impl<S: 'static> Host<S> {
             let _ = proxy.send_event(WakeEvent::App(slot));
         });
         let (open, keep_running, on_close, release_gpu) = (app.open, app.keep_running, app.on_close, app.release_gpu);
-        let (on_rest, on_close_request) = (app.on_rest, app.on_close_request);
+        let (on_rest, close_guard) = (app.on_rest, app.close_guard);
         let (on_reopen, on_quit, turn_scope) = (app.on_reopen, app.on_quit, app.turn_scope);
         #[cfg(target_os = "macos")]
         let present_log = args.trace.as_ref().map(|_| Arc::default());
@@ -682,7 +683,7 @@ impl<S: 'static> Host<S> {
             chores: Default::default(),
             ends_app: false,
             on_close,
-            on_close_request,
+            close_guard,
             on_rest,
             on_quit,
             turn_scope,

@@ -72,8 +72,6 @@ pub struct Tx {
     pub(crate) keep_on_screen: Vec<String>,
     pub(crate) wakes: Vec<std::time::Duration>,
     pub(crate) shell: Option<Shell>,
-    /// `Tx::guard_close`.
-    pub(crate) close_guard: Option<bool>,
     pub(crate) minimize_order: Option<std::num::NonZeroU64>,
     /// `Tx::toggle_maximized`.
     pub(crate) toggle_maximized: bool,
@@ -384,16 +382,6 @@ impl Tx {
     /// Close the window after this handler, as the close button would (`App::on_close` runs).
     pub fn close_window(&mut self) {
         self.shell = self.shell.max(Some(Shell::Close));
-    }
-
-    /// Guards the window against closing (`true`) or lets it close again (`false`). While it is
-    /// guarded, a close (the close button, ⌘W, `Tx::close_window`, `AppHandle::close`) and a
-    /// macOS Quit (⌘Q, the menu, the Dock, logout) do not happen: `App::on_close_request` runs
-    /// instead, for the app to ask about unsaved changes. To close after the answer, lift the
-    /// guard and call `Tx::close_window` in the same handler. `Tx::quit`, `AppHandle::quit` and
-    /// the end of a Windows session are not held back.
-    pub fn guard_close(&mut self, on: bool) {
-        self.close_guard = Some(on);
     }
 
     /// Quit the app after this handler, whether or not it keeps running without a window. Every

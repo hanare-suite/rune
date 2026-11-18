@@ -34,8 +34,8 @@ thread_local! {
 }
 
 extern "C" fn should_terminate(_: *mut AnyObject, _: Sel, _: *mut AnyObject) -> usize {
-    // A guarded window (`Tx::guard_close`) holds the quit back, and a logout with it: the
-    // loop runs the windows' `App::on_close_request`.
+    // A guarded window (`App::on_close_request`) holds the quit back, and a logout with it:
+    // the loop has the guarded windows ask.
     if super::GUARDED.load(std::sync::atomic::Ordering::Relaxed) {
         HELD.with_borrow(|held| if let Some(held) = held { held() });
         return TERMINATE_CANCEL;

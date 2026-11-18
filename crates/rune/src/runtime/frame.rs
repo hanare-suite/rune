@@ -213,7 +213,6 @@ impl<S: 'static> Runtime<S> {
     /// [`Self::latch_requests`] once the pick callbacks have run.
     fn latch_after_picks(&mut self, tx: &mut Tx) {
         self.shell_request = self.shell_request.max(tx.shell.take());
-        if let Some(on) = tx.close_guard.take() { self.close_guard = on; }
         if tx.minimize_order.take().is_some() { self.minimize_step(crate::window::MinimizeEvent::Asked); }
         self.titlebar.toggle_maximized |= std::mem::take(&mut tx.toggle_maximized);
         self.titlebar.toggle_full_screen |= std::mem::take(&mut tx.toggle_full_screen);

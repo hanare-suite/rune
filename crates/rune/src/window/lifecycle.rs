@@ -340,12 +340,12 @@ impl<S: 'static> Host<S> {
         }
     }
 
-    /// A guarded window (`Tx::guard_close`) stays open: `App::on_close_request` runs instead.
-    /// True when it held the close.
+    /// A guarded window stays open and asks (`App::on_close_request`). True when it held the
+    /// close.
     pub(super) fn holds_close(&mut self) -> bool {
-        if !(self.rt.close_guard && self.closes()) { return false; }
+        let Some(guard) = self.close_guard.filter(|_| self.closes()) else { return false };
+        if !guard.holds(&mut self.rt) { return false; }
         self.ends_app = false;
-        if let Some(f) = self.on_close_request { self.rt.update(f); }
         if let Some(w) = self.shown_win() { w.request_redraw(); }
         true
     }
