@@ -65,6 +65,7 @@ pub struct App<S: 'static> {
     pub(crate) standard_menus: bool,
     pub(crate) keep_running: bool,
     pub(crate) on_close: Option<fn(&mut S, &mut Tx)>,
+    pub(crate) on_close_request: Option<fn(&mut S, &mut Tx)>,
     pub(crate) on_quit: Option<fn(&mut S, &mut Tx)>,
     pub(crate) turn_scope: Option<TurnScope<S>>,
     pub(crate) on_focus: Option<fn(&mut S, bool, &mut Tx)>,
@@ -128,6 +129,7 @@ impl<S: 'static> App<S> {
             standard_menus: false,
             keep_running: false,
             on_close: None,
+            on_close_request: None,
             on_quit: None,
             turn_scope: None,
             on_focus: None,
@@ -445,6 +447,16 @@ impl<S: 'static> App<S> {
     /// Its `Tx::quit` quits.
     pub fn on_close(mut self, f: fn(&mut S, &mut Tx)) -> Self {
         self.on_close = Some(f);
+        self
+    }
+
+    /// Runs in place of a close or a macOS Quit while the window is guarded
+    /// (`Tx::guard_close(true)`): the window stays, and the app asks what it must (unsaved
+    /// changes). Lifting the guard and calling `Tx::close_window` closes it after the answer.
+    /// A quit that was held back is not taken up again: the app closes its window, which ends
+    /// an app that does not keep running.
+    pub fn on_close_request(mut self, f: fn(&mut S, &mut Tx)) -> Self {
+        self.on_close_request = Some(f);
         self
     }
 

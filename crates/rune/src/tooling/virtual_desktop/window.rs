@@ -85,6 +85,7 @@ pub(crate) struct Window<S: 'static> {
     comp: Option<Box<dyn crate::compose::Compositor<S>>>,
     renderer: Option<Renderer>,
     on_close: Option<fn(&mut S, &mut crate::Tx)>,
+    on_close_request: Option<fn(&mut S, &mut crate::Tx)>,
     on_reopen: Option<fn(&mut S, bool, &mut crate::Tx) -> bool>,
     keep_running: bool,
     launcher: bool,
@@ -115,6 +116,7 @@ impl<S: 'static> Window<S> {
         let comp = app.compositor.take();
         let (open, keep_running, on_close, on_focus, on_reopen) = (app.open, app.keep_running, app.on_close, app.on_focus, app.on_reopen);
         let (on_mods, on_visibility) = (app.on_mods, app.on_visibility);
+        let on_close_request = app.on_close_request;
         let on_ime = app.on_ime;
         let native = std::mem::take(&mut app.macos_window);
         let (modifier_keys, tab_visits_controls, srgb_blend) = (app.modifier_keys, app.tab_visits_controls, app.srgb_blend);
@@ -146,7 +148,7 @@ impl<S: 'static> Window<S> {
         shared.visible.store(visible, Ordering::Release);
         let decorated = !options.borderless && !options.transparent;
         Window {
-            key, rt, shared, shortcuts, menus, handle, comp, renderer: None, on_close, on_reopen, keep_running,
+            key, rt, shared, shortcuts, menus, handle, comp, renderer: None, on_close, on_close_request, on_reopen, keep_running,
             launcher: native.launcher,
             panel: native.nonactivating_panel,
             main,
@@ -206,6 +208,10 @@ impl<S: 'static> Window<S> {
     /// As the native host closes (`Life::closes`): a headless window always exists.
     fn close(&mut self) {
         if !self.life.closes(self.keep_running, true) { return; }
+        if self.rt.close_guard {
+            if let Some(f) = self.on_close_request { self.rt.update(f); }
+            return;
+        }
         if let Some(f) = self.on_close { self.rt.update(f); }
         self.hide();
         if !self.keep_running {
@@ -330,7 +336,7 @@ impl<S: 'static> Member for Window<S> {
             Kind::Wheel(dx, dy) => crate::tooling::wheel(rt, (x, y), *dx, *dy),
             Kind::Fling(vx, vy) => crate::tooling::fling(rt, (x, y), *vx, *vy),
             Kind::Files(step) => crate::tooling::file_input(rt, step, (x, y)),
-            Kind::Mark(_) | Kind::Reopen | Kind::OpenUrl(_) | Kind::Menu(_) | Kind::PopupMenu(_) | Kind::FileDialog(_) | Kind::Shortcut(_) => {}
+            Kind::Mark(_) | Kind::Reopen | Kind::Close | Kind::OpenUrl(_) | Kind::Menu(_) | Kind::PopupMenu(_) | Kind::FileDialog(_) | Kind::Shortcut(_) => {}
             kind => { crate::tooling::canvas_input(rt, kind, (x, y)); }
         }
     }

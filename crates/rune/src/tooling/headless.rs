@@ -74,6 +74,13 @@ pub(crate) fn headless_configured<S: 'static>(mut app: crate::app::App<S>, args:
     let (srgb_blend, font_smoothing) = (app.srgb_blend, app.font_smoothing);
     let (on_focus, on_ime, on_mods) = (app.on_focus, app.on_ime, app.on_mods);
     let (on_reopen, on_open_url) = (app.on_reopen, app.on_open_url);
+    let on_close_request = app.on_close_request;
+    // As `Host::close`: a guarded window runs `App::on_close_request` and stays. There is no
+    // window to take away, so a close only shows in the tree, as `"closed": true`.
+    let mut closed = false;
+    let close = |rt: &mut Runtime<S>, closed: &mut bool| {
+        if !rt.close_guard { *closed = true; } else if let Some(f) = on_close_request { rt.update(f); }
+    };
     // A `--realtime` run stands in for a window, so it starts the app's live work as one does.
     let mut on_ready = app.on_ready.take().filter(|_| args.realtime);
     let mut reports = crate::frame::encoded::FrameReports::<S>::new(app.on_frame_encoded.take(), Some("main"));
@@ -273,6 +280,7 @@ pub(crate) fn headless_configured<S: 'static>(mut app: crate::app::App<S>, args:
                 // The one window always shows here.
                 Kind::Reopen => if let Some(f) = on_reopen { rt.update(|s, tx| { f(s, true, tx); }); },
                 Kind::OpenUrl(url) => if let Some(f) = on_open_url { rt.update(|s, tx| f(s, url, tx)); },
+                Kind::Close => close(&mut rt, &mut closed),
                 Kind::Shortcut(shortcut) => shared.shortcuts.fire(shortcut).unwrap_or_else(|e| die(&format!("script shortcut: {e}"))),
                 Kind::Menu(item) => crate::native_menu::fire(&shared, item).unwrap_or_else(|e| die(&format!("script menu: {e}"))),
                 Kind::PopupMenu(picked) => rt.resolve_popup(picked.as_deref()).unwrap_or_else(|e| die(&format!("script pop-up menu: {e}"))),
@@ -326,6 +334,10 @@ pub(crate) fn headless_configured<S: 'static>(mut app: crate::app::App<S>, args:
         // step's own refusal shows for those too, counted apart.
         let asked = (rt.loop_check_on() && k > 0 && frame_anim.is_none()).then(|| rt.loop_step(step));
         let mut animating = rt.frame(step);
+        if rt.shell_request == Some(crate::el::Shell::Close) {
+            rt.shell_request = None;
+            close(&mut rt, &mut closed);
+        }
         if let Some(asked) = asked { loop_check.add(real_t, next_ev != script_before, asked, rt.loop_checked()); }
         rt.open_popup_headless();
         // As on macOS, a frame change this commit asked for starts with the springs it
@@ -451,6 +463,7 @@ pub(crate) fn headless_configured<S: 'static>(mut app: crate::app::App<S>, args:
         {
             let mut tree = tree_json(&rt, real_t);
             if let Some(placed) = &placed { tree["placed"] = placed.clone(); }
+            if closed { tree["closed"] = true.into(); }
             let text = serde_json::to_string_pretty(&tree).unwrap();
             std::fs::write(p, text).unwrap_or_else(|e| die(&format!("{}: {e}", p.display())));
         }

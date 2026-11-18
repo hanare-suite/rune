@@ -241,15 +241,22 @@ pub fn quitting() -> bool {
 
 /// Hooks the system's quit requests into the loop: `send` delivers a quit (`true` when the
 /// session ends now and the windows must close) to `Windows`. Once per process, on the UI thread.
+/// `held` tells `Windows` that a macOS Quit was held back for a guarded window.
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
-pub(crate) fn install(send: impl Fn(bool) -> bool + 'static) {
+pub(crate) fn install(send: impl Fn(bool) -> bool + 'static, held: impl Fn() + 'static) {
     #[cfg(target_os = "windows")]
-    win32::install(send);
+    { let _ = held; win32::install(send); }
     #[cfg(target_os = "macos")]
-    { let _ = send; mac::install(); }
+    { let _ = send; mac::install(held); }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-    let _ = send;
+    let _ = (send, held);
 }
+
+/// Whether a window is guarded against closing (`Tx::guard_close`), as of the loop's last turn.
+static GUARDED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+pub(crate) fn set_guarded(on: bool) { GUARDED.store(on, std::sync::atomic::Ordering::Relaxed); }
 
 /// Whether the event loop is inside one of its handlers, on the UI thread: a session message
 /// that arrives then (from a modal loop the handler runs) can't run the windows' hooks.

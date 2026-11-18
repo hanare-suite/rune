@@ -9,6 +9,8 @@ impl<S: 'static> AnyHost for Host<S> {
     fn finished(&self) -> bool { self.life.finished() }
     fn keeps_loop(&self) -> bool { self.keeps_loop }
     fn closing_ends_app(&mut self) { self.ends_app = true; }
+    fn close_guarded(&self) -> bool { self.rt.close_guard && self.closes() }
+    fn close_request(&mut self) { self.in_turn(|h| { h.holds_close(); }) }
     fn key(&self) -> Option<&str> { Some(self.native_handle.key()) }
     fn reopen_candidate(&self) -> crate::platform::reopen::Candidate {
         let shown = self.shown_win();

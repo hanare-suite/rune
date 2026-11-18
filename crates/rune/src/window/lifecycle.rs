@@ -340,7 +340,18 @@ impl<S: 'static> Host<S> {
         }
     }
 
+    /// A guarded window (`Tx::guard_close`) stays open: `App::on_close_request` runs instead.
+    /// True when it held the close.
+    pub(super) fn holds_close(&mut self) -> bool {
+        if !(self.rt.close_guard && self.closes()) { return false; }
+        self.ends_app = false;
+        if let Some(f) = self.on_close_request { self.rt.update(f); }
+        if let Some(w) = self.shown_win() { w.request_redraw(); }
+        true
+    }
+
     pub(super) fn close(&mut self, event_loop: &ActiveEventLoop) {
+        if self.holds_close() { return; }
         self.rt.minimize_step(MinimizeEvent::Lost);
         if let Some(w) = &mut self.win {
             w.first_frame.hide();

@@ -568,6 +568,7 @@ let app = rune::App::new(spec)
     .accessory()                   // macOS: menu-bar app, no Dock icon (h.set_dock_icon(true) shows it)
     .standard_menus()              // macOS: Edit, Minimize ⌘M and Close ⌘W (no Quit); regular apps get them anyway
     .on_close(|s, tx| ..)          // runs before every close; tx.quit() quits instead
+    .on_close_request(|s, tx| ..)  // runs in place of a close or macOS Quit while tx.guard_close(true) holds
     .on_reopen(|s, has_visible, tx| false); // macOS: Dock icon clicked; true skips the default
     // .window_options(WindowOptions { max_size, resizable, .. }) for this window
 let handle = app.handle();     // AppHandle<S>: Clone + Send + Sync, usable before run
@@ -591,6 +592,13 @@ app.run();
   input as usual, but not its view or layout, and draws nothing. The frame that shows it again
   builds once with the latest state, with motion already landed where it would have ended. A
   window any part of which shows draws as usual. Headless runs always see a current tree.
+- `Tx::guard_close(true)` guards the window against closing, for unsaved changes. While it
+  holds, the close button, ⌘W, `Tx::close_window`, `AppHandle::close` and a macOS Quit (⌘Q, the
+  menu, the Dock, logout: `applicationShouldTerminate:` answers `NSTerminateCancel`) do not
+  happen. `App::on_close_request` runs instead, where the app asks. To close after the answer,
+  call `tx.guard_close(false)` and `tx.close_window()`; a held quit is not taken up again.
+  `Tx::quit`, `AppHandle::quit` and the end of a Windows session are not held back. Without a
+  guard nothing changes.
 - Handlers ask the shell with `Tx::close_window()`, `Tx::minimize()` and `Tx::quit()` (quit wins,
   and either wins over minimize). Minimize does nothing for a hidden window, a panel, a launcher,
   an overlay, a borderless window or a window that can't minimize (debug builds say so).
@@ -2505,6 +2513,9 @@ $L --desktop examples/launcher/backdrop.png --script examples/launcher/scripts/d
   `{"reopen": true}` reopens the app, as a click on its Dock icon (see "App lifetime").
   `{"open_url": "myapp://…"}` hands `App::on_open_url` a link, as the system does when a link
   opens the app.
+  `{"close": true}` presses the window's close button in a single window's run. A guarded
+  window (`Tx::guard_close`) runs `App::on_close_request` and stays; once the window closes,
+  by the button or `Tx::close_window`, `--tree` carries `"closed": true` (the frames go on).
   `menu-pick` (with an `id`) and `menu-cancel` answer an open pop-up menu, `file-dialog` (with
   a `path`) and `file-dialog-cancel` an open file dialog (see "File dialogs"). `drag_files` and
   `drop_files` drag files in from another app (see "Dropping files in from other apps").

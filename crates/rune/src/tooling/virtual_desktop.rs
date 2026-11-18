@@ -456,6 +456,7 @@ pub(crate) fn run(windows: Vec<AnyWindowSpec>, selected: usize, args: Args, acce
                     if let Some(i) = desk.focus.focused() { desk.members[i].input(&e.kind, (x, y)); }
                 }
                 Kind::Files(step) => desk.file_input(step, (x, y)),
+                Kind::Close => die("script close: the close button is pressed in a single window's run (`--script` without a desktop)"),
                 Kind::OpenUrl(_) => die("script open_url: a link opens in a single window's run (`--script` without a desktop)"),
                 // The rest are pointer input.
                 kind => {
