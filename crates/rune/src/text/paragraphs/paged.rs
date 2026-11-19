@@ -201,3 +201,7 @@ pub(super) fn reuse_rich(prev: &ParagraphLayout, spec: &TextSpec, style_key: u64
         entering: t.checked_sub(1).map_or(start_flow, |i| ps[i].flow),
     })
 }
+
+#[cfg(test)]
+#[path = "paged_tests.rs"]
+mod tests;

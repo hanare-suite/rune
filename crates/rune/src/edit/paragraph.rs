@@ -374,3 +374,11 @@ impl TextEdit {
 #[cfg(test)]
 #[path = "paragraph_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "atom_edge_tests.rs"]
+mod atom_edge_tests;
+
+#[cfg(test)]
+#[path = "fuzz_tests.rs"]
+mod fuzz_tests;
