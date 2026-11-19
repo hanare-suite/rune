@@ -161,6 +161,21 @@ pub fn atoms() -> Doc {
     ])
 }
 
+/// Atoms where edits go wrong: after an empty paragraph, next to each other, before an empty
+/// paragraph, and as the document's last paragraph.
+pub fn edges() -> Doc {
+    Doc::of(vec![
+        Para::new("Ränder", TITLE),
+        Para::new("Oben steht ein Absatz.", BODY),
+        Para::new("", BODY),
+        Para::new(ATOM, BODY).attrs(|a| a.atom(ATOM_HEIGHT)),
+        Para::new("Bild – in dieser Version nicht bearbeitbar", BODY).attrs(|a| a.atom(60.0)),
+        Para::new("", BODY),
+        Para::new("Unten steht ein Absatz.", BODY),
+        Para::new("Diagramm – in dieser Version nicht bearbeitbar", BODY).attrs(|a| a.atom(60.0)),
+    ])
+}
+
 /// The page rules: `fill` one-line paragraphs with no room around them (a page holds 50),
 /// then `last`. `rules:<fill>:<last>` with `last` one of:
 /// - `para`: a body paragraph of several lines, the document's last;
@@ -183,6 +198,7 @@ pub fn from_env() -> Doc {
     match parts.next() {
         Some("features") => features(),
         Some("atoms") => atoms(),
+        Some("edges") => edges(),
         Some("rules") => {
             let fill = parts.next().and_then(|n| n.parse().ok()).unwrap_or(0);
             rules(fill, parts.next().unwrap_or("para"))

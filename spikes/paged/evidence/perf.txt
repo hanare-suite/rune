@@ -1,123 +1,123 @@
 MACHINE cpu='Apple M5 Pro' cores=15 memory_gb=24 os='27.2.1'
 RUN pages=51 words=25000 caret_page=25 limits=F0
-OPEN run=0 wall_ms=56.86 model_ms=0.15 encode_ms=0.63 pages=52 words=25335 paragraphs=478 bytes=162636
-OPEN run=1 wall_ms=48.81 model_ms=0.08 encode_ms=0.12 pages=52 words=25335 paragraphs=478 bytes=162636
-OPEN run=2 wall_ms=45.37 model_ms=0.16 encode_ms=0.11 pages=52 words=25335 paragraphs=478 bytes=162636
-OPEN run=3 wall_ms=44.24 model_ms=0.08 encode_ms=0.17 pages=52 words=25335 paragraphs=478 bytes=162636
-OPEN run=4 wall_ms=45.19 model_ms=0.08 encode_ms=0.11 pages=52 words=25335 paragraphs=478 bytes=162636
-OPEN run=5 wall_ms=44.98 model_ms=0.08 encode_ms=0.10 pages=52 words=25335 paragraphs=478 bytes=162636
-OPEN run=6 wall_ms=45.36 model_ms=0.08 encode_ms=0.11 pages=52 words=25335 paragraphs=478 bytes=162636
-OPEN run=7 wall_ms=44.58 model_ms=0.08 encode_ms=0.11 pages=52 words=25335 paragraphs=478 bytes=162636
-OPEN run=8 wall_ms=43.99 model_ms=0.07 encode_ms=0.09 pages=52 words=25335 paragraphs=478 bytes=162636
-METRIC case=open metric=wall_ms first=56.8612 p50=45.1910 max=56.8612 n=9
+OPEN run=0 wall_ms=61.63 model_ms=0.26 encode_ms=0.87 pages=52 words=25335 paragraphs=478 bytes=162636
+OPEN run=1 wall_ms=55.46 model_ms=0.20 encode_ms=0.18 pages=52 words=25335 paragraphs=478 bytes=162636
+OPEN run=2 wall_ms=53.25 model_ms=0.11 encode_ms=0.10 pages=52 words=25335 paragraphs=478 bytes=162636
+OPEN run=3 wall_ms=49.25 model_ms=0.09 encode_ms=0.09 pages=52 words=25335 paragraphs=478 bytes=162636
+OPEN run=4 wall_ms=54.25 model_ms=0.09 encode_ms=0.10 pages=52 words=25335 paragraphs=478 bytes=162636
+OPEN run=5 wall_ms=54.78 model_ms=0.13 encode_ms=0.08 pages=52 words=25335 paragraphs=478 bytes=162636
+OPEN run=6 wall_ms=51.26 model_ms=0.10 encode_ms=0.12 pages=52 words=25335 paragraphs=478 bytes=162636
+OPEN run=7 wall_ms=64.51 model_ms=0.08 encode_ms=0.15 pages=52 words=25335 paragraphs=478 bytes=162636
+OPEN run=8 wall_ms=96.71 model_ms=0.08 encode_ms=0.27 pages=52 words=25335 paragraphs=478 bytes=162636
+METRIC case=open metric=wall_ms first=61.6323 p50=54.7848 max=96.7144 n=9
 CARET byte=77993 page=25 of=52
-METRIC case=type metric=wall_ms p50=0.6582 p95=0.7653 max=0.9286 n=240
-METRIC case=type metric=cpu_ms p50=0.6582 p95=0.7577 max=0.8967 n=240
-METRIC case=type metric=view_ms p50=0.1767 p95=0.1950 max=0.2319 n=240
-METRIC case=type metric=commit_ms p50=0.4155 p95=0.4923 max=0.5833 n=240
-METRIC case=type metric=layout_ms p50=0.1979 p95=0.2356 max=0.2866 n=240
-METRIC case=type metric=text_ms p50=0.1570 p95=0.1805 max=0.2209 n=240
-METRIC case=type metric=paint_ms p50=0.1119 p95=0.1293 max=0.2080 n=240
+METRIC case=type metric=wall_ms p50=1.0512 p95=1.3837 max=2.3562 n=240
+METRIC case=type metric=cpu_ms p50=1.0287 p95=1.2276 max=1.4447 n=240
+METRIC case=type metric=view_ms p50=0.2310 p95=0.2926 max=0.3213 n=240
+METRIC case=type metric=commit_ms p50=0.6640 p95=0.8176 max=0.9330 n=240
+METRIC case=type metric=layout_ms p50=0.3371 p95=0.4376 max=0.5002 n=240
+METRIC case=type metric=text_ms p50=0.2386 p95=0.3108 max=0.3605 n=240
+METRIC case=type metric=paint_ms p50=0.1547 p95=0.2080 max=0.3256 n=240
 METRIC case=type metric=shaped p50=1.0000 p95=2.0000 max=2.0000 n=240
 METRIC case=type metric=keyed p50=1.0000 p95=1.0000 max=1.0000 n=240
 METRIC case=type metric=glyphs p50=3260.0000 p95=3275.0000 max=3280.0000 n=240
-METRIC case=type metric=encode_ms p50=0.0224 p95=0.0432 max=0.0624 n=240
-METRIC case=enter metric=wall_ms p50=0.6717 p95=0.7474 max=0.8160 n=60
-METRIC case=enter metric=cpu_ms p50=0.6716 p95=0.7422 max=0.7856 n=60
-METRIC case=enter metric=view_ms p50=0.1776 p95=0.1873 max=0.2250 n=60
-METRIC case=enter metric=commit_ms p50=0.4261 p95=0.4595 max=0.5128 n=60
-METRIC case=enter metric=layout_ms p50=0.2097 p95=0.2272 max=0.2426 n=60
-METRIC case=enter metric=text_ms p50=0.1719 p95=0.1786 max=0.1942 n=60
-METRIC case=enter metric=paint_ms p50=0.1215 p95=0.1333 max=0.2060 n=60
+METRIC case=type metric=encode_ms p50=0.0727 p95=0.1195 max=0.3795 n=240
+METRIC case=enter metric=wall_ms p50=0.8752 p95=1.1942 max=1.4209 n=60
+METRIC case=enter metric=cpu_ms p50=0.8609 p95=1.1378 max=1.3457 n=60
+METRIC case=enter metric=view_ms p50=0.1921 p95=0.2365 max=0.4193 n=60
+METRIC case=enter metric=commit_ms p50=0.5408 p95=0.7428 max=0.9065 n=60
+METRIC case=enter metric=layout_ms p50=0.2879 p95=0.3979 max=0.4917 n=60
+METRIC case=enter metric=text_ms p50=0.2157 p95=0.3102 max=0.3513 n=60
+METRIC case=enter metric=paint_ms p50=0.1442 p95=0.2223 max=0.2797 n=60
 METRIC case=enter metric=shaped p50=2.0000 p95=2.0000 max=2.0000 n=60
 METRIC case=enter metric=keyed p50=2.0000 p95=2.0000 max=2.0000 n=60
 METRIC case=enter metric=glyphs p50=3259.0000 p95=3259.0000 max=3259.0000 n=60
-METRIC case=enter metric=encode_ms p50=0.0224 p95=0.0311 max=0.0320 n=60
-METRIC case=backspace metric=wall_ms p50=0.6624 p95=0.7313 max=0.7787 n=60
-METRIC case=backspace metric=cpu_ms p50=0.6623 p95=0.7183 max=0.7542 n=60
-METRIC case=backspace metric=view_ms p50=0.1772 p95=0.1852 max=0.1917 n=60
-METRIC case=backspace metric=commit_ms p50=0.4205 p95=0.4501 max=0.4857 n=60
-METRIC case=backspace metric=layout_ms p50=0.2043 p95=0.2185 max=0.2442 n=60
-METRIC case=backspace metric=text_ms p50=0.1674 p95=0.1753 max=0.1925 n=60
-METRIC case=backspace metric=paint_ms p50=0.1218 p95=0.1335 max=0.1850 n=60
+METRIC case=enter metric=encode_ms p50=0.0544 p95=0.1126 max=0.1191 n=60
+METRIC case=backspace metric=wall_ms p50=0.8465 p95=1.1735 max=1.4099 n=60
+METRIC case=backspace metric=cpu_ms p50=0.8395 p95=1.1095 max=1.3410 n=60
+METRIC case=backspace metric=view_ms p50=0.1928 p95=0.2947 max=0.3717 n=60
+METRIC case=backspace metric=commit_ms p50=0.5363 p95=0.7458 max=0.8629 n=60
+METRIC case=backspace metric=layout_ms p50=0.2805 p95=0.3936 max=0.4240 n=60
+METRIC case=backspace metric=text_ms p50=0.2102 p95=0.2887 max=0.3305 n=60
+METRIC case=backspace metric=paint_ms p50=0.1464 p95=0.1899 max=0.2242 n=60
 METRIC case=backspace metric=shaped p50=1.0000 p95=1.0000 max=1.0000 n=60
 METRIC case=backspace metric=keyed p50=1.0000 p95=1.0000 max=1.0000 n=60
 METRIC case=backspace metric=glyphs p50=3388.0000 p95=3388.0000 max=3388.0000 n=60
-METRIC case=backspace metric=encode_ms p50=0.0230 p95=0.0320 max=0.0550 n=60
+METRIC case=backspace metric=encode_ms p50=0.0564 p95=0.0888 max=0.1388 n=60
 SCROLL frames=365 travel_pt=43675
-METRIC case=scroll metric=wall_ms p50=0.1777 p95=0.2138 max=0.2895 n=365
-METRIC case=scroll metric=cpu_ms p50=0.1776 p95=0.2137 max=0.2893 n=365
+METRIC case=scroll metric=wall_ms p50=0.2089 p95=0.3550 max=0.6270 n=365
+METRIC case=scroll metric=cpu_ms p50=0.2079 p95=0.3270 max=0.5399 n=365
 METRIC case=scroll metric=view_ms p50=0.0000 p95=0.0000 max=0.0000 n=365
 METRIC case=scroll metric=commit_ms p50=0.0000 p95=0.0000 max=0.0000 n=365
 METRIC case=scroll metric=layout_ms p50=0.0000 p95=0.0000 max=0.0000 n=365
 METRIC case=scroll metric=text_ms p50=0.0000 p95=0.0000 max=0.0000 n=365
-METRIC case=scroll metric=paint_ms p50=0.1754 p95=0.2112 max=0.2810 n=365
+METRIC case=scroll metric=paint_ms p50=0.1997 p95=0.3130 max=0.5156 n=365
 METRIC case=scroll metric=shaped p50=0.0000 p95=0.0000 max=0.0000 n=365
 METRIC case=scroll metric=keyed p50=0.0000 p95=0.0000 max=0.0000 n=365
 METRIC case=scroll metric=glyphs p50=3116.0000 p95=3409.0000 max=3587.0000 n=365
-METRIC case=scroll metric=encode_ms p50=0.0288 p95=0.0377 max=0.0633 n=365
+METRIC case=scroll metric=encode_ms p50=0.0548 p95=0.1072 max=0.2255 n=365
 PAGES before_field=52 before_status=52 before_sheets=52 returns=34 after_field=53 same_frame_status=53 same_frame_sheets=53
-UNDO steps=200 paragraphs=478 heap_before_mb=20.35 heap_after_mb=24.09 heap_extra_mb=3.74 footprint_before_mb=208.77 footprint_after_mb=209.28 footprint_extra_mb=0.52 undos_to_original=200 restored=true
-LIMIT pages=51 case=type metric=wall_ms p50=0.6582 limit=8.0 pass=true
-LIMIT pages=51 case=type metric=wall_ms p95=0.7653 limit=16.0 pass=true
-LIMIT pages=51 case=scroll metric=wall_ms p95=0.2138 limit=8.3 pass=true
-LIMIT pages=51 case=open metric=wall_ms p50=45.1910 limit=500.0 pass=true
+UNDO steps=200 paragraphs=478 heap_before_mb=20.35 heap_after_mb=24.09 heap_extra_mb=3.74 footprint_before_mb=213.13 footprint_after_mb=213.13 footprint_extra_mb=0.00 undos_to_original=200 restored=true
+LIMIT pages=51 case=type metric=wall_ms p50=1.0512 limit=8.0 pass=true
+LIMIT pages=51 case=type metric=wall_ms p95=1.3837 limit=16.0 pass=true
+LIMIT pages=51 case=scroll metric=wall_ms p95=0.3550 limit=8.3 pass=true
+LIMIT pages=51 case=open metric=wall_ms p50=54.7848 limit=500.0 pass=true
 LIMIT pages=51 case=undo metric=heap_extra_mb value=3.74 limit=50.0 pass=true
 RUN pages=200 words=100000 caret_page=100 limits=none
-OPEN run=0 wall_ms=190.06 model_ms=0.38 encode_ms=0.78 pages=203 words=100232 paragraphs=1898 bytes=642256
-OPEN run=1 wall_ms=170.62 model_ms=0.34 encode_ms=0.10 pages=203 words=100232 paragraphs=1898 bytes=642256
-OPEN run=2 wall_ms=167.71 model_ms=0.28 encode_ms=0.16 pages=203 words=100232 paragraphs=1898 bytes=642256
-OPEN run=3 wall_ms=168.06 model_ms=0.28 encode_ms=0.12 pages=203 words=100232 paragraphs=1898 bytes=642256
-OPEN run=4 wall_ms=178.92 model_ms=0.35 encode_ms=0.11 pages=203 words=100232 paragraphs=1898 bytes=642256
-OPEN run=5 wall_ms=178.84 model_ms=0.29 encode_ms=0.12 pages=203 words=100232 paragraphs=1898 bytes=642256
-OPEN run=6 wall_ms=176.36 model_ms=0.28 encode_ms=0.14 pages=203 words=100232 paragraphs=1898 bytes=642256
-OPEN run=7 wall_ms=186.63 model_ms=0.34 encode_ms=0.13 pages=203 words=100232 paragraphs=1898 bytes=642256
-OPEN run=8 wall_ms=165.10 model_ms=0.29 encode_ms=0.12 pages=203 words=100232 paragraphs=1898 bytes=642256
-METRIC case=open metric=wall_ms first=190.0562 p50=176.3647 max=190.0562 n=9
+OPEN run=0 wall_ms=191.90 model_ms=0.38 encode_ms=0.79 pages=203 words=100232 paragraphs=1898 bytes=642256
+OPEN run=1 wall_ms=170.49 model_ms=0.30 encode_ms=0.12 pages=203 words=100232 paragraphs=1898 bytes=642256
+OPEN run=2 wall_ms=175.21 model_ms=0.30 encode_ms=0.15 pages=203 words=100232 paragraphs=1898 bytes=642256
+OPEN run=3 wall_ms=197.23 model_ms=0.42 encode_ms=0.12 pages=203 words=100232 paragraphs=1898 bytes=642256
+OPEN run=4 wall_ms=183.76 model_ms=0.30 encode_ms=0.11 pages=203 words=100232 paragraphs=1898 bytes=642256
+OPEN run=5 wall_ms=179.20 model_ms=0.33 encode_ms=0.11 pages=203 words=100232 paragraphs=1898 bytes=642256
+OPEN run=6 wall_ms=187.35 model_ms=0.29 encode_ms=0.08 pages=203 words=100232 paragraphs=1898 bytes=642256
+OPEN run=7 wall_ms=179.60 model_ms=0.29 encode_ms=0.11 pages=203 words=100232 paragraphs=1898 bytes=642256
+OPEN run=8 wall_ms=184.26 model_ms=0.31 encode_ms=0.09 pages=203 words=100232 paragraphs=1898 bytes=642256
+METRIC case=open metric=wall_ms first=191.9024 p50=183.7626 max=197.2299 n=9
 CARET byte=315388 page=100 of=204
-METRIC case=type metric=wall_ms p50=1.8923 p95=2.5999 max=6.0526 n=240
-METRIC case=type metric=cpu_ms p50=1.8854 p95=2.4123 max=3.1522 n=240
-METRIC case=type metric=view_ms p50=0.6872 p95=0.9305 max=1.3003 n=240
-METRIC case=type metric=commit_ms p50=1.2052 p95=1.6122 max=2.1782 n=240
-METRIC case=type metric=layout_ms p50=0.3582 p95=0.5819 max=0.7782 n=240
-METRIC case=type metric=text_ms p50=0.1795 p95=0.2610 max=0.3925 n=240
-METRIC case=type metric=paint_ms p50=0.1863 p95=0.2509 max=0.3103 n=240
+METRIC case=type metric=wall_ms p50=2.2278 p95=3.0976 max=4.9597 n=240
+METRIC case=type metric=cpu_ms p50=2.1858 p95=2.8525 max=3.1943 n=240
+METRIC case=type metric=view_ms p50=0.7633 p95=1.0033 max=1.0854 n=240
+METRIC case=type metric=commit_ms p50=1.4271 p95=1.9028 max=2.1191 n=240
+METRIC case=type metric=layout_ms p50=0.4693 p95=0.6360 max=0.8442 n=240
+METRIC case=type metric=text_ms p50=0.2135 p95=0.2987 max=0.4172 n=240
+METRIC case=type metric=paint_ms p50=0.2075 p95=0.2905 max=0.4055 n=240
 METRIC case=type metric=shaped p50=1.0000 p95=2.0000 max=2.0000 n=240
 METRIC case=type metric=keyed p50=1.0000 p95=1.0000 max=1.0000 n=240
 METRIC case=type metric=glyphs p50=3204.0000 p95=3217.0000 max=3220.0000 n=240
-METRIC case=type metric=encode_ms p50=0.0456 p95=0.0900 max=0.1412 n=240
-METRIC case=enter metric=wall_ms p50=1.8745 p95=2.5487 max=2.7357 n=60
-METRIC case=enter metric=cpu_ms p50=1.8744 p95=2.4634 max=2.6969 n=60
-METRIC case=enter metric=view_ms p50=0.6760 p95=0.7840 max=0.8705 n=60
-METRIC case=enter metric=commit_ms p50=1.1774 p95=1.5690 max=1.7819 n=60
-METRIC case=enter metric=layout_ms p50=0.3431 p95=0.5435 max=0.7048 n=60
-METRIC case=enter metric=text_ms p50=0.1858 p95=0.2333 max=0.3676 n=60
-METRIC case=enter metric=paint_ms p50=0.1973 p95=0.2318 max=0.2774 n=60
+METRIC case=type metric=encode_ms p50=0.0631 p95=0.1145 max=0.7698 n=240
+METRIC case=enter metric=wall_ms p50=2.0100 p95=2.3072 max=2.8301 n=60
+METRIC case=enter metric=cpu_ms p50=1.9913 p95=2.2732 max=2.7204 n=60
+METRIC case=enter metric=view_ms p50=0.6941 p95=0.7540 max=0.9212 n=60
+METRIC case=enter metric=commit_ms p50=1.2849 p95=1.4761 max=1.7423 n=60
+METRIC case=enter metric=layout_ms p50=0.4170 p95=0.5189 max=0.5297 n=60
+METRIC case=enter metric=text_ms p50=0.2009 p95=0.2441 max=0.3209 n=60
+METRIC case=enter metric=paint_ms p50=0.1981 p95=0.2319 max=0.2873 n=60
 METRIC case=enter metric=shaped p50=2.0000 p95=2.0000 max=2.0000 n=60
 METRIC case=enter metric=keyed p50=2.0000 p95=2.0000 max=2.0000 n=60
 METRIC case=enter metric=glyphs p50=3130.0000 p95=3130.0000 max=3130.0000 n=60
-METRIC case=enter metric=encode_ms p50=0.0305 p95=0.0832 max=0.1130 n=60
-METRIC case=backspace metric=wall_ms p50=1.8193 p95=2.6980 max=3.4025 n=60
-METRIC case=backspace metric=cpu_ms p50=1.8193 p95=2.3840 max=2.9161 n=60
-METRIC case=backspace metric=view_ms p50=0.6778 p95=0.8671 max=1.1143 n=60
-METRIC case=backspace metric=commit_ms p50=1.1580 p95=1.6838 max=2.0014 n=60
-METRIC case=backspace metric=layout_ms p50=0.3297 p95=0.4626 max=0.6013 n=60
-METRIC case=backspace metric=text_ms p50=0.1764 p95=0.2341 max=0.3128 n=60
-METRIC case=backspace metric=paint_ms p50=0.1879 p95=0.2302 max=0.3350 n=60
+METRIC case=enter metric=encode_ms p50=0.0543 p95=0.0738 max=0.1035 n=60
+METRIC case=backspace metric=wall_ms p50=1.9427 p95=2.3185 max=2.4336 n=60
+METRIC case=backspace metric=cpu_ms p50=1.9365 p95=2.2393 max=2.4178 n=60
+METRIC case=backspace metric=view_ms p50=0.6931 p95=0.7308 max=0.8206 n=60
+METRIC case=backspace metric=commit_ms p50=1.2562 p95=1.4204 max=1.5333 n=60
+METRIC case=backspace metric=layout_ms p50=0.3924 p95=0.4806 max=0.5821 n=60
+METRIC case=backspace metric=text_ms p50=0.1931 p95=0.2210 max=0.2472 n=60
+METRIC case=backspace metric=paint_ms p50=0.1943 p95=0.2210 max=0.2316 n=60
 METRIC case=backspace metric=shaped p50=1.0000 p95=1.0000 max=1.0000 n=60
 METRIC case=backspace metric=keyed p50=1.0000 p95=1.0000 max=1.0000 n=60
 METRIC case=backspace metric=glyphs p50=3246.0000 p95=3246.0000 max=3246.0000 n=60
-METRIC case=backspace metric=encode_ms p50=0.0322 p95=0.0745 max=0.0932 n=60
+METRIC case=backspace metric=encode_ms p50=0.0490 p95=0.0775 max=0.0912 n=60
 SCROLL frames=1445 travel_pt=173233
-METRIC case=scroll metric=wall_ms p50=0.2430 p95=0.3521 max=0.7148 n=1445
-METRIC case=scroll metric=cpu_ms p50=0.2422 p95=0.3400 max=0.5525 n=1445
+METRIC case=scroll metric=wall_ms p50=0.2565 p95=0.3551 max=0.6485 n=1445
+METRIC case=scroll metric=cpu_ms p50=0.2557 p95=0.3406 max=0.5165 n=1445
 METRIC case=scroll metric=view_ms p50=0.0000 p95=0.0000 max=0.0000 n=1445
 METRIC case=scroll metric=commit_ms p50=0.0000 p95=0.0000 max=0.0000 n=1445
 METRIC case=scroll metric=layout_ms p50=0.0000 p95=0.0000 max=0.0000 n=1445
 METRIC case=scroll metric=text_ms p50=0.0000 p95=0.0000 max=0.0000 n=1445
-METRIC case=scroll metric=paint_ms p50=0.2365 p95=0.3248 max=0.5421 n=1445
+METRIC case=scroll metric=paint_ms p50=0.2487 p95=0.3232 max=0.5053 n=1445
 METRIC case=scroll metric=shaped p50=0.0000 p95=0.0000 max=0.0000 n=1445
 METRIC case=scroll metric=keyed p50=0.0000 p95=0.0000 max=0.0000 n=1445
 METRIC case=scroll metric=glyphs p50=3139.0000 p95=3405.0000 max=3624.0000 n=1445
-METRIC case=scroll metric=encode_ms p50=0.0339 p95=0.0825 max=0.4362 n=1445
-PROCESS case=open-process metric=wall_ms p50=66.6 max=68.1 n=7
+METRIC case=scroll metric=encode_ms p50=0.0391 p95=0.0884 max=0.2097 n=1445
+PROCESS case=open-process metric=wall_ms p50=66.3 max=67.4 n=7

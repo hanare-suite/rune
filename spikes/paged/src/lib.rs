@@ -9,7 +9,7 @@ use std::sync::Arc;
 use rune::color::hex;
 use rune::{
     Baseline, Block, Color, Cx, EditChange, EditChangeKind, El, Key, KeyEvent, Mark, MarkColor, MarkRange, PageFlow, ParagraphAlign, ParagraphAttrs,
-    ParagraphStyle, ScrollSpec, TextEdit, TextStyle, Tx, col, el, row, text, text_input,
+    ParagraphInfo, ParagraphStyle, ScrollSpec, TextEdit, TextStyle, Tx, col, el, row, text, text_input,
 };
 
 pub mod docs;
@@ -87,6 +87,14 @@ impl Para {
     pub fn block(mut self, block: Block) -> Para {
         self.block = block;
         self
+    }
+
+    /// The field's paragraph `info`.
+    pub fn read(edit: &TextEdit, info: &ParagraphInfo) -> Para {
+        let (s, e) = (info.range.start, info.range.end);
+        let marks = edit.marks().iter().filter(|m| m.start < e && s < m.end).map(|m| (m.start.max(s) - s, m.end.min(e) - s, m.mark.clone())).collect();
+        let line = &edit.text[s..e];
+        Para { text: line.to_owned(), block: info.block, attrs: info.attrs, marks, words: line.split_whitespace().count() }
     }
 
     /// Marks the first place `word` occurs.
@@ -170,19 +178,22 @@ impl Doc {
             at = end + 1;
         }
         let tail = self.paras.len() - 1 - last;
-        let text = edit.text.as_str();
         let infos = edit.paragraphs();
         let lines = infos.len();
         let mut paras = Vec::with_capacity(lines);
         paras.extend_from_slice(&self.paras[..first]);
         for info in &infos[first.min(lines)..lines.saturating_sub(tail).max(first.min(lines))] {
-            let (s, e) = (info.range.start, info.range.end);
-            let marks = edit.marks().iter().filter(|m| m.start < e && s < m.end).map(|m| (m.start.max(s) - s, m.end.min(e) - s, m.mark.clone())).collect();
-            let line = &text[s..e];
-            paras.push(Arc::new(Para { text: line.to_owned(), block: info.block, attrs: info.attrs, marks, words: line.split_whitespace().count() }));
+            paras.push(Arc::new(Para::read(edit, info)));
         }
         paras.extend_from_slice(&self.paras[self.paras.len() - tail..]);
         Doc { paras }
+    }
+
+    /// Whether the document holds what the field does, paragraph for paragraph: the changes
+    /// it followed left nothing out.
+    pub fn matches(&self, edit: &TextEdit) -> bool {
+        let infos = edit.paragraphs();
+        infos.len() == self.paras.len() && infos.iter().zip(&self.paras).all(|(info, p)| Para::read(edit, info) == **p)
     }
 }
 
@@ -315,9 +326,24 @@ impl State {
         }).collect();
         let (undo, redo) = self.edit.history_len();
         format!(
-            "line={line} id={} style={} align={:?} indent={}/{} break={} atom={} block={block} marks=[{}] | paras={} next_id={} field_history={undo}/{redo} steps={} events={} last={}",
+            "line={line} id={} style={} align={:?} indent={}/{} break={} atom={} block={block} marks=[{}] | paras={} next_id={} field_history={undo}/{redo} steps={} events={} last={}{}",
             a.id, a.style, a.align, a.indent, a.first_line_indent, a.page_break_before, a.atom.is_some(), marks.join(","),
-            self.doc.paras.len(), self.edit.next_paragraph_id(), self.history.len(), self.events, self.last,
+            self.doc.paras.len(), self.edit.next_paragraph_id(), self.history.len(), self.events, self.last, self.paragraph_facts(),
+        )
+    }
+
+    /// Every paragraph of a short document: its id, whether it is an atom, its block, the bold
+    /// bytes, and whether the document followed the field through every change (`sync`).
+    fn paragraph_facts(&self) -> String {
+        let infos = self.edit.paragraphs();
+        if infos.len() > 40 { return String::new(); }
+        let list = |f: &dyn Fn(&ParagraphInfo) -> String| infos.iter().map(f).collect::<Vec<_>>().join(",");
+        let bold: Vec<String> = self.edit.marks().iter().filter(|m| m.mark == Mark::Bold).map(|m| format!("{}..{}", m.start, m.end)).collect();
+        format!(
+            " ids=[{}] atoms=[{}] blocks=[{}] bold=[{}] sync={}",
+            list(&|p| p.attrs.id.to_string()), list(&|p| u8::from(p.attrs.atom.is_some()).to_string()),
+            list(&|p| match p.block { Block::Bullet(_) => "b".into(), Block::Paragraph => "p".into(), _ => "o".into() }),
+            bold.join(","), self.doc.matches(&self.edit),
         )
     }
 }

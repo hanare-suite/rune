@@ -469,6 +469,131 @@ def atoms():
                         "accessibility_groups": named})
 
 
+# ---- F2a: atoms at a paragraph's edge ------------------------------------------------------
+
+BILD, DIAGRAMM = "Bild – in dieser Version nicht bearbeitbar", "Diagramm – in dieser Version nicht bearbeitbar"
+RICH = "<p><b>X</b>y</p><ul><li>L1</li><li>L2</li></ul>"
+
+
+def listed(f, name):
+    """A bracketed fact as its items."""
+    return [v for v in f[name].strip("[]").split(",") if v]
+
+
+def paragraphs(tree):
+    """A short document's paragraphs as the app's facts list them: text, id, atom and block of each."""
+    f, text = facts(tree), element(tree, "editor")["text"]
+    ids, locked, blocks = listed(f, "ids"), listed(f, "atoms"), listed(f, "blocks")
+    lines = text.split("\n")
+    assert len(lines) == len(ids) == len(locked) == len(blocks), "one fact for each paragraph"
+    return [{"text": t, "id": int(i), "atom": a == "1", "block": b} for t, i, a, b in zip(lines, ids, locked, blocks)]
+
+
+def sound(tree):
+    """No two paragraphs share an id, and the app's document followed the field through the reported changes."""
+    ids = [p["id"] for p in paragraphs(tree)]
+    return len(set(ids)) == len(ids) and 0 not in ids and facts(tree)["sync"] == "true"
+
+
+def brief(ps):
+    return [f'{p["id"]}{"*" if p["atom"] else ""}{":" + p["block"] if p["block"] != "p" else ""} {p["text"][:12]}' for p in ps]
+
+
+def paste(text, html):
+    return {"type": "paste", "text": text, "html": html}
+
+
+def c_byte(tree):
+    return element(tree, "editor")["selection"][1]
+
+
+def paste_over_atom():
+    """A rich paste over the selected last atom: the text goes where the caret landed."""
+    env = {"PAGED_DOC": "edges", "PAGED_CARET": DIAGRAMM}
+    events = steps(0.2, ("Right",), ("Left",), ("Right", "shift"), "selected", paste("Xy", "<b>X</b>y"), "pasted")
+    t = marks("paste-over-atom", events, ["selected", "pasted"], env=env, snaps={"pasted": "paste-over-atom.png"})
+    sel = element(t["selected"], "editor")["selection"]
+    text, f = element(t["pasted"], "editor")["text"], facts(t["pasted"])
+    ps, at = paragraphs(t["pasted"]), len(text[:text.index("Xy")].encode())
+    ok = (sel[1] - sel[0] == len(DIAGRAMM.encode()) and text.endswith("Unten steht ein Absatz.Xy") and DIAGRAMM not in text
+          and listed(f, "bold") == [f"{at}..{at + 1}"] and c_byte(t["pasted"]) == at + 2 and sound(t["pasted"])
+          and not any(p["atom"] and p["text"] == "" for p in ps))
+    check("paste-over-atom", ok, {"selection": sel, "paragraphs_after": brief(ps), "bold": listed(f, "bold"), "x_at_byte": at,
+                                  "reported": f["last"], "document_in_sync": f["sync"]})
+
+
+def paste_at_atom():
+    """A rich paste at an atom's end and at its start: marks and blocks sit on the pasted lines."""
+    found, ok = {}, True
+    for where, keys in (("after", [("Right",)]), ("before", [("Right",), ("Left",)])):
+        env = {"PAGED_DOC": "atoms", "PAGED_CARET": ATOM}
+        name = f"paste-at-atom-{where}"
+        t = marks(name, steps(0.2, *keys, "at", paste("Xy\nL1\nL2", RICH), "pasted"), ["at", "pasted"], env=env,
+                  snaps={"pasted": "paste-at-atom.png"} if where == "after" else None)
+        text, f, ps = element(t["pasted"], "editor")["text"], facts(t["pasted"]), paragraphs(t["pasted"])
+        x = len(text[:text.index("Xy\nL1\nL2")].encode())
+        i = next(k for k, p in enumerate(ps) if p["text"] == "Xy")
+        table = next(k for k, p in enumerate(ps) if p["text"] == ATOM)
+        ok = (ok and [p["text"] for p in ps[i:i + 3]] == ["Xy", "L1", "L2"] and [p["block"] for p in ps[i:i + 3]] == ["p", "b", "b"]
+              and all(p["block"] == "p" for k, p in enumerate(ps) if k not in (i + 1, i + 2))
+              and listed(f, "bold") == [f"{x}..{x + 1}"] and ps[table]["atom"] and [p["atom"] for p in ps].count(True) == 2
+              and table == (i - 1 if where == "after" else i + 3) and c_byte(t["pasted"]) == x + len("Xy\nL1\nL2") and sound(t["pasted"]))
+        found[where] = {"paragraphs_after": brief(ps), "bold": listed(f, "bold"), "x_at_byte": x, "reported": f["last"], "document_in_sync": f["sync"]}
+    check("paste-at-atom", ok, found)
+
+
+def atom_ids():
+    """Text typed over what stands before an atom: no two paragraphs end up with one id."""
+    found, ok = {}, True
+    cases = {"empty-paragraph": [("Left",), ("Right", "shift")], "atom-to-atom": [("Right", "shift"), ("Right", "shift")]}
+    for case, keys in cases.items():
+        env = {"PAGED_DOC": "edges", "PAGED_CARET": ATOM}
+        t = marks(f"atom-ids-{case}", steps(0.2, ("Right",), ("Left",), *keys, "selected", {"type": "type", "text": "x"}, "typed"),
+                  ["selected", "typed"], env=env)
+        before, ps, f = paragraphs(t["selected"]), paragraphs(t["typed"]), facts(t["typed"])
+        i = next(k for k, p in enumerate(ps) if p["text"] == "x")
+        want = ATOM if case == "empty-paragraph" else BILD
+        ok = (ok and sound(t["typed"]) and len(ps) == len(before) and ps[i + 1]["text"] == want and ps[i + 1]["atom"] and not ps[i]["atom"]
+              and ps[i + 1]["id"] == next(p["id"] for p in before if p["text"] == want)
+              and [p["id"] for p in ps[:i] + ps[i + 2:]] == [p["id"] for p in before[:i] + before[i + 2:]])
+        found[case] = {"selection": element(t["selected"], "editor")["selection"], "ids_before": [p["id"] for p in before],
+                       "paragraphs_after": brief(ps), "reported": f["last"], "document_in_sync": f["sync"]}
+    check("atom-ids", ok, found)
+
+
+def atom_keys():
+    """Backspace after an atom and Delete before one select it, and a second press deletes it;
+    an empty paragraph beside an atom goes instead."""
+    found, ok = {}, True
+    label = len(ATOM.encode())
+    for case, find, keys, press in (("backspace", "Danach steht", [], "Backspace"), ("delete", "Davor steht", [("Right", "cmd")], "Delete")):
+        env = {"PAGED_DOC": "atoms", "PAGED_CARET": find}
+        names = ["at", "selected", "deleted", "undone"]
+        t = marks(f"atom-keys-{case}", steps(0.2, ("Right",), ("Left",), *keys, "at", (press,), "selected", (press,), "deleted", ("z", "cmd"), "undone"),
+                  names, env=env, snaps={"selected": "atom-keys-selected.png"} if case == "backspace" else None)
+        f, text = {k: facts(t[k]) for k in names}, {k: element(t[k], "editor")["text"] for k in names}
+        sel = sorted(element(t["selected"], "editor")["selection"])
+        start = len(text["at"][:text["at"].index(ATOM)].encode())
+        ok = (ok and sel == [start, start + label] and text["selected"] == text["at"] and f["selected"]["events"] == f["at"]["events"]
+              and ATOM not in text["deleted"] and f["deleted"]["paras"] == f["at"]["paras"] - 1
+              and f["deleted"]["last"] == f"deleted:{start}..{start + label + 1}>0"
+              and f["deleted"]["events"] == f["at"]["events"] + 1 and f["deleted"]["steps"] == f["at"]["steps"] + 1
+              and sound(t["deleted"]) and text["undone"] == text["at"])
+        found[case] = {"caret": c_byte(t["at"]), "selection_after_first_press": sel, "atom": [start, start + label],
+                       "reported_by_second_press": f["deleted"]["last"], "history_steps": [f["at"]["steps"], f["selected"]["steps"], f["deleted"]["steps"]]}
+    # An empty paragraph beside an atom: the first press removes it and leaves the atom.
+    for case, find, press in (("empty-after", "Unten steht", "Backspace"), ("empty-before", ATOM, "Delete")):
+        env = {"PAGED_DOC": "edges", "PAGED_CARET": find}
+        t = marks(f"atom-keys-{case}", steps(0.2, ("Right",), ("Left",), ("Left",), "at", (press,), "pressed"), ["at", "pressed"], env=env)
+        before, ps, sel = paragraphs(t["at"]), paragraphs(t["pressed"]), element(t["pressed"], "editor")["selection"]
+        line = facts(t["at"])["line"]
+        ok = (ok and before[line]["text"] == "" and [p["id"] for p in ps] == [p["id"] for k, p in enumerate(before) if k != line]
+              and [p["atom"] for p in ps].count(True) == 3 and sel[0] == sel[1] and sound(t["pressed"]))
+        found[case] = {"empty_paragraph": line, "ids_before": [p["id"] for p in before], "paragraphs_after": brief(ps), "selection": sel,
+                       "reported": facts(t["pressed"])["last"]}
+    check("atom-keys", ok, found)
+
+
 # ---- F2a: one history, reported changes ----------------------------------------------------
 
 def history():
@@ -533,7 +658,8 @@ def pages_same_frame():
 CHECKS = {"open": pages, "arrows": arrows, "tap": tap, "drag": drag, "typing": typing, "forced-break": forced_break, "ime-headless": ime,
           "marks-family": marks_family, "marks-highlight": marks_highlight, "marks-baseline": marks_baseline,
           "attrs-align": attrs_align, "attrs-indent": attrs_indent, "attrs-split-merge": attrs_split_merge,
-          "page-rules": page_rules, "atoms": atoms, "history": history, "reuse": reuse, "pages-same-frame": pages_same_frame}
+          "page-rules": page_rules, "atoms": atoms, "paste-over-atom": paste_over_atom, "paste-at-atom": paste_at_atom,
+          "atom-ids": atom_ids, "atom-keys": atom_keys, "history": history, "reuse": reuse, "pages-same-frame": pages_same_frame}
 os.makedirs(SCRIPTS, exist_ok=True)
 os.makedirs(EVIDENCE, exist_ok=True)
 for name, c in CHECKS.items():

@@ -2,7 +2,7 @@
 
 The fork's own check that Rune's `text_input` and `TextEdit` carry a word processor's editor: run marks, paragraph attributes, pages with their rules, locked blocks, and an undo history the app owns. It began as a spike that asked whether the field could do it at all. It can, and this example now checks every part of it headless. The numbers and their pass marks are in `evidence/`.
 
-The app shows a generated German document of 25,335 words on 52 A4 pages in one field. The words come from a fixed list and a fixed seed, so every run lays out the same document. Smaller documents (`src/docs.rs`, picked with `PAGED_DOC`) hold what single checks look at.
+The app shows a generated German document of 25,335 words on 52 A4 pages in one field. The words come from a fixed list and a fixed seed, so every run lays out the same document. Smaller documents (`src/docs.rs`, picked with `PAGED_DOC`) hold what single checks look at. For those the app's line of facts lists every paragraph's id, block and atom, and says whether the document it keeps from the reported changes still matches the field (`sync`).
 
 ## What the field does here
 
@@ -44,6 +44,10 @@ In the window the function keys stand in for a ribbon: F1 to F4 align the paragr
 | `attrs-split-merge` | Return copies style, alignment and indents to a new paragraph with the next id and without the page break; Backspace merges back to the first paragraph's attributes and id |
 | `page-rules` | a paragraph's first line and its last line never stand alone on a page; the room above a paragraph is dropped at a page's top it flowed onto and kept after a forced break |
 | `atoms` | the caret crosses a locked block in one step, Shift+Right selects it whole, text typed beside it gets its own paragraph, Backspace removes it as one edit and one history step, and the accessibility tree names it as a group |
+| `paste-over-atom` | a rich paste over the selected last block lands where the caret did after the block went, bold on its first letter |
+| `paste-at-atom` | a rich paste at a locked block's end and at its start puts bold and bullets on the pasted lines, and the block keeps its line |
+| `atom-ids` | text typed over an empty paragraph before a locked block, or over a block up to the next one, leaves every paragraph its own id |
+| `atom-keys` | Backspace after a locked block and Delete before one select it, and a second press deletes it as one edit and one history step; an empty paragraph beside a block goes at the first press |
 | `history` | the field records nothing; typing, a highlight, Cmd+B and an alignment each report their bytes and make one step of the app's history; Cmd+Z and Shift+Cmd+Z go through the app |
 | `reuse` | a keystroke keys one paragraph at 51 pages and at 200 |
 | `pages-same-frame` | the frame that lays out a new page already shows its count and its sheet |
