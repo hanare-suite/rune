@@ -896,3 +896,38 @@ fn pill_styles_follow_captured_state_through_a_cached_subtree() {
     assert_eq!(icons(&rt), ["b", "a"]);
     assert_eq!(step(&mut rt).1, 0, "next frame hits the newly cached layer");
 }
+
+/// A pill whose label is the object character stands for something the field cannot show as
+/// text. Its icon is all it draws: the font's own glyph for that character ("OBJ" in a box)
+/// stays out and takes no room, so the chip is the icon and its padding.
+#[test]
+fn a_pill_over_the_object_character_draws_its_icon_and_not_the_fonts_glyph() {
+    use crate::{TextEdit, TextStyle};
+    static BOX: crate::Icon = crate::Icon { name: "box", view: 8.0, body: "<rect width=\"8\" height=\"8\"/>" };
+    const RED: Color = Color { r: 1.0, g: 0.0, b: 0.0, a: 1.0 };
+    fn view(s: &TextEdit, _: &mut Cx<TextEdit>) -> El {
+        let field = crate::text_input(s, TextStyle::new(14.0, 400.0)).size(200.0, 30.0).pill_icon(|_| Some(&BOX)).pill_colors(RED, Some(Color::WHITE)).color(Color::WHITE);
+        el().size(200.0, 40.0).child(field)
+    }
+    let mut edit = TextEdit::new("").rich();
+    edit.insert_pill("p:1", "\u{FFFC}");
+    let mut rt = Runtime::new(edit, view, (200.0, 40.0), Env { scale: 1.0, system_dark: true });
+    let gpu = Gpu::headless();
+    let target = Offscreen::new(&gpu.device, 200, 40);
+    let mut renderer = Renderer::new(&gpu.device, OFFSCREEN_FORMAT);
+    rt.frame(1.0 / 60.0);
+    renderer.prepare(&gpu.device, &gpu.queue, &mut rt.text.atlas, &rt.instances, (200, 40));
+    let out = pixels(&gpu, &renderer, &target);
+    // The columns that hold a pixel `hit` takes: the first and the one past the last.
+    let columns = |hit: &dyn Fn(&[u8]) -> bool| {
+        let xs: Vec<usize> = (0..200).filter(|&x| (0..40).any(|y| hit(&out[(y * 200 + x) * 4..][..4]))).collect();
+        (*xs.first().expect("something drawn"), xs.last().unwrap() + 1)
+    };
+    let chip = columns(&|p| p[0] > 120);
+    let ink = columns(&|p| p[0] > 200 && p[1] > 200 && p[2] > 200);
+    let pm = crate::text::PillMetrics::new(14.0);
+    assert!((ink.1 - ink.0) as f32 <= pm.icon + 1.0, "only the icon is white, {} px wide: columns {ink:?}", pm.icon);
+    assert!((chip.1 - chip.0) as f32 <= pm.icon + 2.0 * pm.pad + 2.0, "the chip holds the icon and its padding: columns {chip:?}");
+    let (left, right) = (ink.0 - chip.0, chip.1 - ink.1);
+    assert!(left.abs_diff(right) <= 1, "the icon is in the chip's middle: {left} px before it, {right} after");
+}

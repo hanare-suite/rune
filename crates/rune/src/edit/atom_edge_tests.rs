@@ -9,6 +9,11 @@
 //! 6. Backspace after an atom, or Delete before one, does nothing, so a keyboard cannot
 //!    reach the atom from the paragraph beside it.
 //! 7. That first press changes the text, or the second deletes more than the atom.
+//! 8. A rich paste over a selected atom takes the atom's line with it and joins the paragraph
+//!    beside it, where typed text and a plain paste keep the line.
+//! 9. Text that replaces an atom keeps the atom's id, so an app that keys an atom's content by
+//!    id takes the text for the atom: typed or pasted over one atom, over a run of them, over
+//!    atoms up to the start of the next, or from inside a label.
 
 use super::fuzz_tests::{check, seen};
 use super::*;
@@ -59,9 +64,44 @@ fn a_rich_paste_over_the_last_atom_lands_where_the_caret_did() {
     let mut e = field("before\nTabelle", &[1]);
     e.set_selection(7, 14);
     reported(&mut e, |e| { e.paste_html("<b>X</b>y", "Xy"); });
-    assert_eq!((e.text.as_str(), ids(&e), atoms(&e)), ("beforeXy", vec![1], vec![false]));
-    assert_eq!(e.marks(), [MarkRange::new(6..7, Mark::Bold)]);
-    assert_eq!(e.focus, 8);
+    assert_eq!((lines(&e), ids(&e), atoms(&e)), (vec!["before", "Xy"], vec![1, 10], vec![false, false]));
+    assert_eq!(e.marks(), [MarkRange::new(7..8, Mark::Bold)]);
+    assert_eq!(e.focus, 9);
+}
+
+#[test]
+fn a_rich_paste_over_a_selected_atom_keeps_its_line_as_typing_does() {
+    let over = |f: fn(&mut TextEdit)| {
+        let mut e = field("before\nTabelle\nafter", &[1]);
+        e.set_selection(7, 14);
+        reported(&mut e, f);
+        (e.text.clone(), ids(&e), atoms(&e), e.focus)
+    };
+    let typed = over(|e| { e.key(&k(Key::Text("Xy".into())), None); });
+    let plain = over(|e| { e.paste("Xy"); });
+    let rich = over(|e| { e.paste_html("<b>X</b>y", "Xy"); });
+    assert_eq!(typed, ("before\nXy\nafter".to_string(), vec![1, 10, 3], vec![false; 3], 9));
+    assert_eq!((&plain, &rich), (&typed, &typed));
+}
+
+#[test]
+fn a_rich_paste_of_paragraphs_over_a_selected_atom_stays_between_its_neighbours() {
+    let mut e = field("before\nTabelle\nafter", &[1]);
+    e.set_selection(7, 14);
+    reported(&mut e, |e| { e.paste_html(RICH, "Xy\nL1\nL2"); });
+    assert_eq!(lines(&e), ["before", "Xy", "L1", "L2", "after"]);
+    assert_eq!(e.marks(), [MarkRange::new(7..8, Mark::Bold)]);
+    let p = Block::Paragraph;
+    assert_eq!(e.blocks(), [p, p, Block::Bullet(0), Block::Bullet(0), p]);
+    assert_eq!((ids(&e), atoms(&e)), (vec![1, 10, 11, 12, 3], vec![false; 5]));
+}
+
+#[test]
+fn a_rich_paste_over_a_run_of_atoms_leaves_one_line() {
+    let mut e = field("before\nTabelle\nBild\nafter", &[1, 2]);
+    e.set_selection(7, 19);
+    reported(&mut e, |e| { e.paste_html("<b>X</b>y", "Xy"); });
+    assert_eq!((lines(&e), ids(&e), atoms(&e)), (vec!["before", "Xy", "after"], vec![1, 10, 4], vec![false; 3]));
 }
 
 #[test]
@@ -105,7 +145,40 @@ fn text_typed_over_an_atom_up_to_the_next_keeps_ids_apart() {
     e.set_selection(0, 8);
     reported(&mut e, |e| { e.key(&k(Key::Text("x".into())), None); });
     assert_eq!((lines(&e), atoms(&e)), (vec!["x", "Bild"], vec![false, true]));
-    assert_eq!(ids(&e), [1, 2], "the typed paragraph keeps the first atom's id, as text typed over one atom does");
+    assert_eq!(ids(&e), [10, 2], "the typed paragraph is a new one: an atom's id never names text");
+}
+
+#[test]
+fn text_typed_over_an_atom_takes_a_new_id() {
+    let mut e = field("before\nTabelle\nafter", &[1]);
+    e.set_selection(7, 14);
+    reported(&mut e, |e| { e.key(&k(Key::Text("x".into())), None); });
+    assert_eq!((lines(&e), ids(&e), atoms(&e)), (vec!["before", "x", "after"], vec![1, 10, 3], vec![false; 3]));
+}
+
+#[test]
+fn text_typed_over_a_run_of_atoms_up_to_the_next_takes_a_new_id() {
+    let mut e = field("Tabelle\nBild\nGrafik", &[0, 1, 2]);
+    e.set_selection(0, 13);
+    reported(&mut e, |e| { e.key(&k(Key::Text("x".into())), None); });
+    assert_eq!((lines(&e), ids(&e), atoms(&e)), (vec!["x", "Grafik"], vec![10, 3], vec![false, true]));
+}
+
+#[test]
+fn text_typed_from_inside_an_atoms_label_takes_a_new_id() {
+    let mut e = field("before\nTabelle\nafter", &[1]);
+    e.set_selection(9, 14);
+    reported(&mut e, |e| { e.key(&k(Key::Text("x".into())), None); });
+    assert_eq!((atoms(&e), ids(&e)), (vec![false; 3], vec![1, 10, 3]));
+}
+
+#[test]
+fn a_paste_over_atoms_takes_a_new_id() {
+    let mut e = field("before\nTabelle\nBild\nafter", &[1, 2]);
+    e.set_selection(7, 19);
+    reported(&mut e, |e| { e.paste("eins\nzwei"); });
+    assert_eq!((lines(&e), atoms(&e)), (vec!["before", "eins", "zwei", "after"], vec![false; 4]));
+    assert_eq!(ids(&e), [1, 10, 11, 4]);
 }
 
 #[test]
