@@ -398,7 +398,16 @@ impl TextEdit {
             first
         };
         let mut lines = Vec::with_capacity(added + 1);
-        lines.push(if kept.head || (kept.tail && added == 0) { survivor } else { self.as_text(survivor) });
+        lines.push(if kept.head || (kept.tail && added == 0) {
+            survivor
+        } else if kept.tail && la == lb {
+            // The atom an insertion pushed down a line took its attributes with it: the line
+            // the typed text is on is a new paragraph.
+            let id = self.fresh_id();
+            last.split(id)
+        } else {
+            self.as_text(survivor)
+        });
         for k in 1..=added {
             let tail = k == added;
             let own = if tail && kept.tail {
@@ -410,12 +419,6 @@ impl TextEdit {
                 lines[0].split(id)
             };
             lines.push(own);
-        }
-        // The atom an insertion pushed down a line took its attributes with it: the line the
-        // typed text is on is a new paragraph.
-        if kept.tail && added > 0 && la == lb {
-            let id = self.fresh_id();
-            lines[0] = last.split(id);
         }
         let end = (lb + 1).min(self.attrs.len());
         self.attrs.splice(la.min(end)..end, lines);
