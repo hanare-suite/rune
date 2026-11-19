@@ -720,3 +720,23 @@ fn underlined_words_in_a_row_meet_without_gaps() {
         assert_eq!(w[0].1, w[1].0, "each line meets the next: {lines:?}");
     }
 }
+
+/// The object character under a pill whose icon stands in for it takes no room at any scale,
+/// whatever advance and tracking its font gives it: the pill is as wide as its icon and padding.
+#[test]
+fn an_object_character_an_icon_stands_in_for_takes_no_room() {
+    static DOT: Icon = Icon { name: "dot", view: 24.0, body: "<circle cx=\"12\" cy=\"12\" r=\"8\"/>" };
+    let mut text = TextSystem::default();
+    let pm = PillMetrics::new(14.0);
+    for style in [TextStyle::new(14.0, 400.0), TextStyle::new(14.0, 400.0).family(Family::Mono)] {
+        for scale in [1.0, 2.0, 3.0] {
+            let pills = [PillChip { start: 1, end: 4, icon: Some(&DOT), bg: None, fg: None, bare: None, stand_in: true }];
+            let layout = text.layout_blocks("a\u{FFFC}b", &[], &[], &pills, style, scale, None, Alignment::Start);
+            let advance = layout.lines().flat_map(|line| line.runs()).flat_map(|run| run.clusters()).find(|c| c.text_range() == (1..4)).map(|c| c.advance());
+            assert!(advance.is_some_and(|a| a.abs() < 0.01), "{:?} at scale {scale}: the character advances {advance:?}", style.family);
+            let around = text.layout_blocks("ab", &[], &[], &[], style, scale, None, Alignment::Start).full_width();
+            let room = ((pm.lead_alone() * scale).round() + (pm.trail() * scale).round()) as f32;
+            assert!((layout.full_width() - around - room).abs() < 1.0, "{:?} at scale {scale}: {} wide, {around} without the pill and {room} for it", style.family, layout.full_width());
+        }
+    }
+}
