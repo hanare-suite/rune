@@ -11,12 +11,32 @@ use crate::edit::Baseline;
 pub(super) fn families<'a>(spans: &'a [Span], collection: &mut Collection, rest: &[FontFamilyName<'a>]) -> Families<'a> {
     let mut out: Vec<(&'a str, Vec<FontFamilyName<'a>>)> = Vec::new();
     for name in spans.iter().filter_map(|s| s.family.as_deref()) {
-        if out.iter().any(|(n, _)| *n == name) || collection.family_id(name).is_none() {
+        let family = alias_of(name).unwrap_or(name);
+        if out.iter().any(|(n, _)| *n == name) || collection.family_id(family).is_none() {
             continue;
         }
-        out.push((name, std::iter::once(FontFamilyName::named(name)).chain(rest.iter().cloned()).collect()));
+        out.push((name, std::iter::once(FontFamilyName::named(family)).chain(rest.iter().cloned()).collect()));
     }
     Families(out)
+}
+
+static ALIASES: std::sync::RwLock<Vec<(&'static str, &'static str)>> = std::sync::RwLock::new(Vec::new());
+
+/// Draws runs whose span or [`Mark::Family`](crate::Mark::Family) names `name` in the
+/// registered family `family`: a word processor shows a document's Calibri in the
+/// metric-compatible font it bundles and keeps the name. Names match whatever their case.
+/// Call it before the first frame; an alias set later reaches text laid out after it.
+pub fn alias_family(name: &str, family: &str) {
+    let mut aliases = ALIASES.write().unwrap_or_else(|e| e.into_inner());
+    if let Some(slot) = aliases.iter_mut().find(|(n, _)| n.eq_ignore_ascii_case(name)) {
+        slot.1 = Box::leak(family.to_owned().into_boxed_str());
+    } else {
+        aliases.push((Box::leak(name.to_owned().into_boxed_str()), Box::leak(family.to_owned().into_boxed_str())));
+    }
+}
+
+fn alias_of(name: &str) -> Option<&'static str> {
+    ALIASES.read().unwrap_or_else(|e| e.into_inner()).iter().find(|(n, _)| n.eq_ignore_ascii_case(name)).map(|(_, family)| *family)
 }
 
 pub(super) struct Families<'a>(Vec<(&'a str, Vec<FontFamilyName<'a>>)>);

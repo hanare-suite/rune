@@ -2,17 +2,21 @@
 //!
 //! Supported elements:
 //! - Inline: `<b>`, `<strong>`, `<i>`, `<em>`, `<u>`, `<ins>`, `<s>`, `<del>`, `<strike>`,
-//!   `<a href="...">`, `<code>`, and CSS `style` attributes (`font-weight`, `font-style`,
-//!   `text-decoration`, `text-decoration-line`), and `<span data-pill="id">` for
+//!   `<a href="...">`, `<code>`, `<sub>`, `<sup>`, and CSS `style` attributes (`font-weight`,
+//!   `font-style`, `text-decoration`, `text-decoration-line`, `font-family`, `font-size`,
+//!   `color`, `background-color`, `vertical-align`), and `<span data-pill="id">` for
 //!   [`Mark::Pill`].
-//! - Block: `<p>`, `<div>`, `<br>`, `<ul>`, `<ol>`, `<li>`, `<blockquote>`, `<pre>`.
+//! - Block: `<p>`, `<div>`, `<br>`, `<ul>`, `<ol>`, `<li>`, `<blockquote>`, `<pre>`, with
+//!   `text-align`, and the elements a field's [`HtmlStyle`]s name for its paragraph styles
+//!   (`<h1>`, `<p class="title">`).
 //! - Stripped with content: `<script>`, `<style>`, `<head>`.
 //! - Unknown tags drop their wrapper and keep their text. Nothing is executed, and dangerous
 //!   link schemes (`javascript:`, `vbscript:`, `data:`) are rejected.
 
 use std::ops::Range;
 
-use super::{Block, MAX_LIST_LEVEL, Mark, MarkRange, TextEdit};
+use super::{Baseline, Block, HtmlStyle, MAX_LIST_LEVEL, Mark, MarkColor, MarkRange, MarkSize, ParagraphAlign, ParagraphAttrs, TextEdit};
+use crate::color::Color;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ListKind {
@@ -179,13 +183,94 @@ fn extract_attr(attrs: &str, name: &str) -> Option<String> {
     None
 }
 
-/// Parses inline CSS `style="..."` for `font-weight`, `font-style`, and `text-decoration`.
+/// A CSS colour: `#rgb`, `#rrggbb`, `rgb(r, g, b)` or one of the names Word and browsers
+/// write. None for anything else, `transparent`, `windowtext` and `inherit` among them.
+fn css_color(val: &str) -> Option<Color> {
+    let v = val.trim().to_ascii_lowercase();
+    let rgb = |r: u8, g: u8, b: u8| crate::color::hex(&format!("#{r:02x}{g:02x}{b:02x}"));
+    if let Some(h) = v.strip_prefix('#') {
+        if !h.bytes().all(|b| b.is_ascii_hexdigit()) { return None; }
+        return match h.len() {
+            3 => crate::color::hex(&format!("#{}", h.chars().flat_map(|c| [c, c]).collect::<String>())),
+            6 => crate::color::hex(&v),
+            _ => None,
+        };
+    }
+    if let Some(body) = v.strip_prefix("rgb(").or_else(|| v.strip_prefix("rgba(")).and_then(|b| b.strip_suffix(')')) {
+        let mut parts = body.split([',', ' ', '/']).filter(|p| !p.is_empty());
+        let mut channel = || parts.next()?.trim().parse::<f32>().ok().map(|c| c.clamp(0.0, 255.0).round() as u8);
+        let (r, g, b) = (channel()?, channel()?, channel()?);
+        // A colour that is fully transparent is no colour.
+        if parts.next().is_some_and(|a| a.trim().parse::<f32>().is_ok_and(|a| a == 0.0)) { return None; }
+        return rgb(r, g, b);
+    }
+    let (r, g, b) = match v.as_str() {
+        "black" => (0, 0, 0), "white" => (255, 255, 255), "red" => (255, 0, 0), "green" => (0, 128, 0), "blue" => (0, 0, 255),
+        "yellow" => (255, 255, 0), "cyan" | "aqua" => (0, 255, 255), "magenta" | "fuchsia" => (255, 0, 255),
+        "gray" | "grey" => (128, 128, 128), "silver" => (192, 192, 192), "maroon" => (128, 0, 0), "olive" => (128, 128, 0),
+        "navy" => (0, 0, 128), "purple" => (128, 0, 128), "teal" => (0, 128, 128), "lime" => (0, 255, 0), "orange" => (255, 165, 0),
+        "darkblue" => (0, 0, 139), "darkcyan" => (0, 139, 139), "darkgreen" => (0, 100, 0), "darkmagenta" => (139, 0, 139),
+        "darkred" => (139, 0, 0), "darkyellow" => (128, 128, 0), "darkgray" | "darkgrey" => (169, 169, 169),
+        "lightgray" | "lightgrey" => (211, 211, 211),
+        _ => return None,
+    };
+    rgb(r, g, b)
+}
+
+/// A CSS length as points: `12pt`, `16px`. None for a keyword or another unit.
+fn css_points(val: &str) -> Option<f32> {
+    let v = val.trim().to_ascii_lowercase();
+    let (number, scale) = if let Some(n) = v.strip_suffix("pt") { (n, 1.0) } else if let Some(n) = v.strip_suffix("px") { (n, 0.75) } else { return None };
+    number.trim().parse::<f32>().ok().filter(|n| n.is_finite() && *n >= 1.0 && *n <= 1638.0).map(|n| n * scale)
+}
+
+/// The first family of a CSS `font-family` list, without its quotes.
+fn css_family(val: &str) -> Option<&str> {
+    let first = val.split(',').next()?.trim().trim_matches(['"', '\'']).trim();
+    (!first.is_empty() && !matches!(first.to_ascii_lowercase().as_str(), "inherit" | "initial" | "serif" | "sans-serif" | "monospace")).then_some(first)
+}
+
+/// `text-align` of an inline `style`, or the `align` attribute.
+fn block_align(attrs: &str) -> Option<ParagraphAlign> {
+    let of = |v: &str| match v.trim().to_ascii_lowercase().as_str() {
+        "left" | "start" => Some(ParagraphAlign::Left),
+        "center" => Some(ParagraphAlign::Center),
+        "right" | "end" => Some(ParagraphAlign::Right),
+        "justify" => Some(ParagraphAlign::Justified),
+        _ => None,
+    };
+    let styled = extract_attr(attrs, "style").and_then(|style| {
+        style.split(';').filter_map(|d| d.split_once(':')).filter(|(p, _)| p.trim().eq_ignore_ascii_case("text-align")).find_map(|(_, v)| of(v))
+    });
+    styled.or_else(|| extract_attr(attrs, "align").and_then(|v| of(&v)))
+}
+
+/// The paragraph style `styles` gives the element `tag` with these attributes.
+fn block_style(styles: &[HtmlStyle], tag: &str, attrs: &str) -> Option<u16> {
+    let class = extract_attr(attrs, "class");
+    let has = |name: &str| class.as_deref().is_some_and(|c| c.split_whitespace().any(|c| c.eq_ignore_ascii_case(name)));
+    // An entry with a class is the closer match, so it is asked first.
+    styles.iter().find(|s| s.tag == tag && s.class.is_some_and(has)).or_else(|| styles.iter().find(|s| s.tag == tag && s.class.is_none())).map(|s| s.style)
+}
+
+/// Parses inline CSS `style="..."` for the marks this model keeps.
 fn parse_style_marks(style: &str, add: &mut Vec<Mark>, remove: &mut Vec<Mark>) {
     for decl in style.split(';') {
         let Some((prop, val)) = decl.split_once(':') else { continue };
         let prop = prop.trim();
         let val = val.trim();
-        if prop.eq_ignore_ascii_case("font-weight") {
+        if prop.eq_ignore_ascii_case("font-family") {
+            if let Some(name) = css_family(val) { add.push(Mark::family(name)); }
+        } else if prop.eq_ignore_ascii_case("font-size") {
+            if let Some(points) = css_points(val) { add.push(Mark::Size(MarkSize::pt(points))); }
+        } else if prop.eq_ignore_ascii_case("color") {
+            if let Some(c) = css_color(val) { add.push(Mark::Color(MarkColor::new(c))); }
+        } else if prop.eq_ignore_ascii_case("background-color") || prop.eq_ignore_ascii_case("background") || prop.eq_ignore_ascii_case("mso-highlight") {
+            if let Some(c) = val.split_whitespace().find_map(css_color) { add.push(Mark::Highlight(MarkColor::new(c))); }
+        } else if prop.eq_ignore_ascii_case("vertical-align") {
+            if val.eq_ignore_ascii_case("super") { add.push(Mark::Baseline(Baseline::Super)); }
+            else if val.eq_ignore_ascii_case("sub") { add.push(Mark::Baseline(Baseline::Sub)); }
+        } else if prop.eq_ignore_ascii_case("font-weight") {
             let v = val.split_whitespace().next().unwrap_or("");
             if v.eq_ignore_ascii_case("bold")
                 || v.eq_ignore_ascii_case("bolder")
@@ -230,8 +315,10 @@ struct TagFrame {
     suppressed_marks: Vec<Mark>,
 }
 
-pub(crate) fn parse_html(html: &str) -> TextEdit {
+pub(crate) fn parse_html(html: &str, styles: &[HtmlStyle]) -> TextEdit {
     let mut text = String::new();
+    // Each line's attributes, as far as a block element set them.
+    let mut line_attrs: Vec<ParagraphAttrs> = Vec::new();
     let mut marks: Vec<MarkRange> = Vec::new();
     let mut blocks: Vec<Block> = vec![Block::Paragraph];
     let mut soft_breaks: Vec<u32> = Vec::new();
@@ -464,6 +551,10 @@ pub(crate) fn parse_html(html: &str) -> TextEdit {
                             blk,
                             in_pre,
                         );
+                        if let Some(align) = block_align(attrs) {
+                            line_attrs.resize(blocks.len(), ParagraphAttrs::default());
+                            line_attrs[blocks.len() - 1].align = align;
+                        }
                     }
                     "blockquote" => {
                         in_quote += 1;
@@ -507,6 +598,14 @@ pub(crate) fn parse_html(html: &str) -> TextEdit {
                             blk,
                             in_pre,
                         );
+                        // Inside a list item the item's own line keeps what it has.
+                        let (style, align) = (block_style(styles, &tag, attrs), block_align(attrs));
+                        if style.is_some() || align.is_some() {
+                            line_attrs.resize(blocks.len(), ParagraphAttrs::default());
+                            let slot = &mut line_attrs[blocks.len() - 1];
+                            slot.style = style.unwrap_or(slot.style);
+                            slot.align = align.unwrap_or(slot.align);
+                        }
                     }
                     _ => {}
                 }
@@ -514,6 +613,10 @@ pub(crate) fn parse_html(html: &str) -> TextEdit {
                 let mut to_add = Vec::new();
                 let mut to_suppress = Vec::new();
                 match tag.as_str() {
+                    // A heading the field has a style for is that style, not bold text.
+                    "h1" | "h2" | "h3" | "h4" | "h5" | "h6" if block_style(styles, &tag, attrs).is_some() => {}
+                    "sub" => to_add.push(Mark::Baseline(Baseline::Sub)),
+                    "sup" => to_add.push(Mark::Baseline(Baseline::Super)),
                     "b" | "strong" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => to_add.push(Mark::Bold),
                     "i" | "em" => to_add.push(Mark::Italic),
                     "u" | "ins" => to_add.push(Mark::Underline),
@@ -770,7 +873,17 @@ pub(crate) fn parse_html(html: &str) -> TextEdit {
     }
 
     let mut edit = TextEdit::from_parts(text, marks, blocks);
+    // A line `<br>` made is part of the paragraph before it.
+    line_attrs.resize(edit.blocks().len(), ParagraphAttrs::default());
+    for &line in &soft_breaks {
+        if let Some(i) = (line as usize).checked_sub(1).filter(|_| (line as usize) < line_attrs.len()) {
+            line_attrs[i + 1] = line_attrs[i];
+        }
+    }
     edit.soft_breaks = soft_breaks;
+    if line_attrs.iter().any(|a| *a != ParagraphAttrs::default()) {
+        edit.set_paragraph_attrs(line_attrs);
+    }
     edit
 }
 
@@ -855,6 +968,7 @@ pub(crate) fn serialize_html(edit: &TextEdit, range: Range<usize>) -> String {
                     }
                     out.push_str("<li");
                     out.push_str(dirs[idx]);
+                    out.push_str(align_css(edit.paragraph(paras[idx].0).align));
                     out.push('>');
                     serialize_inline(edit, r.clone(), &mut out);
                     idx += 1;
@@ -886,8 +1000,18 @@ pub(crate) fn serialize_html(edit: &TextEdit, range: Range<usize>) -> String {
                 out.push_str("</blockquote>");
             }
             Block::Paragraph => {
-                out.push_str("<p");
+                let attrs = edit.paragraph(paras[idx].0);
+                let named = edit.html_styles().iter().find(|s| s.style == attrs.style);
+                let tag = named.map_or("p", |s| s.tag);
+                out.push('<');
+                out.push_str(tag);
+                if let Some(class) = named.and_then(|s| s.class) {
+                    out.push_str(" class=\"");
+                    escape_html(class, &mut out);
+                    out.push('"');
+                }
                 out.push_str(dirs[idx]);
+                out.push_str(align_css(attrs.align));
                 out.push('>');
                 serialize_inline(edit, paras[idx].1.clone(), &mut out);
                 idx += 1;
@@ -896,11 +1020,44 @@ pub(crate) fn serialize_html(edit: &TextEdit, range: Range<usize>) -> String {
                     serialize_inline(edit, paras[idx].1.clone(), &mut out);
                     idx += 1;
                 }
-                out.push_str("</p>");
+                out.push_str("</");
+                out.push_str(tag);
+                out.push('>');
             }
         }
     }
     out
+}
+
+/// A block's ` style` attribute for its alignment, empty when it is left-aligned.
+fn align_css(align: ParagraphAlign) -> &'static str {
+    match align {
+        ParagraphAlign::Left => "",
+        ParagraphAlign::Center => " style=\"text-align:center\"",
+        ParagraphAlign::Right => " style=\"text-align:right\"",
+        ParagraphAlign::Justified => " style=\"text-align:justify\"",
+    }
+}
+
+/// The inline CSS of the marks among `active` that have no element of their own: family,
+/// size, colour and highlight.
+fn span_css(active: &[&Mark]) -> String {
+    let mut css = String::new();
+    let rgb = |c: MarkColor| c.get().hex()[..7].to_owned();
+    for m in active {
+        match m {
+            Mark::Family(name) => {
+                let name: String = name.chars().filter(|c| !matches!(c, '\'' | '"' | ';' | '<' | '>' | '&' | '\\')).collect();
+                css.push_str(&format!("font-family:'{name}';"));
+            }
+            Mark::Size(size) => css.push_str(&format!("font-size:{}pt;", size.get())),
+            Mark::Color(c) => css.push_str(&format!("color:{};", rgb(*c))),
+            Mark::Highlight(c) => css.push_str(&format!("background-color:{};", rgb(*c))),
+            _ => {}
+        }
+    }
+    css.pop();
+    css
 }
 
 /// Each copied block's ` dir` attribute, by `paras` index: the direction the field showed it in
@@ -999,8 +1156,16 @@ fn serialize_marks(edit: &TextEdit, range: Range<usize>, out: &mut String) {
             Mark::Pill(_) => 6,
             other => other.kind_order(),
         });
+        let css = span_css(&active);
+        if !css.is_empty() {
+            out.push_str("<span style=\"");
+            out.push_str(&css);
+            out.push_str("\">");
+        }
         for m in &active {
             match m {
+                Mark::Baseline(Baseline::Sub) => out.push_str("<sub>"),
+                Mark::Baseline(Baseline::Super) => out.push_str("<sup>"),
                 Mark::Bold => out.push_str("<strong>"),
                 Mark::Italic => out.push_str("<em>"),
                 Mark::Underline => out.push_str("<u>"),
@@ -1023,8 +1188,13 @@ fn serialize_marks(edit: &TextEdit, range: Range<usize>, out: &mut String) {
                 Mark::Strike => out.push_str("</s>"),
                 Mark::Code => out.push_str("</code>"),
                 Mark::Link(_) => out.push_str("</a>"),
+                Mark::Baseline(Baseline::Sub) => out.push_str("</sub>"),
+                Mark::Baseline(Baseline::Super) => out.push_str("</sup>"),
                 _ => {}
             }
+        }
+        if !css.is_empty() {
+            out.push_str("</span>");
         }
     }
 }
