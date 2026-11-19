@@ -202,6 +202,11 @@ impl El {
     /// how many took their place, and changes of marks or paragraph attributes alone. One call
     /// an event, so an app that keeps its own history ([`TextEdit::set_history`](crate::TextEdit::set_history))
     /// makes one step of it. An event that changed nothing calls nothing.
+    ///
+    /// The slice can hold several changes (a rich paste over a selection deletes, inserts and
+    /// then sets marks and paragraphs). They are in the order they happened, each range in the
+    /// text the change before it left. Apply them in order, and read inserted text from the
+    /// field's text now as [`EditChange`](crate::EditChange) describes.
     pub fn on_input_edits<S: 'static>(mut self, f: impl Fn(&mut S, &[crate::EditChange], &mut Tx) + 'static) -> Self {
         if let Some(input) = self.cold.get_mut_if_some().and_then(|c| c.input.as_deref_mut()) {
             input.edits = Some(Rc::new(move |s, changes, tx| f(downcast::<S>(s), changes, tx)));

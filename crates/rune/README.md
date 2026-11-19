@@ -1543,8 +1543,10 @@ example, and `spikes/paged/check.py` checks every point below headless.
 - **Locked atoms**: a paragraph with `ParagraphAttrs::atom(height)` is one block `height` points
   tall that shows its text as a label, for content an app keeps but cannot edit. The caret
   steps over it as one character, a selection that touches it covers it, and Backspace or
-  Delete beside it removes it with its line as one edit. Text typed beside it gets a paragraph
-  of its own. `edit.insert_atom(label, height)` adds one. Accessibility exposes it as a group
+  Delete with the caret at its edge removes it with its line as one edit. From the paragraph
+  after it Backspace selects it whole, and so does Delete from the paragraph before it; a
+  second press deletes it. An empty paragraph beside it goes at the first press instead.
+  Text typed beside it gets a paragraph of its own. `edit.insert_atom(label, height)` adds one. Accessibility exposes it as a group
   named by its label. `.atom_colors(fill, border)` colours its box.
 - **One history**: `edit.set_history(false)` stops the field recording undo steps. Undo and
   redo then do nothing in the field and their keys go on to the app (`AppSpec::on_key`). Every
@@ -1552,7 +1554,11 @@ example, and `spikes/paged/check.py` checks every point below headless.
   before became `len` bytes, and for `EditChangeKind::Marks` and `Paragraphs` the same bytes
   kept their text and changed their marks, or their attributes and blocks.
   `.on_input_edits(|s, changes, tx| ..)` hands an event's changes over in one call;
-  `edit.take_changes()` gives them after edits the app makes itself.
+  `edit.take_changes()` gives them after edits the app makes itself. One event can report
+  several changes, in the order they happened, each range in the text the change before it
+  left. A change carries no text: apply them in order and read what each inserted from
+  `edit.text` as it is now, mapping its bytes forward through the later changes (the docs
+  of `EditChange` have the rule).
 
 ### Selectable text
 

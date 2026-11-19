@@ -138,6 +138,8 @@ pub(super) struct Fenced {
     pub(super) text: Option<String>,
     /// How far before the inserted text's end the caret goes: over a line break added there.
     pub(super) back: usize,
+    /// How far past `a` the caller's own text starts: over a line break added before it.
+    pub(super) lead: usize,
 }
 
 /// Which lines of an edit hold an atom's untouched label, and so keep its attributes.
@@ -294,6 +296,28 @@ impl TextEdit {
         Some((start, self.text[i..].find('\n').map_or(self.text.len(), |n| i + n)))
     }
 
+    /// The atom Backspace (Delete when `forward`) runs into from `at`: the paragraph before the
+    /// start of a paragraph with text, or the one after its end. An empty paragraph beside an
+    /// atom has none: the key removes the paragraph instead.
+    pub(super) fn atom_beside(&self, at: usize, forward: bool) -> Option<(usize, usize)> {
+        if !self.has_atoms() { return None; }
+        let line = self.line_of_byte(at);
+        let range = self.line_range(line);
+        if range.is_empty() { return None; }
+        let other = if forward { (at == range.end).then_some(line + 1)? } else { (at == range.start).then(|| line.checked_sub(1))?? };
+        self.attrs.get(other)?.atom?;
+        let label = self.line_range(other);
+        Some((label.start, label.end))
+    }
+
+    /// Selects the atom at `start..end` whole, as the first Backspace or Delete beside a table
+    /// selects it in a word processor: the next one deletes it as one edit.
+    pub(super) fn select_atom(&mut self, (start, end): (usize, usize)) {
+        self.break_history_group();
+        (self.anchor, self.focus) = (start, end);
+        self.typing = Typing::Inherited;
+    }
+
     /// Keeps the attributes one a line.
     pub(super) fn sync_attrs(&mut self, lines: usize) {
         if !self.attrs.is_empty() {
@@ -306,7 +330,7 @@ impl TextEdit {
     /// on a line of its own instead: before the atom when the edit ends at its start, after it
     /// when the edit starts at its end.
     pub(super) fn fence(&self, a: usize, b: usize, s: &str) -> Fenced {
-        let plain = Fenced { a, b, text: None, back: 0 };
+        let plain = Fenced { a, b, text: None, back: 0, lead: 0 };
         if !self.has_atoms() { return plain; }
         let (la, lb) = (self.line_of_byte(a), self.line_of_byte(b));
         let (ra, rb) = (self.line_range(la), self.line_range(lb));
@@ -323,7 +347,7 @@ impl TextEdit {
             && !(s.is_empty() && b == rb.end) && !s.starts_with('\n');
         if !before && !after { return plain; }
         let text = format!("{}{s}{}", if after { "\n" } else { "" }, if before { "\n" } else { "" });
-        Fenced { a, b, text: Some(text), back: usize::from(before) }
+        Fenced { a, b, text: Some(text), back: usize::from(before), lead: usize::from(after) }
     }
 
     /// Which ends of an edit replacing `a..b` (lines `la` to `lb`) with `s` are an atom's
@@ -341,11 +365,21 @@ impl TextEdit {
     /// The attributes after an edit that merged lines `la..=lb` into one and added `added`
     /// lines after it. The merged line keeps `la`'s attributes (`lb`'s with `take_b`), each
     /// added line takes a copy with a new id, and an atom stays only on a line `kept` names.
+    /// An atom `kept.tail` names is the last line the edit leaves and keeps its own attributes
+    /// there, so the merged line never takes them too: no id ends up on two paragraphs.
     pub(super) fn splice_attrs(&mut self, la: usize, lb: usize, added: usize, take_b: bool, kept: Kept) {
         if self.attrs.is_empty() { return; }
         let get = |attrs: &[ParagraphAttrs], i: usize| attrs.get(i).copied().unwrap_or_default();
         let (first, last) = (get(&self.attrs, la), get(&self.attrs, lb));
-        let survivor = if kept.head { first } else if take_b || (kept.tail && added == 0) { last } else { first };
+        let survivor = if kept.head {
+            first
+        } else if kept.tail {
+            if added == 0 { last } else { first }
+        } else if take_b {
+            last
+        } else {
+            first
+        };
         let mut lines = Vec::with_capacity(added + 1);
         lines.push(if kept.head || (kept.tail && added == 0) { survivor } else { ParagraphAttrs { atom: None, ..survivor } });
         for k in 1..=added {

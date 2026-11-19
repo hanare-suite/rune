@@ -218,6 +218,7 @@ fn return_beside_an_atom_adds_an_empty_paragraph() {
 
 #[test]
 fn no_paragraph_merges_into_an_atoms_label() {
+    // The first press selects the atom (`atom_edge_tests`) and changes nothing.
     let mut e = with_atom();
     e.set_caret(15);
     e.key(&k(Key::Backspace), None);

@@ -83,6 +83,9 @@ impl Placed {
 /// and is asked only when it doesn't fit what is left of its page. The room above is dropped
 /// at the top of a page the paragraph flowed onto, and kept under a forced break.
 ///
+/// A line taller than a page stands alone on its page and runs past its end, and the line
+/// after it starts the first page below where it ends: a gap is never negative.
+///
 /// With [`Pages::keep`], the line that starts a page is never the paragraph's second (its
 /// first would stand alone at the page's end: an orphan) nor its last (a widow): one more line
 /// goes with it, or the whole paragraph.
@@ -120,7 +123,13 @@ pub(super) fn place(pages: Option<Pages>, y: f64, first: bool, before: f64, forc
             // A line already at its page's top can't move further.
             if j < i && (j < page_first || line_top(j, top, shift) <= bottom - p.height) { j = i; }
         }
-        let next = bottom - p.height + p.stride;
+        // The next page's top, or the first one below a line so tall it ran past that: a line
+        // never moves up over the one before it.
+        let mut next = bottom - p.height + p.stride;
+        if j > 0 {
+            let at = line_top(j, top, shift);
+            if at > next { next += ((at - next) / p.stride).ceil() * p.stride; }
+        }
         if j == 0 {
             top = next - f64::from(lines[0].0);
         } else {

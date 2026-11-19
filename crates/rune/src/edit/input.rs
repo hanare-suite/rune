@@ -213,6 +213,8 @@ impl TextEdit {
                             }
                             Block::Paragraph => unreachable!(),
                         }
+                    } else if let Some(atom) = self.atom_beside(a, false) {
+                        self.select_atom(atom);
                     } else if a > 0 {
                         let from = if line {
                             if self.is_masked() { 0 } else { self.text[..a].rfind('\n').map_or(0, |i| i + 1) }
@@ -229,6 +231,8 @@ impl TextEdit {
                 let (a, b) = self.range();
                 if a != b || (self.is_hidden_multiline() && self.is_pristine()) {
                     self.replace(self.range(), "", EditKind::Delete);
+                } else if let Some(atom) = self.atom_beside(a, true) {
+                    self.select_atom(atom);
                 } else if a < self.text.len() {
                     let to = if word { self.next_word(a) } else { next_char(&self.text, a) };
                     self.replace((a, to), "", if word { EditKind::DeleteRun } else { EditKind::Delete });
@@ -504,13 +508,19 @@ impl TextEdit {
         if a < b {
             self.apply_text_and_attr_replace((a, b), "", &[], None, false);
         }
-        let ins_at = a;
-        let line_idx = self.line_of_byte(ins_at);
-        let line_range = self.line_range(line_idx);
+        // Where the caret landed: deleting an atom takes its line break too, which can be the
+        // one before it.
+        let at = self.range().0;
+        // Beside an atom the text goes on lines of its own, behind a line break (`lead`) or
+        // before one. Its marks and blocks go where its own first byte and line do.
+        let fenced = self.fence(at, at, &frag.text);
+        let (ins_at, line_idx) = (at + fenced.lead, self.line_of_byte(at) + fenced.lead);
+        let own_line = fenced.text.is_some();
+        let line_range = if own_line { ins_at..ins_at } else { self.line_range(line_idx) };
         let line_was_empty = line_range.is_empty();
-        let orig_block = self.blocks.get(line_idx).copied().unwrap_or(Block::Paragraph);
+        let orig_block = if own_line { Block::Paragraph } else { self.blocks.get(line_idx).copied().unwrap_or(Block::Paragraph) };
 
-        self.apply_text_and_attr_replace((ins_at, ins_at), &frag.text, &[], None, false);
+        self.apply_fenced((at, at), fenced.text.as_deref().unwrap_or(&frag.text), &[], None, false, fenced.back);
 
         // Apply `frag.blocks` and `frag.soft_breaks`.
         let frag_lines = frag.blocks.len();

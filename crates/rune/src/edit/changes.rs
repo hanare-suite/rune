@@ -5,7 +5,28 @@
 use super::*;
 
 /// One change an edit made. `range` is in the text as it was before the change, and `len` is
-/// how many bytes stand there after it: `range.start..range.start + len` of the text now.
+/// how many bytes stand there after it: `range.start..range.start + len` of the text the
+/// change left.
+///
+/// # Several changes
+///
+/// One event can report several changes. A rich paste over a selection reports the deletion,
+/// the insertion, the marks it set and the paragraphs it set, and changes left untaken over
+/// several edits queue up the same way. They come in the order they happened, and each `range`
+/// is in the text the change before it left: not in the text before the first, and not in the
+/// text now.
+///
+/// A change carries no text, so that a field nobody takes changes from keeps no copy of what
+/// was typed into it. A consumer that follows the field applies the changes in order and
+/// reads what each one inserted from the field's text now, after mapping the change's bytes
+/// `range.start..range.start + len` forward through every later change `c`: a byte before
+/// `c.range.start` stays where it is, and a byte at or past `c.range.end` moves by
+/// `c.len - c.range.len()`. A byte inside `c.range` was replaced again and needs no value,
+/// since applying `c` overwrites it. [`EditChangeKind::Marks`] and
+/// [`EditChangeKind::Paragraphs`] replace no text and move nothing.
+///
+/// A consumer that only needs to know what to read again can take the changes' union
+/// instead: the first changed byte, and the last one in the text before and in the text now.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct EditChange {
@@ -61,6 +82,10 @@ impl TextEdit {
     /// pasted, and changes of marks and paragraph attributes alone. An app that keeps its own
     /// history ([`Self::set_history`]) builds its steps from them. Left untaken they fold into
     /// one change over the whole text past a few hundred, so the list stays small.
+    ///
+    /// One edit can make several changes, and each one's range is in the text the change
+    /// before it left. Apply them in order, and read inserted text from [`Self::text`] as
+    /// [`EditChange`] describes.
     ///
     /// The runtime hands the same list to [`El::on_input_edits`](crate::El::on_input_edits)
     /// after each event it routes to the field; call this after edits the app makes itself.

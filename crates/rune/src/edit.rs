@@ -540,7 +540,10 @@ impl TextEdit {
         self.blocks = vec![Block::Paragraph; line_count];
         self.soft_breaks.clear();
         self.attrs.clear();
-        if self.next_id != 0 { self.attrs_mut(); }
+        // With ids on, every paragraph of the new text is a new one.
+        if self.next_id != 0 {
+            self.attrs = (0..line_count).map(|_| ParagraphAttrs::default().id(self.fresh_id())).collect();
+        }
         self.typing = Typing::Inherited;
         self.cancel_composition();
         self.edited_tag = EditedTag(false);
@@ -832,7 +835,10 @@ impl TextEdit {
         let kept = self.kept_atoms((a, b), (line_a, line_b), s);
         // So does an atom deleted from its start: what follows it is not the atom.
         let atom_gone = line_a < line_b && a == line_a_range.start && !kept.head && self.paragraph(line_a).atom.is_some();
-        let take_b = atom_gone || (line_a < line_b && line_a_range.is_empty() && a == line_a_range.start && b == line_b_range.start);
+        // An atom that stays on a line of its own behind the new text gives nothing to the
+        // line before it.
+        let take_b = !(kept.tail && added_lines > 0)
+            && (atom_gone || (line_a < line_b && line_a_range.is_empty() && a == line_a_range.start && b == line_b_range.start));
         self.splice_attrs(line_a, line_b, added_lines, take_b, kept);
         // Determine the surviving block for `line_a` when `a..b` merges `line_a..=line_b`.
         let merged_block = if take_b || (kept.tail && added_lines == 0) {
