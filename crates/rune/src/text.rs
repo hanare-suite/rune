@@ -1000,8 +1000,9 @@ impl TextSystem {
         for (_, r, ..) in pills.iter().filter(|(i, ..)| pill_chips_in[*i].stand_in) {
             let advance = layout.lines().flat_map(|line| line.runs()).flat_map(|run| run.clusters()).find(|c| c.text_range() == *r).map(|c| c.advance());
             if let Some(advance) = advance.filter(|a| *a != 0.0) {
-                let had = exact.iter().find(|(range, _)| range.contains(&r.start)).map_or_else(|| given(r.start), |e| e.1);
-                exact.push((r.clone(), had - advance));
+                // The layout measured here has the spacing `given`, in points like every
+                // spacing, and its advances are in device px.
+                exact.push((r.clone(), given(r.start) - advance / scale));
                 mismatch = true;
             }
         }
