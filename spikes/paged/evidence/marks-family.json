@@ -1,0 +1,18 @@
+{
+ "check": "marks-family",
+ "pass": true,
+ "widths_of_MMMM_and_iiii": {
+  "field_family": [
+   37.94,
+   10.17
+  ],
+  "IBM Plex Mono": [
+   25.2,
+   25.2
+  ],
+  "unknown_family": [
+   37.94,
+   10.17
+  ]
+ }
+}

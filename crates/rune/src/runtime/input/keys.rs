@@ -56,8 +56,10 @@ impl<S: 'static> Runtime<S> {
             crate::edit::Key::Function(_) | crate::edit::Key::ContextMenu | crate::edit::Key::Tab | crate::edit::Key::PageUp | crate::edit::Key::PageDown
             | crate::edit::Key::Insert | crate::edit::Key::PrintScreen | crate::edit::Key::ScrollLock | crate::edit::Key::Pause => false,
             crate::edit::Key::Command(_) => match ev.edit_command() {
-                Some('a' | 'c' | 'x' | 'z') => true,
-                Some('y') => !cfg!(target_os = "macos"),
+                Some('a' | 'c' | 'x') => true,
+                // A field whose history is off leaves undo and redo to the app's own.
+                Some('z') => self.focused_input().is_none_or(|i| i.edit.records_history()),
+                Some('y') => !cfg!(target_os = "macos") && self.focused_input().is_none_or(|i| i.edit.records_history()),
                 Some('b' | 'i' | 'u') => self.focused_input().is_some_and(|i| i.edit.format_chord(ev).is_some()),
                 _ => false,
             },
@@ -201,8 +203,8 @@ impl<S: 'static> Runtime<S> {
     /// [`Self::with_focused`] for an edit that needs the app state (an app's paste hook).
     pub(super) fn with_focused_state(&mut self, f: impl FnOnce(crate::states::States<'_>, &crate::el::EditFn, &mut Tx) -> EditOutcome, tx: &mut Tx) -> bool {
         let Some(path) = self.focus.owned() else { return false };
-        let Some((access, submit, change, animate_layout, single_line, secure, revealed_override)) =
-            self.focused_input().map(|i| (i.access.clone(), i.submit.clone(), i.change.clone(), i.animate_layout, i.single_line, i.edit.is_secure(), i.revealed_override))
+        let Some((access, submit, change, edits, animate_layout, single_line, secure, revealed_override)) =
+            self.focused_input().map(|i| (i.access.clone(), i.submit.clone(), i.change.clone(), i.edits.clone(), i.animate_layout, i.single_line, i.edit.is_secure(), i.revealed_override))
         else {
             return false;
         };
@@ -221,6 +223,10 @@ impl<S: 'static> Runtime<S> {
         // Typing is the user's own hand: no animation.
         tx.commit = tx.commit.snap(!animate_layout);
         self.caret_follow = true;
+        if let Some(edits) = edits {
+            let changes = access(states!(self)).take_changes();
+            if !changes.is_empty() { edits(states!(self), &changes, tx); }
+        }
         if let Some(change) = change
             && before.as_ref().map(|s| s.as_str()) != Some(access(states!(self)).text.as_str())
         {

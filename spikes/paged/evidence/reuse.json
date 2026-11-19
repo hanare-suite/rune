@@ -1,0 +1,40 @@
+{
+ "check": "reuse",
+ "pass": true,
+ "51 pages": {
+  "caret": "CARET byte=77993 page=25 of=52",
+  "paragraphs_keyed_per_keystroke": {
+   "p50": 1.0,
+   "p95": 1.0,
+   "max": 1.0
+  },
+  "layouts_shaped_per_keystroke": {
+   "p50": 1.0,
+   "p95": 2.0,
+   "max": 2.0
+  },
+  "text_ms": {
+   "p50": 0.166,
+   "p95": 0.2033,
+   "max": 0.2235
+  }
+ },
+ "200 pages": {
+  "caret": "CARET byte=315388 page=100 of=204",
+  "paragraphs_keyed_per_keystroke": {
+   "p50": 1.0,
+   "p95": 1.0,
+   "max": 1.0
+  },
+  "layouts_shaped_per_keystroke": {
+   "p50": 1.0,
+   "p95": 2.0,
+   "max": 2.0
+  },
+  "text_ms": {
+   "p50": 0.1681,
+   "p95": 0.2236,
+   "max": 0.2767
+  }
+ }
+}

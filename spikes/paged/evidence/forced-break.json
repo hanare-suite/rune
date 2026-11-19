@@ -4,28 +4,35 @@
  "heading_caret": {
   "x": 0.0,
   "y": 7722.0,
+  "h": 24.0,
   "page": 10,
   "y_on_page": 0.0,
   "window": [
    153.5,
-   949.0,
+   936.5,
    1.5,
    24.0
   ],
   "byte": 26732
  },
+ "heading_paragraph": {
+  "style": 2,
+  "break": "true",
+  "block": "paragraph"
+ },
  "end_of_paragraph_before": {
   "x": 193.65,
-  "y": 6878.0,
+  "y": 6934.0,
+  "h": 14.0,
   "page": 9,
-  "y_on_page": 14.0,
+  "y_on_page": 70.0,
   "window": [
    347.15,
-   105.0,
+   148.5,
    1.5,
    14.0
   ],
   "byte": 26731
  },
- "room_left_on_its_page": 672.0
+ "room_left_on_its_page": 616.0
 }

@@ -28,6 +28,27 @@ pub enum Mark {
     Size(MarkSize),
     /// The run's text colour.
     Color(MarkColor),
+    /// The run's font family by name, when the app registered it; the field's family otherwise.
+    Family(std::sync::Arc<str>),
+    /// A flat background behind the run, as a highlighter pen leaves: no rounding, no padding.
+    Highlight(MarkColor),
+    /// The run as a subscript or superscript.
+    Baseline(Baseline),
+}
+
+/// Where a [`Mark::Baseline`] run sits: at 58 % of its size, a third of its em below the
+/// baseline or above it, as Word sets them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Baseline {
+    Sub,
+    Super,
+}
+
+impl Baseline {
+    /// The run's size as a share of the size it would have had.
+    pub const SCALE: f32 = 0.58;
+    /// How far the run moves, as a share of the em it would have had.
+    pub const SHIFT: f32 = 1.0 / 3.0;
 }
 
 /// A font size in points that compares and hashes by its bits, so a [`Mark`] can carry it.
@@ -60,20 +81,14 @@ impl MarkColor {
 }
 
 impl Mark {
+    /// [`Mark::Family`] of `name`.
+    pub fn family(name: &str) -> Mark {
+        Mark::Family(name.into())
+    }
+
     /// Whether `self` and `other` are the same kind of mark (`Link(_)` matches any `Link(_)`).
     pub fn same_kind(&self, other: &Mark) -> bool {
-        match (self, other) {
-            (Mark::Bold, Mark::Bold)
-            | (Mark::Italic, Mark::Italic)
-            | (Mark::Underline, Mark::Underline)
-            | (Mark::Strike, Mark::Strike)
-            | (Mark::Code, Mark::Code)
-            | (Mark::Link(_), Mark::Link(_))
-            | (Mark::Pill(_), Mark::Pill(_))
-            | (Mark::Size(_), Mark::Size(_))
-            | (Mark::Color(_), Mark::Color(_)) => true,
-            _ => false,
-        }
+        self.kind_order() == other.kind_order()
     }
 
     /// The URL when `self` is [`Mark::Link`].
@@ -107,18 +122,21 @@ impl Mark {
             Mark::Pill(_) => 6,
             Mark::Size(_) => 7,
             Mark::Color(_) => 8,
+            Mark::Family(_) => 9,
+            Mark::Highlight(_) => 10,
+            Mark::Baseline(_) => 11,
         }
     }
 
     /// Whether one range of the kind carries one value, so a later mark replaces an earlier one
     /// where they overlap rather than joining it.
     pub(crate) fn is_valued(&self) -> bool {
-        matches!(self, Mark::Link(_) | Mark::Size(_) | Mark::Color(_))
+        matches!(self, Mark::Link(_) | Mark::Size(_) | Mark::Color(_) | Mark::Family(_) | Mark::Highlight(_) | Mark::Baseline(_))
     }
 }
 
 /// How many kinds [`Mark::kind_order`] numbers.
-pub(crate) const MARK_KINDS: usize = 9;
+pub(crate) const MARK_KINDS: usize = 12;
 
 /// A non-empty byte range `[start, end)` in [`TextEdit::text`] carrying an inline [`Mark`].
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -151,13 +169,11 @@ pub enum Block {
     Quote,
     /// Monospace code block line with a background fill; inline marks do not apply.
     Code,
-    /// A paragraph in the field's `n`th [`ParagraphStyle`] ([`El::paragraph_styles`](crate::El::paragraph_styles)),
-    /// the field's own style when it has no such entry.
-    Styled(u16),
 }
 
-/// A paragraph's text style and the room around it, which the app supplies for
-/// [`Block::Styled`]. More fields may come, so build one from [`ParagraphStyle::new`].
+/// A paragraph's text style and the room around it. A field's paragraphs take the entry their
+/// [`ParagraphAttrs::style`](super::ParagraphAttrs) names in [`El::paragraph_styles`](crate::El::paragraph_styles).
+/// More fields may come, so build one from [`ParagraphStyle::new`].
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[non_exhaustive]
 pub struct ParagraphStyle {
@@ -166,28 +182,21 @@ pub struct ParagraphStyle {
     pub space_before: f32,
     /// Points below it.
     pub space_after: f32,
-    /// Starts the paragraph on a new page of a field with [`El::page_flow`](crate::El::page_flow).
-    pub page_break_before: bool,
 }
 
 impl std::hash::Hash for ParagraphStyle {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        (self.text, self.space_before.to_bits(), self.space_after.to_bits(), self.page_break_before).hash(state);
+        (self.text, self.space_before.to_bits(), self.space_after.to_bits()).hash(state);
     }
 }
 
 impl ParagraphStyle {
     pub fn new(text: crate::tok::TextStyle) -> Self {
-        Self { text, space_before: 0.0, space_after: 0.0, page_break_before: false }
+        Self { text, space_before: 0.0, space_after: 0.0 }
     }
 
     pub fn space(mut self, before: f32, after: f32) -> Self {
         (self.space_before, self.space_after) = (before, after);
-        self
-    }
-
-    pub fn page_break_before(mut self) -> Self {
-        self.page_break_before = true;
         self
     }
 }
@@ -195,14 +204,24 @@ impl ParagraphStyle {
 /// Lays a field's lines into pages `height` points tall with `gap` points between them
 /// ([`El::page_flow`](crate::El::page_flow)).
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct PageFlow {
     pub height: f32,
     pub gap: f32,
+    /// Keeps a paragraph's first two lines together and its last two (widow and orphan
+    /// control), moving a line to the next page rather than leaving one alone. On by default.
+    pub keep_lines: bool,
 }
 
 impl PageFlow {
     pub fn new(height: f32, gap: f32) -> Self {
-        Self { height, gap }
+        Self { height, gap, keep_lines: true }
+    }
+
+    /// Sets [`Self::keep_lines`].
+    pub fn keep_lines(mut self, on: bool) -> Self {
+        self.keep_lines = on;
+        self
     }
 
     /// How many pages a field `field_height` points tall holds: its height is always whole
@@ -247,7 +266,6 @@ impl Block {
                 | (Block::Numbered(_), Block::Numbered(_))
                 | (Block::Quote, Block::Quote)
                 | (Block::Code, Block::Code)
-                | (Block::Styled(_), Block::Styled(_))
         )
     }
 
@@ -259,7 +277,6 @@ impl Block {
             Block::Numbered(_) => 2,
             Block::Quote => 3,
             Block::Code => 4,
-            Block::Styled(_) => 5,
         }
     }
 
@@ -267,7 +284,7 @@ impl Block {
     pub(crate) fn indent_pt(self, font_size: f32) -> f32 {
         let unit = (font_size * 1.45).round().max(18.0);
         match self {
-            Block::Paragraph | Block::Styled(_) => 0.0,
+            Block::Paragraph => 0.0,
             Block::Bullet(l) | Block::Numbered(l) => unit * (l.min(MAX_LIST_LEVEL) as f32 + 1.0),
             Block::Quote => (font_size * 1.1).round().max(14.0),
             Block::Code => (font_size * 0.75).round().max(10.0),
@@ -284,6 +301,8 @@ pub struct ParagraphInfo {
     pub block: Block,
     /// True when this line was split from the previous line by `Shift+Return` (`<br>`).
     pub soft_break: bool,
+    /// Its style, alignment, indents, page break, atom and id.
+    pub attrs: super::ParagraphAttrs,
 }
 
 /// Visual palette for rich marks and block attributes inside [`text_input`](crate::text_input).
@@ -295,6 +314,12 @@ pub struct RichStyle {
     pub link: Color,
     pub quote_bar: Color,
     pub marker: Option<Color>,
+}
+
+/// A locked atom's box when the field sets no colours of its own
+/// ([`El::atom_colors`](crate::El::atom_colors)): its fill and its border.
+pub(crate) fn atom_colors() -> (Color, Color) {
+    (oklcha(0.55, 0.02, 260.0, 0.10), oklcha(0.55, 0.02, 260.0, 0.45))
 }
 
 impl Default for RichStyle {

@@ -1,0 +1,65 @@
+{
+ "check": "page-rules",
+ "pass": true,
+ "paragraph_lines": 4,
+ "lines_a_page_holds": 50,
+ "orphan": {
+  "without_rule_start_end": [
+   [
+    1,
+    50
+   ],
+   [
+    2,
+    3
+   ]
+  ],
+  "with_rule_start_end": [
+   [
+    2,
+    1
+   ],
+   [
+    2,
+    4
+   ]
+  ]
+ },
+ "widow": {
+  "lines_before": 47,
+  "without_rule_start_end": [
+   [
+    1,
+    48
+   ],
+   [
+    2,
+    1
+   ]
+  ],
+  "with_rule_start_end": [
+   [
+    1,
+    48
+   ],
+   [
+    2,
+    2
+   ]
+  ]
+ },
+ "space_before_10pt": {
+  "flowed_onto_page_top_y": [
+   2,
+   0.0
+  ],
+  "after_forced_break_y": [
+   2,
+   10.0
+  ],
+  "mid_page_y": [
+   1,
+   150.0
+  ]
+ }
+}

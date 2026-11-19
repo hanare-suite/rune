@@ -53,6 +53,7 @@ mod paragraphs;
 #[cfg(target_arch = "wasm32")]
 mod platform_face;
 mod span;
+mod span_style;
 mod system_fonts;
 mod system_weight;
 mod default_fonts;
@@ -251,6 +252,9 @@ pub struct TextSystem {
     pub shaped: u32,
     /// Layouts re-broken at a new width from an earlier shaping, a running count.
     pub rebroken: u32,
+    /// Paragraphs of by-paragraph fields keyed (their words hashed) so far: an edit of a long
+    /// field keys the paragraphs it touched, not the field.
+    pub keyed: u64,
     /// Reused across lines and frames when mapping glyphs back to cluster start bytes.
     cluster_scratch: Vec<u32>,
     /// Byte ranges `(start, end, ink)` of coloured spans set by [`Self::set_glyph_inks`].
@@ -382,6 +386,7 @@ impl TextSystem {
             color_icons: color_icon::ColorIcons::default(),
             shaped: 0,
             rebroken: 0,
+            keyed: 0,
             cluster_scratch: Vec::new(),
             ink_spans: Vec::new(),
             coords_scratch: Vec::new(),
@@ -790,6 +795,8 @@ impl TextSystem {
             }
         };
         let mono = with_symbols(self.mono.as_str(), mono_scripts);
+        // A span's own family, when the app registered it, ahead of the text's stack.
+        let span_families = span_style::families(spans, &mut self.font_cx.collection, &sans);
         // Routed clusters try their fallback first, then the run's own stack (mono spans included).
         // Each of the four {math, emoji} × {sans, mono} stacks is built at most once.
         let mut stacks: [Option<Vec<FontFamilyName<'_>>>; 4] = Default::default();
@@ -874,6 +881,9 @@ impl TextSystem {
                 if s.italic {
                     b.push(StyleProperty::FontStyle(FontStyle::Italic), r.clone());
                 }
+                if let Some(list) = s.family.as_deref().and_then(|name| span_families.get(name)) {
+                    b.push(FontFamily::from(list.as_slice()), r.clone());
+                }
                 if let Some(sz) = s.size {
                     b.push(StyleProperty::FontSize(sz), r.clone());
                     // CSS's unitless line-height: a span of its own size (inline code, a smaller run) keeps the
@@ -889,6 +899,7 @@ impl TextSystem {
                     b.push(StyleProperty::LetterSpacing(v), r.clone());
                 }
             }
+            span_style::push_baselines(&mut b, spans, style.size, text.len());
             for (range, w) in weights {
                 b.push(StyleProperty::FontWeight(FontWeight::new(*w)), range.clone());
             }

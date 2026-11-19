@@ -16,6 +16,8 @@ use crate::text::Link;
 
 mod caret_motion;
 use caret_motion::Column;
+mod changes;
+pub use changes::{EditChange, EditChangeKind};
 mod display;
 mod history;
 mod html;
@@ -27,8 +29,10 @@ mod keys;
 pub use keys::{Key, KeyEvent, KeySide, Modifier, Mods};
 mod marks;
 mod model;
-pub use model::{Block, MAX_LIST_LEVEL, Mark, MarkColor, MarkRange, MarkSize, PageFlow, ParagraphInfo, ParagraphStyle, RichStyle};
-pub(crate) use model::MARK_KINDS;
+pub use model::{Baseline, Block, MAX_LIST_LEVEL, Mark, MarkColor, MarkRange, MarkSize, PageFlow, ParagraphInfo, ParagraphStyle, RichStyle};
+pub(crate) use model::{MARK_KINDS, atom_colors};
+mod paragraph;
+pub use paragraph::{ParagraphAlign, ParagraphAttrs};
 mod secure;
 pub(crate) use secure::{MULTILINE_SECURE_MASK, Masking};
 use secure::LineMode;
@@ -79,6 +83,14 @@ pub struct TextEdit {
     pub(crate) affinity: parley::Affinity,
     /// The direction Ctrl+Left Shift or Ctrl+Right Shift set (`direction_keys`).
     dir: FieldDir,
+    /// Each paragraph's attributes, one a line; empty while every paragraph has the default.
+    attrs: Vec<ParagraphAttrs>,
+    /// The id the next new paragraph takes ([`TextEdit::set_paragraph_ids`]); 0 gives none.
+    next_id: u64,
+    /// [`TextEdit::set_history`] turned the undo history off.
+    history_off: bool,
+    /// What edits changed since [`TextEdit::take_changes`].
+    changes: changes::ChangeLog,
 }
 
 impl std::fmt::Debug for TextEdit {
@@ -119,6 +131,7 @@ impl std::hash::Hash for TextEdit {
             self.blocks.hash(h);
         }
         self.soft_breaks.hash(h);
+        self.attrs.hash(h);
         self.typing.hash(h);
         self.secure.hash(h);
         self.revealed.hash(h);
@@ -241,6 +254,10 @@ impl TextEdit {
             column: Column::Free,
             affinity: parley::Affinity::Downstream,
             dir: FieldDir::Natural,
+            attrs: Vec::new(),
+            next_id: 0,
+            history_off: false,
+            changes: changes::ChangeLog::default(),
         }
     }
 
@@ -340,7 +357,7 @@ impl TextEdit {
 
     /// No marks, pending style or non-paragraph blocks: draws exactly as plain text.
     pub(crate) fn is_plain(&self) -> bool {
-        self.marks.is_empty() && self.typing == Typing::Inherited && self.blocks.iter().all(|&b| b == Block::Paragraph)
+        self.marks.is_empty() && self.attrs.is_empty() && self.typing == Typing::Inherited && self.blocks.iter().all(|&b| b == Block::Paragraph)
     }
 
     /// Parse an HTML fragment (`<b>`, `<strong>`, `<i>`, `<em>`, `<u>`, `<s>`, `<del>`, `<strike>`,
@@ -436,14 +453,14 @@ impl TextEdit {
             if b == b'\n' {
                 let block = self.blocks.get(idx).copied().unwrap_or(Block::Paragraph);
                 let soft_break = self.soft_breaks.binary_search(&(idx as u32)).is_ok();
-                out.push(ParagraphInfo { index: idx, range: line_start..i, block, soft_break });
+                out.push(ParagraphInfo { index: idx, range: line_start..i, block, soft_break, attrs: self.paragraph(idx) });
                 line_start = i + 1;
                 idx += 1;
             }
         }
         let block = self.blocks.get(idx).copied().unwrap_or(Block::Paragraph);
         let soft_break = self.soft_breaks.binary_search(&(idx as u32)).is_ok();
-        out.push(ParagraphInfo { index: idx, range: line_start..self.text.len(), block, soft_break });
+        out.push(ParagraphInfo { index: idx, range: line_start..self.text.len(), block, soft_break, attrs: self.paragraph(idx) });
         out
     }
 
@@ -522,6 +539,8 @@ impl TextEdit {
         self.marks.clear();
         self.blocks = vec![Block::Paragraph; line_count];
         self.soft_breaks.clear();
+        self.attrs.clear();
+        if self.next_id != 0 { self.attrs_mut(); }
         self.typing = Typing::Inherited;
         self.cancel_composition();
         self.edited_tag = EditedTag(false);
@@ -612,11 +631,13 @@ impl TextEdit {
     /// The start of the pill that ends at or contains `j`, when `j` is past its start.
     fn pill_before(&self, j: usize) -> Option<usize> {
         self.marks.iter().find(|m| m.mark.is_pill() && m.start < j && j <= m.end).map(|m| m.start)
+            .or_else(|| self.atom_at(j).filter(|&(s, e)| s < j && j <= e).map(|(s, _)| s))
     }
 
     /// The end of the pill that starts at or contains `j`, when `j` is before its end.
     fn pill_after(&self, j: usize) -> Option<usize> {
         self.marks.iter().find(|m| m.mark.is_pill() && m.start <= j && j < m.end).map(|m| m.end)
+            .or_else(|| self.atom_at(j).filter(|&(s, e)| s <= j && j < e).map(|(_, e)| e))
     }
 
     /// Replace the selection with `label` as one [`Mark::Pill`] carrying `id`, and put the
@@ -649,9 +670,10 @@ impl TextEdit {
         self.record_change(before, EditKind::Other);
     }
 
-    /// The pill strictly containing byte `i` (`start < i < end`).
+    /// The pill, or the locked atom, strictly containing byte `i` (`start < i < end`).
     fn pill_around(&self, i: usize) -> Option<(usize, usize)> {
         self.marks.iter().find(|m| m.mark.is_pill() && m.start < i && i < m.end).map(|m| (m.start, m.end))
+            .or_else(|| self.atom_at(i).filter(|&(s, e)| s < i && i < e))
     }
 
     /// `i` moved out of any pill it lands inside, to its end when `forward`, else its start.
@@ -672,7 +694,7 @@ impl TextEdit {
     /// Keeps the caret off a pill's inside: a caret goes to the nearer edge, a selection grows
     /// to cover the pill.
     pub(crate) fn snap_to_pills(&mut self) {
-        if !self.marks.iter().any(|m| m.mark.is_pill()) {
+        if !self.marks.iter().any(|m| m.mark.is_pill()) && !self.has_atoms() {
             return;
         }
         if self.anchor == self.focus {
@@ -704,22 +726,17 @@ impl TextEdit {
 
     /// Byte range (`start..end`, excluding `\n`) of 0-based `line_idx`.
     pub fn line_range(&self, line_idx: usize) -> Range<usize> {
-        let mut cur = 0;
+        // From one line break to the next, each found a block of bytes at a time: a long
+        // document's line costs its line breaks, not its bytes.
+        let len = self.text.len();
         let mut start = 0;
-        for (i, b) in self.text.bytes().enumerate() {
-            if b == b'\n' {
-                if cur == line_idx {
-                    return start..i;
-                }
-                start = i + 1;
-                cur += 1;
+        for _ in 0..line_idx {
+            match self.text[start..].find('\n') {
+                Some(n) => start += n + 1,
+                None => return len..len,
             }
         }
-        if cur == line_idx {
-            start..self.text.len()
-        } else {
-            self.text.len()..self.text.len()
-        }
+        start..self.text[start..].find('\n').map_or(len, |n| start + n)
     }
 
     fn clamp_char_boundary(s: &str, idx: usize) -> usize {
@@ -761,14 +778,22 @@ impl TextEdit {
         out
     }
 
-    /// Core replacement engine updating `text`, `marks`, `blocks`, and `soft_breaks` together.
-    fn apply_text_and_attr_replace(
+    /// Replaces `a..b` with `s` as the atoms beside it allow ([`Self::fence`]), updating `text`,
+    /// `marks`, `blocks`, `soft_breaks` and the paragraph attributes together.
+    fn apply_text_and_attr_replace(&mut self, (a, b): (usize, usize), s: &str, inserted_marks: &[Mark], new_line_block: Option<Block>, mark_new_lines_soft: bool) {
+        let f = self.fence(a, b, s);
+        self.apply_fenced((f.a, f.b), f.text.as_deref().unwrap_or(s), inserted_marks, new_line_block, mark_new_lines_soft, f.back);
+    }
+
+    /// Core replacement engine. `back` is how far before the inserted text's end the caret goes.
+    fn apply_fenced(
         &mut self,
         (a, b): (usize, usize),
         s: &str,
         inserted_marks: &[Mark],
         new_line_block: Option<Block>,
         mark_new_lines_soft: bool,
+        back: usize,
     ) {
         // Callers sync first; a second whole-text pass here would show on every keystroke.
         self.column = Column::Free;
@@ -780,6 +805,7 @@ impl TextEdit {
             && self.soft_breaks.is_empty()
             && !mark_new_lines_soft
             && new_line_block.is_none_or(|b| b == Block::Paragraph)
+            && self.attrs.is_empty()
             && self.blocks.iter().all(|&b| b == Block::Paragraph)
         {
             // Plain text: no per-line passes, so a keystroke in a long plain field costs what
@@ -791,6 +817,7 @@ impl TextEdit {
             self.anchor = a + ins_len;
             self.focus = self.anchor;
             self.cancel_composition();
+            if del_len + ins_len > 0 { self.note_text(a..b, ins_len); }
             return;
         }
         let line_a = self.line_of_byte(a);
@@ -798,12 +825,17 @@ impl TextEdit {
         let line_a_range = self.line_range(line_a);
         let line_b_range = self.line_range(line_b);
 
+        let removed_lines = line_b - line_a;
+        let added_lines = count_newlines(s.as_bytes());
+        // An empty first paragraph gives way to the one merged into it; an atom the edit ends
+        // before keeps its line.
+        let kept = self.kept_atoms((a, b), (line_a, line_b), s);
+        // So does an atom deleted from its start: what follows it is not the atom.
+        let atom_gone = line_a < line_b && a == line_a_range.start && !kept.head && self.paragraph(line_a).atom.is_some();
+        let take_b = atom_gone || (line_a < line_b && line_a_range.is_empty() && a == line_a_range.start && b == line_b_range.start);
+        self.splice_attrs(line_a, line_b, added_lines, take_b, kept);
         // Determine the surviving block for `line_a` when `a..b` merges `line_a..=line_b`.
-        let merged_block = if line_a < line_b
-            && line_a_range.is_empty()
-            && a == line_a_range.start
-            && b == line_b_range.start
-        {
+        let merged_block = if take_b || (kept.tail && added_lines == 0) {
             self.blocks.get(line_b).copied().unwrap_or(Block::Paragraph)
         } else {
             self.blocks.get(line_a).copied().unwrap_or(Block::Paragraph)
@@ -818,8 +850,6 @@ impl TextEdit {
             self.soft_breaks.binary_search(&(line_a as u32)).is_ok()
         };
 
-        let removed_lines = line_b - line_a;
-        let added_lines = count_newlines(s.as_bytes());
         let next_line_blk = new_line_block.unwrap_or(match merged_block {
             Block::Code => Block::Code,
             _ => Block::Paragraph,
@@ -910,7 +940,8 @@ impl TextEdit {
         }
         self.marks = updated_marks;
         self.text.replace_range(a..b, s);
-        self.anchor = a + ins_len;
+        if del_len + ins_len > 0 { self.note_text(a..b, ins_len); }
+        self.anchor = a + ins_len - back;
         self.focus = self.anchor;
         self.cancel_composition();
         self.sync_invariants();
@@ -935,12 +966,15 @@ impl TextEdit {
         self.sync_invariants();
         // Backspace or Delete next to a pill, or a selection into one, takes it whole.
         let (a, b) = self.cover_pills(a, b);
+        let fenced = self.fence(a, b, s);
+        let (a, b, back) = (fenced.a, fenced.b, fenced.back);
+        let s = fenced.text.as_deref().unwrap_or(s);
         if kind == EditKind::Other { self.break_history_group(); }
         if &self.text[a..b] == s
             && self.typing == Typing::Inherited
             && !self.marks.iter().any(|m| m.mark.is_pill() && m.start < b && a < m.end)
         {
-            self.anchor = a + s.len();
+            self.anchor = a + s.len() - back;
             self.focus = self.anchor;
             self.cancel_composition();
             self.mark_edited();
@@ -969,7 +1003,8 @@ impl TextEdit {
             self.inherited_marks_at(a)
         };
 
-        self.apply_text_and_attr_replace((a, b), s, &inserted_marks, None, false);
+        self.apply_fenced((a, b), s, &inserted_marks, None, false, back);
+        self.note_kind(kind);
         self.record_ranged(before, s, kind);
     }
 

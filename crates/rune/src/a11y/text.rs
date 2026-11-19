@@ -558,6 +558,7 @@ impl<S: 'static> Runtime<S> {
             let at = |character_index| TextPosition { node: element_id(n.id), character_index };
             out[me].1.set_text_selection(TextSelection { anchor: at(input.edit.anchor), focus: at(input.edit.focus) });
         }
+        self.a11y_atoms(i, w, me, out);
         if spec.cold.links.is_empty() || spec.redacted { return; }
         let boxes = self.link_boxes(i, self.drawn_box(i));
         for (k, l) in spec.cold.links.iter().enumerate() {

@@ -138,8 +138,15 @@ pub(crate) struct TextCold {
     pub(crate) paragraph_styles: Option<std::rc::Rc<[crate::edit::ParagraphStyle]>>,
     /// [`El::page_flow`](crate::El::page_flow).
     pub(crate) page_flow: Option<crate::edit::PageFlow>,
-    /// A hash of the two above, 0 with neither: part of the text's shape key.
+    /// [`El::atom_colors`](crate::El::atom_colors): a locked atom's fill and border.
+    pub(crate) atom_colors: Option<(Color, Color)>,
+    /// Each paragraph's attributes ([`TextEdit::paragraph_attrs`](crate::TextEdit::paragraph_attrs)); empty when none carries any.
+    pub(crate) attrs: Vec<crate::edit::ParagraphAttrs>,
+    /// A hash of the three above, 0 with none: part of the text's shape key.
     pub(crate) flow_key: u64,
+    /// A hash of the styles and the page flow alone, which every paragraph's own key takes: an
+    /// attribute changed on one paragraph then shapes that paragraph, not the text.
+    pub(crate) styles_key: u64,
 }
 
 impl Empty for TextCold {
@@ -167,7 +174,10 @@ impl Empty for TextCold {
         secure_revealed: false,
         paragraph_styles: None,
         page_flow: None,
+        atom_colors: None,
+        attrs: Vec::new(),
         flow_key: 0,
+        styles_key: 0,
     };
 }
 
@@ -211,14 +221,24 @@ impl TextSpec {
         self.cold.flow_key != 0
     }
 
-    /// Takes `flow_key` again from the paragraph styles and page flow it hashes.
+    /// Takes `flow_key` and `styles_key` again from the paragraph styles, the page flow and
+    /// the paragraph attributes they hash.
     pub(crate) fn rekey_flow(&mut self) {
         use std::hash::{Hash, Hasher};
-        let mut h = std::collections::hash_map::DefaultHasher::new();
-        self.cold.paragraph_styles.as_deref().hash(&mut h);
-        self.cold.page_flow.map(|p| [p.height.to_bits(), p.gap.to_bits()]).hash(&mut h);
-        self.cold.flow_key = h.finish() | 1;
+        let c = &mut self.cold;
         self.shape = None;
+        if c.paragraph_styles.is_none() && c.page_flow.is_none() && c.attrs.is_empty() {
+            (c.flow_key, c.styles_key) = (0, 0);
+            return;
+        }
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        c.paragraph_styles.as_deref().hash(&mut h);
+        c.page_flow.map(|p| (p.height.to_bits(), p.gap.to_bits(), p.keep_lines)).hash(&mut h);
+        c.styles_key = h.finish() | 1;
+        for a in &c.attrs {
+            a.flow_bits().hash(&mut h);
+        }
+        c.flow_key = h.finish() | 1;
     }
 
     /// The palette its rich decorations draw in.

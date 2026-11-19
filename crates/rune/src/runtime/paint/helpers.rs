@@ -59,6 +59,22 @@ pub(super) fn emit_block_decorations(
         }
     };
 
+    // A locked atom's box: as tall as the app made it, around its label's lines.
+    let mut atom_run: Option<(f32, f32)> = None;
+    let flush_atom = |instances: &mut Vec<Instance>, run: &mut Option<(f32, f32)>, height: f32| {
+        let Some((top, bot)) = run.take() else { return };
+        let (fill, border) = spec.cold.atom_colors.unwrap_or_else(crate::edit::atom_colors);
+        let (h, edge) = (height * s * tk, (s * tk).round().max(1.0));
+        let (x, y) = (x0 + glide[0], ((top + bot - h) / 2.0).round() + glide[1]);
+        instances.push(rect_inst([x, y, box_w, h], premul(fill, o, srgb), 0.0, clip, fade));
+        let border = premul(border, o, srgb);
+        for r in [[x, y, box_w, edge], [x, y + h - edge, box_w, edge], [x, y + edge, edge, h - 2.0 * edge], [x + box_w - edge, y + edge, edge, h - 2.0 * edge]] {
+            instances.push(rect_inst(r, border, 0.0, clip, fade));
+        }
+    };
+    // What a paragraph's own indents add to its block's, at its first line.
+    let own_indent = |k: usize| spec.cold.attrs.get(k).map_or(0.0, |a| ((a.indent + a.first_line_indent) * s).round());
+
     let mut had_lines = false;
     for line in layout.block_lines(spec.style.line_px() * s) {
         had_lines = true;
@@ -84,6 +100,13 @@ pub(super) fn emit_block_decorations(
             flush_code(instances, &mut code_run);
             flush_quote(instances, &mut quote_run);
         }
+        if let Some(height) = spec.cold.attrs.get(para_idx).and_then(|a| a.atom) {
+            match &mut atom_run {
+                Some((_, b)) => *b = bot,
+                None => atom_run = Some((top, bot)),
+            }
+            if line.last { flush_atom(instances, &mut atom_run, height); }
+        }
 
         if first_line_of_para {
             match blk {
@@ -94,7 +117,7 @@ pub(super) fn emit_block_decorations(
                     }
                     list_counts[l] = 0;
                     if !is_soft {
-                        let indent = (blk.indent_pt(spec.style.size) * s).round();
+                        let indent = (blk.indent_pt(spec.style.size) * s).round() + own_indent(para_idx);
                         markers.push((indent, baseline, blk, 0));
                     }
                 }
@@ -105,11 +128,11 @@ pub(super) fn emit_block_decorations(
                     }
                     if !is_soft {
                         list_counts[l] += 1;
-                        let indent = (blk.indent_pt(spec.style.size) * s).round();
+                        let indent = (blk.indent_pt(spec.style.size) * s).round() + own_indent(para_idx);
                         markers.push((indent, baseline, blk, list_counts[l]));
                     }
                 }
-                Block::Paragraph | Block::Quote | Block::Code | Block::Styled(_) => {
+                Block::Paragraph | Block::Quote | Block::Code => {
                     if !is_soft {
                         list_counts = [0; (MAX_LIST_LEVEL as usize) + 1];
                     }
@@ -142,7 +165,7 @@ pub(super) fn emit_block_decorations(
                 let indent = (blk.indent_pt(spec.style.size) * s).round();
                 markers.push((indent, baseline, blk, 1));
             }
-            Block::Paragraph | Block::Styled(_) => {}
+            Block::Paragraph => {}
         }
     }
 

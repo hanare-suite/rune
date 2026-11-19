@@ -29,6 +29,7 @@ pub struct InputSpec {
     pub(crate) submit: Option<PressFn>,
     pub(crate) key: Option<InputKeyFn>,
     pub(crate) change: Option<PressFn>,
+    pub(crate) edits: Option<InputEditsFn>,
     pub(crate) paste: Option<InputPasteFn>,
     /// `El::spellcheck`: the platform's checker marks misspelled words.
     pub(crate) spellcheck: bool,
@@ -90,6 +91,7 @@ pub fn text_input(edit: &TextEdit, style: TextStyle) -> El {
         submit: None,
         key: None,
         change: None,
+        edits: None,
         paste: None,
         spellcheck: false,
         selection_style: None,
@@ -192,6 +194,17 @@ impl El {
     pub fn on_input_change<S: 'static>(mut self, f: impl Fn(&mut S, &mut Tx) + 'static) -> Self {
         if let Some(input) = self.cold.get_mut_if_some().and_then(|c| c.input.as_deref_mut()) {
             input.change = Some(Rc::new(move |s, tx| f(downcast::<S>(s), tx)));
+        }
+        self
+    }
+    /// Called after each event the focused field took, with every change it made
+    /// ([`TextEdit::take_changes`](crate::TextEdit::take_changes)): the bytes each replaced and
+    /// how many took their place, and changes of marks or paragraph attributes alone. One call
+    /// an event, so an app that keeps its own history ([`TextEdit::set_history`](crate::TextEdit::set_history))
+    /// makes one step of it. An event that changed nothing calls nothing.
+    pub fn on_input_edits<S: 'static>(mut self, f: impl Fn(&mut S, &[crate::EditChange], &mut Tx) + 'static) -> Self {
+        if let Some(input) = self.cold.get_mut_if_some().and_then(|c| c.input.as_deref_mut()) {
+            input.edits = Some(Rc::new(move |s, changes, tx| f(downcast::<S>(s), changes, tx)));
         }
         self
     }

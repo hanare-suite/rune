@@ -2,14 +2,16 @@
  "check": "typing",
  "pass": true,
  "typed": " Hafen Brücke Morgen",
+ "widow_control": "off",
  "paragraph_end_before": {
   "x": 419.29,
   "y": 686.0,
+  "h": 14.0,
   "page": 1,
   "y_on_page": 686.0,
   "window": [
    572.79,
-   781.0,
+   774.5,
    1.5,
    14.0
   ],
@@ -18,11 +20,12 @@
  "paragraph_end_after_typing": {
   "x": 75.96,
   "y": 858.0,
+  "h": 14.0,
   "page": 2,
   "y_on_page": 0.0,
   "window": [
    229.46,
-   953.0,
+   946.5,
    1.5,
    14.0
   ],
@@ -31,11 +34,12 @@
  "paragraph_end_after_backspace": {
   "x": 419.29,
   "y": 686.0,
+  "h": 14.0,
   "page": 1,
   "y_on_page": 686.0,
   "window": [
    572.79,
-   781.0,
+   774.5,
    1.5,
    14.0
   ],

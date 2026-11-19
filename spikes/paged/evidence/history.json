@@ -1,0 +1,32 @@
+{
+ "check": "history",
+ "pass": true,
+ "caret_byte": 2164,
+ "reported": {
+  "typed": "typed:2165..2165>1",
+  "highlighted": "marks:2166..2173>7",
+  "bold": "marks:2166..2173>7",
+  "centred": "paragraphs:2164..2199>35"
+ },
+ "app_history_steps": {
+  "open": 1,
+  "typed": 3,
+  "highlighted": 4,
+  "bold": 5,
+  "centred": 6,
+  "three-undone": 6,
+  "all-undone": 6,
+  "redone": 6
+ },
+ "field_history": {
+  "open": "0/0",
+  "typed": "0/0",
+  "highlighted": "0/0",
+  "bold": "0/0",
+  "centred": "0/0",
+  "three-undone": "0/0",
+  "all-undone": "0/0",
+  "redone": "0/0"
+ },
+ "text_restored_by_undo": true
+}

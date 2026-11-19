@@ -273,6 +273,16 @@ impl<S> Cx<S> {
         self.layout_with(key, size)
     }
 
+    /// How many pages the paged text field keyed `key` holds ([`El::page_flow`](crate::El::page_flow)),
+    /// or `None` when there is no such field yet. It is the count of the layout this commit
+    /// made: a view that reads it re-runs, in the same commit, when an edit adds or removes a
+    /// page, so the pages an app draws behind the field and the count it shows are never a
+    /// frame behind the text. Nothing re-runs while the count holds.
+    #[track_caller]
+    pub fn pages(&self, key: &str) -> Option<usize> {
+        self.layout_with(&format!("{PAGES}{key}"), |r| r[2] as usize)
+    }
+
     /// [`Self::layout`] where the window shows the element now, after its viewports' scrolling.
     /// A view that reads it re-runs the next frame a scroll moves the element past half a
     /// point, so every frame of a scroll: read it only for what has to follow the scroll, and
@@ -304,6 +314,9 @@ pub(crate) fn window_read_key(key: &str) -> Option<&str> {
 
 /// The prefix of a window-position read's key, which no element key starts with.
 const WINDOW: &str = "\u{1}window:";
+
+/// The prefix of a page-count read's key (`Cx::pages`): its "rect" holds the count as its width.
+const PAGES: &str = "\u{1}pages:";
 
 /// `[w, h]` of `rect`.
 pub(crate) fn size(rect: [f32; 4]) -> [f32; 2] {
@@ -369,6 +382,14 @@ impl<S: 'static> Runtime<S> {
 
     fn layout_of(&self, nodes: &[Node], index: Option<&KeyIndex>, key: &str) -> Option<[f32; 4]> {
         if key == SELECTION { return None; }
+        if let Some(key) = key.strip_prefix(PAGES) {
+            let i = match index {
+                Some(index) => index.first(nodes, key),
+                None => key_index::scan_first(nodes, key),
+            }?;
+            let flow = nodes[i].text.as_ref()?.cold.page_flow?;
+            return Some([0.0, 0.0, flow.pages(nodes[i].local.h) as f32, 0.0]);
+        }
         let (key, scrolled) = key.strip_prefix(WINDOW).map_or((key, false), |key| (key, true));
         let first = match index {
             Some(index) => index.first(nodes, key),

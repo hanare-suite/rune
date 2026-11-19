@@ -29,6 +29,8 @@ pub(crate) fn line_id(id: NodeId, line: usize) -> AkId { AkId((id.0 << SUB) | (1
 pub(crate) fn lines_box_id(id: NodeId) -> AkId { AkId((id.0 << SUB) | (LINK_BASE - 1)) }
 pub(crate) fn drawn_line_id(id: NodeId, line: usize) -> AkId { AkId((id.0 << SUB) | (1 + line as u64).min(LINK_BASE - 2)) }
 pub(crate) fn link_id(id: NodeId, k: usize) -> AkId { AkId((id.0 << SUB) | (LINK_BASE + k as u64).min((1 << SUB) - 1)) }
+/// A field's `k`th locked atom, counted down from the top of the ids its links count up through.
+pub(crate) fn atom_id(id: NodeId, k: usize) -> AkId { AkId((id.0 << SUB) | ((1 << SUB) - 1 - (k as u64).min(0xff))) }
 /// The runtime node an AccessKit id names, and which of its own nodes: 0 the element, a line
 /// `1..LINK_BASE`, a link from `LINK_BASE`.
 pub(crate) fn split_id(id: AkId) -> (NodeId, u64) { (NodeId(id.0 >> SUB), id.0 & ((1 << SUB) - 1)) }

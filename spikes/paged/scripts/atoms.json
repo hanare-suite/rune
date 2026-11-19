@@ -1,0 +1,116 @@
+{
+ "events": [
+  {
+   "t": 0.2,
+   "type": "key",
+   "name": "Right"
+  },
+  {
+   "t": 0.45,
+   "type": "key",
+   "name": "Left"
+  },
+  {
+   "t": 0.7,
+   "type": "mark",
+   "name": "after-para"
+  },
+  {
+   "t": 0.95,
+   "type": "key",
+   "name": "Left"
+  },
+  {
+   "t": 1.2,
+   "type": "mark",
+   "name": "atom-end"
+  },
+  {
+   "t": 1.45,
+   "type": "key",
+   "name": "Left"
+  },
+  {
+   "t": 1.7,
+   "type": "mark",
+   "name": "atom-start"
+  },
+  {
+   "t": 1.95,
+   "type": "key",
+   "name": "Left"
+  },
+  {
+   "t": 2.2,
+   "type": "mark",
+   "name": "before-para-end"
+  },
+  {
+   "t": 2.45,
+   "type": "key",
+   "name": "Right"
+  },
+  {
+   "t": 2.7,
+   "type": "key",
+   "name": "Right",
+   "shift": true
+  },
+  {
+   "t": 2.95,
+   "type": "mark",
+   "name": "selected"
+  },
+  {
+   "t": 3.2,
+   "type": "key",
+   "name": "Right"
+  },
+  {
+   "t": 3.45,
+   "type": "type",
+   "text": "x"
+  },
+  {
+   "t": 3.7,
+   "type": "mark",
+   "name": "typed"
+  },
+  {
+   "t": 3.95,
+   "type": "key",
+   "name": "Backspace"
+  },
+  {
+   "t": 4.2,
+   "type": "key",
+   "name": "Backspace"
+  },
+  {
+   "t": 4.45,
+   "type": "mark",
+   "name": "back-at-atom"
+  },
+  {
+   "t": 4.7,
+   "type": "key",
+   "name": "Backspace"
+  },
+  {
+   "t": 4.95,
+   "type": "mark",
+   "name": "deleted"
+  },
+  {
+   "t": 5.2,
+   "type": "key",
+   "name": "z",
+   "cmd": true
+  },
+  {
+   "t": 5.45,
+   "type": "mark",
+   "name": "undone"
+  }
+ ]
+}

@@ -1,0 +1,48 @@
+{
+ "check": "attrs-split-merge",
+ "pass": true,
+ "before": {
+  "line": 15,
+  "id": 16,
+  "style": 1,
+  "align": "Center",
+  "indent": "12/6",
+  "break": "true",
+  "paras": 17,
+  "next_id": 18,
+  "last": ""
+ },
+ "after_return_second_half": {
+  "line": 16,
+  "id": 18,
+  "style": 1,
+  "align": "Center",
+  "indent": "12/6",
+  "break": "false",
+  "paras": 18,
+  "next_id": 19,
+  "last": "break:2050..2050>1"
+ },
+ "after_return_first_half": {
+  "line": 15,
+  "id": 16,
+  "style": 1,
+  "align": "Center",
+  "indent": "12/6",
+  "break": "true",
+  "paras": 18,
+  "next_id": 19,
+  "last": "break:2050..2050>1"
+ },
+ "after_backspace": {
+  "line": 15,
+  "id": 16,
+  "style": 1,
+  "align": "Center",
+  "indent": "12/6",
+  "break": "true",
+  "paras": 17,
+  "next_id": 19,
+  "last": "deleted:2050..2051>0"
+ }
+}

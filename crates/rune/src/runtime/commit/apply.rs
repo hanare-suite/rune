@@ -810,6 +810,7 @@ impl<S: 'static> Runtime<S> {
                     input.access = None;
                     input.key = None;
                     input.change = None;
+                    input.edits = None;
                     input.edit.focused = false;
                     input.edit.cancel_composition();
                     input.edit.conceal();

@@ -187,6 +187,7 @@ impl PillStyle {
     }
 }
 pub(crate) type InputPasteFn = Rc<dyn Fn(crate::states::States<'_>, &crate::ClipboardContent, &mut Tx) -> bool>;
+pub(crate) type InputEditsFn = Rc<dyn Fn(crate::states::States<'_>, &[crate::EditChange], &mut Tx)>;
 pub(crate) type PickFn = Box<dyn FnOnce(crate::states::States<'_>, Option<crate::Picked>, &mut Tx)>;
 
 #[derive(Clone)]

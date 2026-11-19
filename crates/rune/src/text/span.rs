@@ -22,6 +22,13 @@ pub struct Span {
     pub underline: Option<Color>,
     /// The family's italic face, or a synthetic oblique when it has none.
     pub italic: bool,
+    /// The run's font family by name, when the app registered it ([`AppSpec::fonts`](crate::AppSpec));
+    /// the text's own family otherwise.
+    pub family: Option<std::sync::Arc<str>>,
+    /// `bg` as a highlighter leaves it: the run's full height, square corners, no padding.
+    pub bg_flat: bool,
+    /// The run as a subscript or superscript: smaller, and moved off the baseline.
+    pub baseline: Option<crate::edit::Baseline>,
 }
 
 impl Span {
@@ -60,6 +67,31 @@ impl Span {
         self
     }
 
+    /// The run in the family named `name`, when the app registered one.
+    pub fn family(mut self, name: &str) -> Span {
+        self.family = Some(name.into());
+        self
+    }
+
+    /// A flat `color` background: the run's full height, square corners, no padding.
+    pub fn highlight(mut self, color: Color) -> Span {
+        (self.bg, self.bg_pad, self.bg_flat) = (Some(color), 0.0, true);
+        self
+    }
+
+    /// The run as a subscript or superscript.
+    pub fn baseline(mut self, baseline: crate::edit::Baseline) -> Span {
+        self.baseline = Some(baseline);
+        self
+    }
+
+    /// Whether the two style their bytes the same way, wherever those are.
+    pub(crate) fn same_style(&self, other: &Span) -> bool {
+        self.weight == other.weight && self.mono == other.mono && self.size == other.size && self.color == other.color
+            && self.bg == other.bg && self.bg_pad == other.bg_pad && self.underline == other.underline && self.italic == other.italic
+            && self.family == other.family && self.bg_flat == other.bg_flat && self.baseline == other.baseline
+    }
+
     /// Whether this span changes shaping, line metrics or painted decorations (`decorations.rs`),
     /// rather than glyph ink alone.
     pub(crate) fn affects_layout(&self) -> bool {
@@ -69,6 +101,8 @@ impl Span {
             || self.italic
             || self.bg.is_some()
             || self.underline.is_some()
+            || self.family.is_some()
+            || self.baseline.is_some()
     }
 
     /// What [`Self::affects_layout`] depends on, hashed into a layout's key.
@@ -86,6 +120,7 @@ impl Span {
             self.underline.is_some(),
         )
             .hash(h);
+        (&self.family, self.bg_flat, self.baseline).hash(h);
     }
 
     /// A rounded `color` background padded by `pad` points, as inline code draws.
@@ -212,6 +247,13 @@ pub(crate) fn flatten_spans(spans: &[Span]) -> Vec<Span> {
             if s.bg.is_some() {
                 m.bg = s.bg;
                 m.bg_pad = s.bg_pad;
+                m.bg_flat = s.bg_flat;
+            }
+            if s.family.is_some() {
+                m.family.clone_from(&s.family);
+            }
+            if s.baseline.is_some() {
+                m.baseline = s.baseline;
             }
             if s.underline.is_some() {
                 m.underline = s.underline;
@@ -229,6 +271,9 @@ pub(crate) fn flatten_spans(spans: &[Span]) -> Vec<Span> {
                 && last.bg_pad == m.bg_pad
                 && last.underline == m.underline
                 && last.italic == m.italic
+                && last.family == m.family
+                && last.bg_flat == m.bg_flat
+                && last.baseline == m.baseline
             {
                 last.end = m.end;
             } else {

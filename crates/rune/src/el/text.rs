@@ -229,6 +229,10 @@ impl El {
             t.cold.blocks.clear();
             t.cold.soft_breaks.clear();
             t.cold.pills.clear();
+            if !t.cold.attrs.is_empty() {
+                t.cold.attrs.clear();
+                t.rekey_flow();
+            }
             return;
         }
         let (mut base_spans, strikes, rich_links, blocks) =
@@ -257,6 +261,11 @@ impl El {
         t.cold.soft_breaks = inp.edit.soft_breaks.clone();
         // Replace links generated from `Mark::Link` while keeping any explicit `.link(...)` calls.
         t.cold.links = rich_links;
+        let attrs = inp.edit.display_attrs();
+        if attrs != t.cold.attrs {
+            t.cold.attrs = attrs;
+            t.rekey_flow();
+        }
     }
     /// Wrap text at the element's width.
     #[inline]

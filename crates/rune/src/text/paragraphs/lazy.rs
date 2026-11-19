@@ -215,7 +215,7 @@ impl TextSystem {
         let keyed = laid.keyed.as_ref().map(|k| Keyed { content: k.content.clone(), style_key: k.style_key, start_flow: k.start_flow });
         let built = Rc::new(ParagraphLayout {
             paragraphs, width, full_width, height: y as f32, max_width: laid.max_width, align: laid.align, whole: laid.whole,
-            newline: laid.newline, keyed, lazy: left.then_some(lazy.clone()),
+            newline: laid.newline, keyed, rich: None, lazy: left.then_some(lazy.clone()),
         });
         let g = self.generation;
         self.paragraphs.insert(lazy.cache_key, Entry::new(built.clone(), g, built.paragraphs.len() * size_of::<Paragraph>() / 64, built.whole));
