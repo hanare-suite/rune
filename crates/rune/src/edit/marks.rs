@@ -201,7 +201,18 @@ impl TextEdit {
         }
         let line_start = self.line_range(line_idx).start;
         if pos <= line_start {
-            return Vec::new();
+            // In a document the caret before a paragraph's first character takes that
+            // character's marks, as a word processor's does. Any other field starts a line plain.
+            if !self.attributed() {
+                return Vec::new();
+            }
+            let mut out = Vec::new();
+            for m in &self.marks {
+                if m.start <= pos && pos < m.end && !m.mark.is_pill() && !out.iter().any(|existing: &Mark| existing.same_kind(&m.mark)) {
+                    out.push(m.mark.clone());
+                }
+            }
+            return out;
         }
         let mut out = Vec::new();
         for m in &self.marks {
