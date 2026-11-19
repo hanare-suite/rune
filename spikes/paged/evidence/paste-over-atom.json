@@ -12,12 +12,13 @@
   "4* Tabelle – in",
   "5* Bild – in di",
   "6 ",
-  "7 Unten steht "
+  "7 Unten steht ",
+  "9 Xy"
  ],
  "bold": [
-  "149..150"
+  "150..151"
  ],
- "x_at_byte": 149,
- "reported": "replaced:149..198>0,replaced:149..149>2,marks:149..151>2",
+ "x_at_byte": 150,
+ "reported": "replaced:150..198>0,replaced:150..150>2,marks:150..152>2",
  "document_in_sync": "true"
 }
