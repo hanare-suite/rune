@@ -436,3 +436,7 @@ mod atom_edge_tests;
 #[cfg(test)]
 #[path = "fuzz_tests.rs"]
 mod fuzz_tests;
+
+#[cfg(test)]
+#[path = "kept_paste_tests.rs"]
+mod kept_paste_tests;

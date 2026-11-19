@@ -450,9 +450,28 @@ impl TextEdit {
         if self.secure || html_str.trim().is_empty() {
             return self.paste(plain);
         }
-        let mut frag = html::parse_html(html_str, self.html_styles()).rich();
+        let mut frag = self.html_fragment(html_str);
         if !pills {
             frag.marks.retain(|m| !m.mark.is_pill());
+        }
+        self.paste_fragment(frag, plain)
+    }
+
+    /// What a paste of `html_str` would insert, as a field of its own: the text, the marks with
+    /// the pills among them, the blocks and the paragraph attributes. An app that keeps content
+    /// behind pills and atoms reads it in its paste hook, takes out what it has no content for
+    /// or gives a pill an id of its own, and hands the result to
+    /// [`paste_fragment`](Self::paste_fragment).
+    pub fn html_fragment(&self, html_str: &str) -> TextEdit {
+        html::parse_html(html_str, self.html_styles()).rich()
+    }
+
+    /// Pastes `frag`, a fragment [`html_fragment`](Self::html_fragment) made, with the plain
+    /// text `plain` where the field keeps none of its formatting, as one edit. It keeps the
+    /// fragment's pills.
+    pub fn paste_fragment(&mut self, mut frag: TextEdit, plain: &str) -> EditOutcome {
+        if self.secure {
+            return self.paste(plain);
         }
         // Only a field that holds a document keeps a paste's fonts, sizes, colours and
         // paragraph attributes. Any other field takes a code editor's coloured copy as the
