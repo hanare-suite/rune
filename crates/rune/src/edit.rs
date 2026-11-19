@@ -851,8 +851,11 @@ impl TextEdit {
         let atom_gone = line_a < line_b && a == line_a_range.start && !kept.head && self.paragraph(line_a).atom.is_some();
         // An atom that stays on a line of its own behind the new text gives nothing to the
         // line before it.
+        // And a paragraph deleted whole, from its start to the start of the next: the paragraph
+        // mark that remains is the next one's, which keeps its attributes, block and id.
+        let whole = s.is_empty() && line_a < line_b && a == line_a_range.start && b == line_b_range.start;
         let take_b = !(kept.tail && added_lines > 0)
-            && (atom_gone || (line_a < line_b && line_a_range.is_empty() && a == line_a_range.start && b == line_b_range.start));
+            && (atom_gone || whole || (line_a < line_b && line_a_range.is_empty() && a == line_a_range.start && b == line_b_range.start));
         self.splice_attrs(line_a, line_b, added_lines, take_b, kept);
         // Determine the surviving block for `line_a` when `a..b` merges `line_a..=line_b`.
         let merged_block = if take_b || (kept.tail && added_lines == 0) {

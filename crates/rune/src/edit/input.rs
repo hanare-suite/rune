@@ -454,6 +454,12 @@ impl TextEdit {
         if !pills {
             frag.marks.retain(|m| !m.mark.is_pill());
         }
+        // An atom is the app's to restore, from a fragment: here its label is text.
+        for attrs in &mut frag.attrs {
+            if attrs.atom.is_some() {
+                (attrs.atom, attrs.id) = (None, 0);
+            }
+        }
         self.paste_fragment(frag, plain)
     }
 
@@ -468,7 +474,8 @@ impl TextEdit {
 
     /// Pastes `frag`, a fragment [`html_fragment`](Self::html_fragment) made, with the plain
     /// text `plain` where the field keeps none of its formatting, as one edit. It keeps the
-    /// fragment's pills.
+    /// fragment's pills, and its atoms as atoms: each on a line of its own, with a new id from
+    /// [`set_paragraph_ids`](Self::set_paragraph_ids), in the fragment's order.
     pub fn paste_fragment(&mut self, mut frag: TextEdit, plain: &str) -> EditOutcome {
         if self.secure {
             return self.paste(plain);
@@ -482,7 +489,7 @@ impl TextEdit {
         }
         // HTML that only colours or lays out text (a code editor's copy) would collapse the
         // plain text's whitespace for nothing.
-        let frag = self.keep_allowed(frag);
+        let mut frag = self.keep_allowed(frag);
         let unformatted = frag.marks.is_empty() && frag.attrs.is_empty() && frag.blocks.iter().all(|&b| b == Block::Paragraph);
         if !plain.is_empty() && (frag.text.is_empty() || unformatted) {
             return self.paste(plain);
@@ -539,6 +546,22 @@ impl TextEdit {
         }
         // Where the caret landed.
         let at = self.range().0;
+        // An atom the fragment starts or ends with stays on a line of its own: behind a line
+        // break unless the line starts here, and before one unless it ends here. Beside an
+        // atom of the field the fence below does the same.
+        let frag_atom = |frag: &TextEdit, line: usize| frag.attrs.get(line).is_some_and(|a| a.atom.is_some());
+        if frag.attrs.iter().any(|a| a.atom.is_some()) {
+            let here = self.line_of_byte(at);
+            let (range, beside_atom) = (self.line_range(here), self.paragraph(here).atom.is_some());
+            if frag_atom(&frag, frag.blocks().len() - 1) && at < range.end && !beside_atom {
+                frag.set_caret(frag.text.len());
+                frag.insert("\n");
+            }
+            if frag_atom(&frag, 0) && at > range.start && !beside_atom {
+                frag.set_caret(0);
+                frag.insert("\n");
+            }
+        }
         // Beside an atom the text goes on lines of its own, behind a line break (`lead`) or
         // before one. Its marks and blocks go where its own first byte and line do.
         let fenced = self.fence(at, at, &frag.text);
@@ -548,12 +571,27 @@ impl TextEdit {
         let line_was_empty = line_range.is_empty();
         // What the paste lands beside: nothing before it on its line, nothing after it.
         let (at_line_start, at_line_end) = (ins_at == line_range.start, ins_at == line_range.end);
-        let orig_block = if own_line { Block::Paragraph } else { self.blocks.get(line_idx).copied().unwrap_or(Block::Paragraph) };
+        let mut orig_block = if own_line { Block::Paragraph } else { self.blocks.get(line_idx).copied().unwrap_or(Block::Paragraph) };
 
         self.apply_fenced((at, at), fenced.text.as_deref().unwrap_or(&frag.text), &[], None, false, fenced.back);
 
         // Apply `frag.blocks` and `frag.soft_breaks`.
         let frag_lines = frag.blocks.len();
+        // A fragment that ends in a line break, pasted at the start of a line with text,
+        // pushes that line down whole: the line keeps its block, its attributes and its id,
+        // and the pasted paragraphs above it are new ones.
+        let ends_open = frag_lines > 1 && frag.text.ends_with('\n');
+        if ends_open && at_line_start && !at_line_end && !own_line {
+            let last = line_idx + frag_lines - 1;
+            if last < self.attrs.len() {
+                self.attrs.swap(line_idx, last);
+            }
+            if last < self.blocks.len() {
+                self.blocks.swap(line_idx, last);
+                self.blocks[line_idx] = Block::Paragraph;
+            }
+            orig_block = Block::Paragraph;
+        }
         if frag_lines == 1 {
             if line_was_empty && orig_block == Block::Paragraph && frag.blocks[0] != Block::Paragraph {
                 if let Some(slot) = self.blocks.get_mut(line_idx) {
@@ -566,7 +604,8 @@ impl TextEdit {
                     *slot = frag.blocks[0];
                 }
             }
-            for k in 1..frag_lines {
+            // The line a trailing break leaves the caret on keeps the block it had.
+            for k in 1..frag_lines - usize::from(ends_open) {
                 if let Some(slot) = self.blocks.get_mut(line_idx + k) {
                     *slot = frag.blocks[k];
                 }
@@ -581,16 +620,23 @@ impl TextEdit {
 
         // The pasted paragraphs keep their style and alignment. The first and the last join
         // the paragraph they land in, and take its attributes unless it holds nothing on
-        // that side, as a word processor pastes. Ids and atoms stay the field's own.
+        // that side, as a word processor pastes. Ids stay the field's own, and a pasted atom
+        // takes a new one.
         let mut styled = false;
         if !frag.attrs.is_empty() {
             for k in 0..frag_lines {
                 let joins = (k == 0 && !at_line_start) || (k + 1 == frag_lines && !at_line_end);
                 if joins && !(frag_lines == 1 && line_was_empty) { continue; }
                 let from = frag.paragraph(k);
+                // A pasted atom is a new paragraph whatever line it lands on: its id never
+                // named text.
+                let atom_id = from.atom.map(|_| self.fresh_id());
                 if let Some(slot) = self.attrs_mut().get_mut(line_idx + k) {
                     let was = *slot;
                     (slot.style, slot.align) = (from.style, from.align);
+                    if let Some(id) = atom_id {
+                        (slot.atom, slot.id) = (from.atom, if id == 0 { slot.id } else { id });
+                    }
                     styled |= *slot != was;
                 }
             }

@@ -160,8 +160,9 @@ fn an_atom_copies_with_its_id_and_height_and_a_fragment_shows_them() {
 #[test]
 fn a_fragment_with_an_atom_pastes_the_atom_on_a_line_of_its_own() {
     for (caret, want, locked) in [
-        (11, vec!["a", "Tabelle", "bc", "Tabelle"], vec![false, true, false, true]),
-        (10, vec!["a", "Tabelle", "b", "Tabelle", "c"], vec![false, true, false, true, false]),
+        (12, vec!["a", "Tabelle", "bc", "Tabelle"], vec![false, true, false, true]),
+        (11, vec!["a", "Tabelle", "b", "Tabelle", "c"], vec![false, true, false, true, false]),
+        (10, vec!["a", "Tabelle", "Tabelle", "bc"], vec![false, true, true, false]),
         (9, vec!["a", "Tabelle", "Tabelle", "bc"], vec![false, true, true, false]),
         (0, vec!["Tabelle", "a", "Tabelle", "bc"], vec![true, false, true, false]),
     ] {
@@ -186,7 +187,7 @@ fn a_pasted_atom_is_an_atom_to_the_keys() {
     let mut e = field("a\nTabelle\nbc", &[1]);
     e.set_selection(2, 9);
     let frag = e.html_fragment(&e.selected_html());
-    e.set_caret(11);
+    e.set_caret(12);
     e.paste_fragment(frag, "");
     e.take_changes();
     // Typing at the pasted atom's end goes on a line of its own, as beside any atom.

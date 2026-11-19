@@ -8,7 +8,9 @@
 //!   [`Mark::Pill`].
 //! - Block: `<p>`, `<div>`, `<br>`, `<ul>`, `<ol>`, `<li>`, `<blockquote>`, `<pre>`, with
 //!   `text-align`, and the elements a field's [`HtmlStyle`]s name for its paragraph styles
-//!   (`<h1>`, `<p class="title">`).
+//!   (`<h1>`, `<p class="title">`). A locked atom copied whole is `<p data-atom="id"
+//!   data-atom-height="points">` around its label, and a copy that ends behind a line break
+//!   ends in an empty `<p>`.
 //! - Stripped with content: `<script>`, `<style>`, `<head>`.
 //! - Unknown tags drop their wrapper and keep their text. Nothing is executed, and dangerous
 //!   link schemes (`javascript:`, `vbscript:`, `data:`) are rejected.
@@ -246,6 +248,14 @@ fn block_align(attrs: &str) -> Option<ParagraphAlign> {
 }
 
 /// The paragraph style `styles` gives the element `tag` with these attributes.
+/// The atom a block element is the copy of (`data-atom`, the id it was copied under, and
+/// `data-atom-height`, its height in points).
+fn block_atom(attrs: &str) -> Option<(u64, f32)> {
+    let id = extract_attr(attrs, "data-atom")?.trim().parse().ok()?;
+    let height = extract_attr(attrs, "data-atom-height").and_then(|h| h.trim().parse::<f32>().ok()).filter(|h| h.is_finite()).unwrap_or(1.0);
+    Some((id, height.max(1.0)))
+}
+
 fn block_style(styles: &[HtmlStyle], tag: &str, attrs: &str) -> Option<u16> {
     let class = extract_attr(attrs, "class");
     let has = |name: &str| class.as_deref().is_some_and(|c| c.split_whitespace().any(|c| c.eq_ignore_ascii_case(name)));
@@ -599,12 +609,15 @@ pub(crate) fn parse_html(html: &str, styles: &[HtmlStyle]) -> TextEdit {
                             in_pre,
                         );
                         // Inside a list item the item's own line keeps what it has.
-                        let (style, align) = (block_style(styles, &tag, attrs), block_align(attrs));
-                        if style.is_some() || align.is_some() {
+                        let (style, align, atom) = (block_style(styles, &tag, attrs), block_align(attrs), block_atom(attrs));
+                        if style.is_some() || align.is_some() || atom.is_some() {
                             line_attrs.resize(blocks.len(), ParagraphAttrs::default());
                             let slot = &mut line_attrs[blocks.len() - 1];
                             slot.style = style.unwrap_or(slot.style);
                             slot.align = align.unwrap_or(slot.align);
+                            if let Some((id, height)) = atom {
+                                *slot = slot.atom(height).id(id);
+                            }
                         }
                     }
                     _ => {}
@@ -910,6 +923,10 @@ pub(crate) fn serialize_html(edit: &TextEdit, range: Range<usize>) -> String {
         }
     }
 
+    // A copy that ends behind a line break, at the start of a paragraph it takes nothing of,
+    // ends in an empty paragraph, so a paste breaks the line there as the copy did.
+    let open_end = end > start && edit.text.as_bytes()[end - 1] == b'\n' && paras.last().is_some_and(|p| p.1.end < end && p.2 != Block::Code);
+
     let dirs = block_dirs(edit, &paras);
     let mut out = String::new();
     let mut idx = 0;
@@ -1010,6 +1027,10 @@ pub(crate) fn serialize_html(edit: &TextEdit, range: Range<usize>) -> String {
                     escape_html(class, &mut out);
                     out.push('"');
                 }
+                // An atom copied whole says so, with the id the app keeps its content under.
+                if let Some(height) = attrs.atom.filter(|_| paras[idx].1 == edit.line_range(paras[idx].0)) {
+                    out.push_str(&format!(" data-atom=\"{}\" data-atom-height=\"{height}\"", attrs.id));
+                }
                 out.push_str(dirs[idx]);
                 out.push_str(align_css(attrs.align));
                 out.push('>');
@@ -1025,6 +1046,9 @@ pub(crate) fn serialize_html(edit: &TextEdit, range: Range<usize>) -> String {
                 out.push('>');
             }
         }
+    }
+    if open_end {
+        out.push_str("<p></p>");
     }
     out
 }
