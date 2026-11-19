@@ -661,6 +661,8 @@ fn meta_json(m: &Meta) -> serde_json::Value {
                 Mark::Code => serde_json::json!("c"),
                 Mark::Link(url) => serde_json::json!(["l", url]),
                 Mark::Pill(id) => serde_json::json!(["p", id]),
+                Mark::Size(size) => serde_json::json!(["z", size.get().to_string()]),
+                Mark::Color(c) => serde_json::json!(["o", c.get().hex()]),
             };
             serde_json::json!([m.start, m.end, kind])
         })
@@ -674,6 +676,7 @@ fn meta_json(m: &Meta) -> serde_json::Value {
             Block::Code => serde_json::json!("c"),
             Block::Bullet(l) => serde_json::json!(["b", l]),
             Block::Numbered(l) => serde_json::json!(["n", l]),
+            Block::Styled(n) => serde_json::json!(["y", n]),
         })
         .collect();
     serde_json::json!({ "a": m.anchor, "f": m.focus, "m": marks, "k": blocks, "s": m.soft_breaks })
@@ -696,6 +699,8 @@ fn meta_from(v: &serde_json::Value) -> Option<Meta> {
                 (k, _, _) if k == "c" => Mark::Code,
                 (_, Some("l"), Some(url)) => Mark::Link(url.to_owned()),
                 (_, Some("p"), Some(id)) => Mark::Pill(id.to_owned()),
+                (_, Some("z"), Some(size)) => Mark::Size(MarkSize::pt(size.parse().ok()?)),
+                (_, Some("o"), Some(c)) => Mark::Color(MarkColor::new(crate::color::hex(c)?)),
                 _ => return None,
             };
             Some(MarkRange { start, end, mark })
@@ -710,6 +715,7 @@ fn meta_from(v: &serde_json::Value) -> Option<Meta> {
             (Some("c"), ..) => Some(Block::Code),
             (_, Some("b"), Some(l)) => Some(Block::Bullet((l as u8).min(MAX_LIST_LEVEL))),
             (_, Some("n"), Some(l)) => Some(Block::Numbered((l as u8).min(MAX_LIST_LEVEL))),
+            (_, Some("y"), Some(n)) => Some(Block::Styled(n as u16)),
             _ => None,
         })
         .collect::<Option<Vec<_>>>()?;

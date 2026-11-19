@@ -112,6 +112,8 @@ impl TextEdit {
                 }
                 // The chip and its colours come from `display_pills`.
                 Mark::Pill(_) => {}
+                Mark::Size(size) => spans.push(Span { start: r_start, end: r_end, size: Some(size.get()), ..Span::default() }),
+                Mark::Color(c) => spans.push(Span { start: r_start, end: r_end, color: Some(c.get()), ..Span::default() }),
             }
         };
 

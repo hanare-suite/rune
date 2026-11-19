@@ -260,7 +260,7 @@ fn split_run(lazy: &Lazy, max_width: Option<f32>, paragraphs: &[Paragraph], k: u
                 let mut hs = hash::KeyHasher::default();
                 (&lazy.content[start..e], lazy.style_key, flow == Flow::Rtl, lines, "run").hash(&mut hs);
                 let height = (f64::from(lines) * f64::from(h)) as f32;
-                out.push(Paragraph { start, end: e, y: y.round() as f32, height, widths: [widest, widest], flow, key: hs.finish(), isolates: Box::default(), layout: r.layout.clone(), shaped: false, lines, run: true });
+                out.push(Paragraph { start, end: e, y: y.round() as f32, height, widths: [widest, widest], flow, key: hs.finish(), isolates: Box::default(), layout: r.layout.clone(), shaped: false, lines, run: true, gaps: Box::default(), natural: None, natural_height: height });
                 y += f64::from(height);
             }
             continue;
@@ -268,7 +268,7 @@ fn split_run(lazy: &Lazy, max_width: Option<f32>, paragraphs: &[Paragraph], k: u
         let mut hs = hash::KeyHasher::default();
         (words, lazy.style_key, flow == Flow::Rtl, Block::Paragraph).hash(&mut hs);
         let (height, w) = lazy.ascii.one_line(words, max_width, 0.0, true).unwrap_or((h, 0.0));
-        out.push(Paragraph { start: s, end: e, y: y.round() as f32, height, widths: [w, w], flow, key: hs.finish(), isolates: Box::default(), layout: r.layout.clone(), shaped: false, lines: 1, run: false });
+        out.push(Paragraph { start: s, end: e, y: y.round() as f32, height, widths: [w, w], flow, key: hs.finish(), isolates: Box::default(), layout: r.layout.clone(), shaped: false, lines: 1, run: false, gaps: Box::default(), natural: None, natural_height: height });
         y += f64::from(height);
     }
     out

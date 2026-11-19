@@ -134,6 +134,12 @@ pub(crate) struct TextCold {
     /// Visual palette for rich block and inline decorations; the default's when unset.
     pub(crate) rich_style: Option<crate::edit::RichStyle>,
     pub(crate) secure_revealed: bool,
+    /// [`El::paragraph_styles`](crate::El::paragraph_styles): what each [`Block::Styled`](crate::Block::Styled) names.
+    pub(crate) paragraph_styles: Option<std::rc::Rc<[crate::edit::ParagraphStyle]>>,
+    /// [`El::page_flow`](crate::El::page_flow).
+    pub(crate) page_flow: Option<crate::edit::PageFlow>,
+    /// A hash of the two above, 0 with neither: part of the text's shape key.
+    pub(crate) flow_key: u64,
 }
 
 impl Empty for TextCold {
@@ -159,6 +165,9 @@ impl Empty for TextCold {
         pill_colors: None,
         rich_style: None,
         secure_revealed: false,
+        paragraph_styles: None,
+        page_flow: None,
+        flow_key: 0,
     };
 }
 
@@ -194,6 +203,22 @@ impl TextSpec {
             exact_lines: true,
             dir: TextDir::Auto,
         }
+    }
+
+    /// Whether its paragraphs take styles of their own or flow into pages: always laid out by
+    /// paragraph.
+    pub(crate) fn flowed(&self) -> bool {
+        self.cold.flow_key != 0
+    }
+
+    /// Takes `flow_key` again from the paragraph styles and page flow it hashes.
+    pub(crate) fn rekey_flow(&mut self) {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        self.cold.paragraph_styles.as_deref().hash(&mut h);
+        self.cold.page_flow.map(|p| [p.height.to_bits(), p.gap.to_bits()]).hash(&mut h);
+        self.cold.flow_key = h.finish() | 1;
+        self.shape = None;
     }
 
     /// The palette its rich decorations draw in.
@@ -263,7 +288,7 @@ impl TextSpec {
     /// [`crate::text::shape_key`] of this text in its direction.
     pub(crate) fn fresh_shape_key(&self, scale: f32) -> u64 {
         let key = crate::text::shape_key(&self.content, &self.spans, self.style, scale, self.wrap_anywhere, &self.cold.pills);
-        crate::text::directed(key, self.base())
+        crate::text::directed(key, self.base()) ^ self.cold.flow_key
     }
 
     /// The paragraph direction it lays out in as one layout.
@@ -287,7 +312,7 @@ impl TextSpec {
     pub(crate) fn by_paragraph(&self, input: bool) -> bool {
         input && self.wrap && !self.redacted && !self.truncate && !self.truncate_fade
             && self.max_lines == 0 && self.cold.live.is_none() && self.cold.advance_in.is_none()
-            && (matches!(self.dir, TextDir::Plaintext(_)) || self.content.contains('\n'))
+            && (matches!(self.dir, TextDir::Plaintext(_)) || self.content.contains('\n') || self.flowed())
     }
 
     /// The direction every paragraph of a by-paragraph layout takes, or None when each takes

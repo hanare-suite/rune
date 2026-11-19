@@ -6,10 +6,19 @@ use super::*;
 /// [`TextSystem::layout_keyed`] breaks the layouts it shapes.
 pub(super) fn rebreak(layout: &mut Layout<Ink>, blocks: &[crate::edit::Block], font_size: f32, scale: f32, max_width: Option<f32>, align: Alignment) {
     if blocks.iter().any(|&b| b != crate::edit::Block::Paragraph) || layout.inline_boxes().next().is_some() {
-        break_lines_with_blocks(layout, blocks, font_size, scale, max_width, Vec::new());
+        break_lines_with_blocks(layout, blocks, font_size, scale, max_width, Vec::new(), &[]);
     } else {
         layout.break_all_lines(max_width);
     }
+    layout.align(align, parley::AlignmentOptions::default());
+}
+
+/// [`rebreak`] with room left above some lines: each of `gaps` is a line (counted from the
+/// layout's first) and the device px its top moves down by, the lines after it with it. A paged
+/// field's paragraph that crosses a page's end is broken this way, so its caret, hit tests,
+/// selection boxes and glyphs all land on the page its lines are on.
+pub(super) fn rebreak_gapped(layout: &mut Layout<Ink>, blocks: &[crate::edit::Block], font_size: f32, scale: f32, max_width: Option<f32>, align: Alignment, gaps: &[(u32, f32)]) {
+    break_lines_with_blocks(layout, blocks, font_size, scale, max_width, Vec::new(), gaps);
     layout.align(align, parley::AlignmentOptions::default());
 }
 
@@ -19,13 +28,13 @@ pub(super) fn rebreak(layout: &mut Layout<Ink>, blocks: &[crate::edit::Block], f
 #[allow(clippy::too_many_arguments)]
 pub(super) fn break_new(layout: &mut Layout<Ink>, text: &str, blocks: &[crate::edit::Block], indented: bool, font_size: f32, scale: f32, max_width: Option<f32>, pretty: bool) {
     if indented {
-        break_lines_with_blocks(layout, blocks, font_size, scale, max_width, Vec::new());
+        break_lines_with_blocks(layout, blocks, font_size, scale, max_width, Vec::new(), &[]);
         // Pills (a link's icon, a mention's chip) wrap prettily too, as their inline boxes do in
         // Chromium; indented blocks (lists, quotes, code) keep the greedy lines.
         if let (true, Some(width)) = (pretty && blocks.iter().all(|&b| b == crate::edit::Block::Paragraph), max_width) {
             let caps = super::pretty::caps(layout, text, font_size, scale, width);
             if !caps.is_empty() {
-                break_lines_with_blocks(layout, blocks, font_size, scale, max_width, caps);
+                break_lines_with_blocks(layout, blocks, font_size, scale, max_width, caps, &[]);
             }
         }
         return;
@@ -34,7 +43,7 @@ pub(super) fn break_new(layout: &mut Layout<Ink>, text: &str, blocks: &[crate::e
     if let (true, Some(width)) = (pretty, max_width) {
         let caps = super::pretty::caps(layout, text, font_size, scale, width);
         if !caps.is_empty() {
-            break_lines_capped(layout, &[], font_size, scale, max_width, &caps, &mut Vec::new());
+            break_lines_capped(layout, &[], font_size, scale, max_width, &caps, &[], &mut Vec::new());
         }
     }
 }
@@ -49,6 +58,7 @@ pub(super) fn break_lines_with_blocks(
     scale: f32,
     max_width: Option<f32>,
     mut caps: Vec<((usize, usize), f32)>,
+    gaps: &[(u32, f32)],
 ) {
     let pills = layout.inline_boxes().filter(|b| b.id & PILL_BOX != 0).count() / 2;
     // `(para_idx, line_in_para)` and the room it gets instead: less to break before a chip, or
@@ -56,7 +66,7 @@ pub(super) fn break_lines_with_blocks(
     // can adjust the first misplaced pill in every paragraph at once.
     let mut lines_meta = Vec::new();
     for _ in 0..=2 * pills {
-        break_lines_capped(layout, blocks, font_size, scale, max_width, &caps, &mut lines_meta);
+        break_lines_capped(layout, blocks, font_size, scale, max_width, &caps, gaps, &mut lines_meta);
         if max_width.is_none() || pills == 0 || !collect_misplaced_pills(layout, &lines_meta, &mut caps) {
             return;
         }
@@ -72,9 +82,11 @@ fn break_lines_capped(
     scale: f32,
     max_width: Option<f32>,
     caps: &[((usize, usize), f32)],
+    gaps: &[(u32, f32)],
     out: &mut Vec<((usize, usize), f32)>,
 ) {
     out.clear();
+    let mut line_no = 0u32;
     let layout_max = max_width.unwrap_or(f32::MAX);
     let mut breaker = layout.break_lines();
     breaker.state_mut().set_layout_max_advance(layout_max);
@@ -93,8 +105,13 @@ fn break_lines_capped(
         // Parley wants no line wider than the layout: a widened line widens it while it breaks.
         breaker.state_mut().set_layout_max_advance(layout_max.max(capped));
         breaker.state_mut().set_line_max_advance(capped);
+        if let Some(&(_, gap)) = gaps.iter().find(|g| g.0 == line_no) {
+            let y = breaker.state().line_y();
+            breaker.state_mut().set_line_y(y + f64::from(gap));
+        }
         match breaker.break_next() {
             Some(parley::YieldData::LineBreak(data)) => {
+                line_no += 1;
                 if data.reason == parley::BreakReason::Explicit {
                     para_idx += 1;
                     line_in_para = 0;

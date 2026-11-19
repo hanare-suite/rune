@@ -1,0 +1,19 @@
+{
+ "check": "drag",
+ "pass": true,
+ "selection_bytes": [
+  3133,
+  3501
+ ],
+ "page_1_text_ends_at_y": 295.0,
+ "page_2_text_starts_at_y": 453.0,
+ "selected_rows_on_page_1": [
+  267,
+  294
+ ],
+ "selected_rows_in_gap": 0,
+ "selected_rows_on_page_2": [
+  453,
+  494
+ ]
+}

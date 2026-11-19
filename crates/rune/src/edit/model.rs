@@ -24,6 +24,39 @@ pub enum Mark {
     /// chip ([`El::pill_style`](crate::El::pill_style), [`El::pill_colors`](crate::El::pill_colors),
     /// [`El::pill_icon`](crate::El::pill_icon)). Insert one with [`TextEdit::insert_pill`].
     Pill(String),
+    /// The run's font size in points, over the field's or its paragraph style's.
+    Size(MarkSize),
+    /// The run's text colour.
+    Color(MarkColor),
+}
+
+/// A font size in points that compares and hashes by its bits, so a [`Mark`] can carry it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct MarkSize(u32);
+
+impl MarkSize {
+    pub fn pt(points: f32) -> Self {
+        Self(points.max(1.0).to_bits())
+    }
+
+    pub fn get(self) -> f32 {
+        f32::from_bits(self.0)
+    }
+}
+
+/// A colour that compares and hashes by its bits, so a [`Mark`] can carry it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct MarkColor([u32; 4]);
+
+impl MarkColor {
+    pub fn new(c: Color) -> Self {
+        Self([c.r, c.g, c.b, c.a].map(f32::to_bits))
+    }
+
+    pub fn get(self) -> Color {
+        let [r, g, b, a] = self.0.map(f32::from_bits);
+        Color { r, g, b, a }
+    }
 }
 
 impl Mark {
@@ -36,7 +69,9 @@ impl Mark {
             | (Mark::Strike, Mark::Strike)
             | (Mark::Code, Mark::Code)
             | (Mark::Link(_), Mark::Link(_))
-            | (Mark::Pill(_), Mark::Pill(_)) => true,
+            | (Mark::Pill(_), Mark::Pill(_))
+            | (Mark::Size(_), Mark::Size(_))
+            | (Mark::Color(_), Mark::Color(_)) => true,
             _ => false,
         }
     }
@@ -70,9 +105,20 @@ impl Mark {
             Mark::Code => 4,
             Mark::Link(_) => 5,
             Mark::Pill(_) => 6,
+            Mark::Size(_) => 7,
+            Mark::Color(_) => 8,
         }
     }
+
+    /// Whether one range of the kind carries one value, so a later mark replaces an earlier one
+    /// where they overlap rather than joining it.
+    pub(crate) fn is_valued(&self) -> bool {
+        matches!(self, Mark::Link(_) | Mark::Size(_) | Mark::Color(_))
+    }
 }
+
+/// How many kinds [`Mark::kind_order`] numbers.
+pub(crate) const MARK_KINDS: usize = 9;
 
 /// A non-empty byte range `[start, end)` in [`TextEdit::text`] carrying an inline [`Mark`].
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -105,6 +151,70 @@ pub enum Block {
     Quote,
     /// Monospace code block line with a background fill; inline marks do not apply.
     Code,
+    /// A paragraph in the field's `n`th [`ParagraphStyle`] ([`El::paragraph_styles`](crate::El::paragraph_styles)),
+    /// the field's own style when it has no such entry.
+    Styled(u16),
+}
+
+/// A paragraph's text style and the room around it, which the app supplies for
+/// [`Block::Styled`]. More fields may come, so build one from [`ParagraphStyle::new`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
+pub struct ParagraphStyle {
+    pub text: crate::tok::TextStyle,
+    /// Points above the paragraph, dropped at the top of a page its lines flowed onto.
+    pub space_before: f32,
+    /// Points below it.
+    pub space_after: f32,
+    /// Starts the paragraph on a new page of a field with [`El::page_flow`](crate::El::page_flow).
+    pub page_break_before: bool,
+}
+
+impl std::hash::Hash for ParagraphStyle {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        (self.text, self.space_before.to_bits(), self.space_after.to_bits(), self.page_break_before).hash(state);
+    }
+}
+
+impl ParagraphStyle {
+    pub fn new(text: crate::tok::TextStyle) -> Self {
+        Self { text, space_before: 0.0, space_after: 0.0, page_break_before: false }
+    }
+
+    pub fn space(mut self, before: f32, after: f32) -> Self {
+        (self.space_before, self.space_after) = (before, after);
+        self
+    }
+
+    pub fn page_break_before(mut self) -> Self {
+        self.page_break_before = true;
+        self
+    }
+}
+
+/// Lays a field's lines into pages `height` points tall with `gap` points between them
+/// ([`El::page_flow`](crate::El::page_flow)).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PageFlow {
+    pub height: f32,
+    pub gap: f32,
+}
+
+impl PageFlow {
+    pub fn new(height: f32, gap: f32) -> Self {
+        Self { height, gap }
+    }
+
+    /// How many pages a field `field_height` points tall holds: its height is always whole
+    /// pages and the gaps between them.
+    pub fn pages(self, field_height: f32) -> usize {
+        (((field_height + self.gap) / (self.height + self.gap).max(1.0)).round() as usize).max(1)
+    }
+
+    /// The top of page `page` (from 0) in points from the field's top.
+    pub fn page_top(self, page: usize) -> f32 {
+        page as f32 * (self.height + self.gap)
+    }
 }
 
 impl Block {
@@ -137,6 +247,7 @@ impl Block {
                 | (Block::Numbered(_), Block::Numbered(_))
                 | (Block::Quote, Block::Quote)
                 | (Block::Code, Block::Code)
+                | (Block::Styled(_), Block::Styled(_))
         )
     }
 
@@ -148,6 +259,7 @@ impl Block {
             Block::Numbered(_) => 2,
             Block::Quote => 3,
             Block::Code => 4,
+            Block::Styled(_) => 5,
         }
     }
 
@@ -155,7 +267,7 @@ impl Block {
     pub(crate) fn indent_pt(self, font_size: f32) -> f32 {
         let unit = (font_size * 1.45).round().max(18.0);
         match self {
-            Block::Paragraph => 0.0,
+            Block::Paragraph | Block::Styled(_) => 0.0,
             Block::Bullet(l) | Block::Numbered(l) => unit * (l.min(MAX_LIST_LEVEL) as f32 + 1.0),
             Block::Quote => (font_size * 1.1).round().max(14.0),
             Block::Code => (font_size * 0.75).round().max(10.0),
