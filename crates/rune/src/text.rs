@@ -658,6 +658,7 @@ impl TextSystem {
         // Each pill's label range, and the room before and after it in device px; boxes keep
         // the pill's index in their id, so ranges that fail the checks keep no chip.
         let pm = PillMetrics::new(style.size);
+        let pill_chips_in = pills;
         let pills: Vec<(usize, std::ops::Range<usize>, u32, u32)> = pills
             .iter()
             .enumerate()
@@ -665,6 +666,7 @@ impl TextSystem {
                 let r = (p.start as usize).min(text.len())..(p.end as usize).min(text.len());
                 let (lead, trail) = match &p.bare {
                     Some(b) => (b.size + b.gap, 0.0),
+                    None if p.stand_in => (pm.lead_alone(), pm.trail()),
                     None => (pm.lead(p.icon.is_some()), pm.trail()),
                 };
                 (i, r, (lead * scale).round() as u32, (trail * scale).round() as u32)
@@ -991,6 +993,16 @@ impl TextSystem {
                     Some((last, v)) if last.end == range.start && *v == needed => last.end = range.end,
                     _ => exact.push((range, needed)),
                 }
+            }
+        }
+        // An object character an icon stands in for takes no room: its spacing takes back
+        // the advance its font gave it.
+        for (_, r, ..) in pills.iter().filter(|(i, ..)| pill_chips_in[*i].stand_in) {
+            let advance = layout.lines().flat_map(|line| line.runs()).flat_map(|run| run.clusters()).find(|c| c.text_range() == *r).map(|c| c.advance());
+            if let Some(advance) = advance.filter(|a| *a != 0.0) {
+                let had = exact.iter().find(|(range, _)| range.contains(&r.start)).map_or_else(|| given(r.start), |e| e.1);
+                exact.push((r.clone(), had - advance));
+                mismatch = true;
             }
         }
         if mismatch {

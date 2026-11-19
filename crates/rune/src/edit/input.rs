@@ -511,12 +511,14 @@ impl TextEdit {
             return EditOutcome::default();
         }
 
-        // First delete `a..b` if non-empty.
+        // First delete `a..b` if non-empty. Selected atoms leave their line to the pasted text,
+        // as they do to typed text: only a deletion on its own takes their line break too.
         if a < b {
-            self.apply_text_and_attr_replace((a, b), "", &[], None, false);
+            let f = self.fence(a, b, "");
+            let (a, b) = if f.text.is_some() { (f.a, f.b) } else { (a, b) };
+            self.apply_fenced((a, b), f.text.as_deref().unwrap_or(""), &[], None, false, f.back);
         }
-        // Where the caret landed: deleting an atom takes its line break too, which can be the
-        // one before it.
+        // Where the caret landed.
         let at = self.range().0;
         // Beside an atom the text goes on lines of its own, behind a line break (`lead`) or
         // before one. Its marks and blocks go where its own first byte and line do.

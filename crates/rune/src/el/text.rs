@@ -215,7 +215,8 @@ impl El {
             .map(|(start, end, id)| {
                 let st = inp.pill_style.as_ref().map(|f| f(id)).unwrap_or_default();
                 let icon = st.icon.or_else(|| inp.pill_icon.as_ref().and_then(|f| f(id)));
-                crate::text::PillChip { start, end, icon, bg: st.bg, fg: st.fg, bare: None }
+                let stand_in = icon.is_some() && inp.edit.pill_is_object(id);
+                crate::text::PillChip { start, end, icon, bg: st.bg, fg: st.fg, bare: None, stand_in }
             })
             .collect();
     }
@@ -247,7 +248,9 @@ impl El {
         }
         let pill_fg = t.cold.pill_colors.and_then(|(_, fg)| fg);
         base_spans.extend(t.cold.pills.iter().filter_map(|p| {
-            Some(Span { start: p.start, end: p.end, color: Some(p.fg.or(pill_fg)?), ..Span::default() })
+            // An icon that stands in for the object character leaves the font's glyph undrawn.
+            let color = if p.stand_in { Color::TRANSPARENT } else { p.fg.or(pill_fg)? };
+            Some(Span { start: p.start, end: p.end, color: Some(color), ..Span::default() })
         }));
         let mut flat = crate::text::flatten_spans(&base_spans);
         for s in &mut flat {

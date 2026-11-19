@@ -371,9 +371,17 @@ impl TextEdit {
         }
     }
 
+    /// `attrs` for a paragraph of text. What was an atom takes a new id with it: an atom's id
+    /// names what the app keeps for the atom, and never text.
+    fn as_text(&mut self, attrs: ParagraphAttrs) -> ParagraphAttrs {
+        if attrs.atom.is_none() { return attrs; }
+        ParagraphAttrs { atom: None, id: self.fresh_id(), ..attrs }
+    }
+
     /// The attributes after an edit that merged lines `la..=lb` into one and added `added`
     /// lines after it. The merged line keeps `la`'s attributes (`lb`'s with `take_b`), each
     /// added line takes a copy with a new id, and an atom stays only on a line `kept` names.
+    /// Text on a line that was an atom's is a new paragraph, with a new id.
     /// An atom `kept.tail` names is the last line the edit leaves and keeps its own attributes
     /// there, so the merged line never takes them too: no id ends up on two paragraphs.
     pub(super) fn splice_attrs(&mut self, la: usize, lb: usize, added: usize, take_b: bool, kept: Kept) {
@@ -390,13 +398,13 @@ impl TextEdit {
             first
         };
         let mut lines = Vec::with_capacity(added + 1);
-        lines.push(if kept.head || (kept.tail && added == 0) { survivor } else { ParagraphAttrs { atom: None, ..survivor } });
+        lines.push(if kept.head || (kept.tail && added == 0) { survivor } else { self.as_text(survivor) });
         for k in 1..=added {
             let tail = k == added;
             let own = if tail && kept.tail {
                 last
             } else if tail && kept.head && lb > la {
-                ParagraphAttrs { atom: None, ..last }
+                self.as_text(last)
             } else {
                 let id = self.fresh_id();
                 lines[0].split(id)

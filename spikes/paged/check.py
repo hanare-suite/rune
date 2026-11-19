@@ -514,9 +514,12 @@ def paste_over_atom():
     t = marks("paste-over-atom", events, ["selected", "pasted"], env=env, snaps={"pasted": "paste-over-atom.png"})
     sel = element(t["selected"], "editor")["selection"]
     text, f = element(t["pasted"], "editor")["text"], facts(t["pasted"])
-    ps, at = paragraphs(t["pasted"]), len(text[:text.index("Xy")].encode())
-    ok = (sel[1] - sel[0] == len(DIAGRAMM.encode()) and text.endswith("Unten steht ein Absatz.Xy") and DIAGRAMM not in text
+    before, ps, at = paragraphs(t["selected"]), paragraphs(t["pasted"]), len(text[:text.index("Xy")].encode())
+    # The pasted text keeps the atom's line, as typed text does, under an id no atom had.
+    ok = (sel[1] - sel[0] == len(DIAGRAMM.encode()) and text.endswith("Unten steht ein Absatz.\nXy") and DIAGRAMM not in text
           and listed(f, "bold") == [f"{at}..{at + 1}"] and c_byte(t["pasted"]) == at + 2 and sound(t["pasted"])
+          and len(ps) == len(before) and not ps[-1]["atom"] and ps[-1]["id"] not in [p["id"] for p in before]
+          and [p["id"] for p in ps[:-1]] == [p["id"] for p in before[:-1]]
           and not any(p["atom"] and p["text"] == "" for p in ps))
     check("paste-over-atom", ok, {"selection": sel, "paragraphs_after": brief(ps), "bold": listed(f, "bold"), "x_at_byte": at,
                                   "reported": f["last"], "document_in_sync": f["sync"]})
@@ -555,6 +558,7 @@ def atom_ids():
         want = ATOM if case == "empty-paragraph" else BILD
         ok = (ok and sound(t["typed"]) and len(ps) == len(before) and ps[i + 1]["text"] == want and ps[i + 1]["atom"] and not ps[i]["atom"]
               and ps[i + 1]["id"] == next(p["id"] for p in before if p["text"] == want)
+              and ps[i]["id"] not in [p["id"] for p in before if p["atom"]]
               and [p["id"] for p in ps[:i] + ps[i + 2:]] == [p["id"] for p in before[:i] + before[i + 2:]])
         found[case] = {"selection": element(t["selected"], "editor")["selection"], "ids_before": [p["id"] for p in before],
                        "paragraphs_after": brief(ps), "reported": f["last"], "document_in_sync": f["sync"]}

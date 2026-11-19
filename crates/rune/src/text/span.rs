@@ -154,6 +154,10 @@ pub(crate) struct PillChip {
     pub bg: Option<Color>,
     pub fg: Option<Color>,
     pub bare: Option<Box<BareIcon>>,
+    /// The label is the object character alone, which stands for something that is no text:
+    /// the icon is all the chip holds. The font's glyph for the character is not drawn and
+    /// takes no room.
+    pub stand_in: bool,
 }
 
 /// An inline icon's room and look in points (see [`InlineIcon`](crate::InlineIcon)).
@@ -180,6 +184,11 @@ impl PillMetrics {
     }
 
     /// Room before the label, inside the chip and out.
+    /// Room before a label that takes none itself, its icon standing in for it.
+    pub fn lead_alone(&self) -> f32 {
+        self.margin + self.pad + self.icon
+    }
+
     pub fn lead(&self, icon: bool) -> f32 {
         self.margin + self.pad + if icon { self.icon + self.icon_gap } else { 0.0 }
     }
