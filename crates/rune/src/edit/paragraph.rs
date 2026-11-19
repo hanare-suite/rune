@@ -40,6 +40,15 @@ pub struct ParagraphAttrs {
     pub id: u64,
 }
 
+/// One paragraph style as HTML, for [`TextEdit::set_html_styles`]: paragraphs of `style` are
+/// the element `tag`, with `class` when it has one. A class matches whatever its case.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct HtmlStyle {
+    pub style: u16,
+    pub tag: &'static str,
+    pub class: Option<&'static str>,
+}
+
 impl ParagraphAttrs {
     pub fn style(mut self, style: u16) -> Self {
         self.style = style;

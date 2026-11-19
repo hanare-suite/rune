@@ -113,6 +113,8 @@ pub(crate) fn headless_configured<S: 'static>(mut app: crate::app::App<S>, args:
     let dark = args.theme.as_deref() != Some("light");
     let state_ms = launched.elapsed().as_secs_f64() * 1000.0;
     let mut rt = runtime_for(&spec, state, size, Env::new(dark, scale), std::sync::Arc::new(|| {}));
+    // A script's copy reaches its paste: the run has a clipboard of its own, never the system's.
+    rt.use_clipboard(&crate::clipboard::memory());
     crate::playground::attach(&mut rt, playground, &spec, args.playground.clone(), args.variant.clone(), false);
     let chrome = rt.headless_chrome(chrome, titlebar, app_options.borderless);
     rt.on_focus = on_focus;

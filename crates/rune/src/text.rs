@@ -54,6 +54,7 @@ mod paragraphs;
 mod platform_face;
 mod span;
 mod span_style;
+pub use span_style::alias_family;
 mod system_fonts;
 mod system_weight;
 mod default_fonts;

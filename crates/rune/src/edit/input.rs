@@ -450,14 +450,14 @@ impl TextEdit {
         if self.secure || html_str.trim().is_empty() {
             return self.paste(plain);
         }
-        let mut frag = Self::from_html(html_str);
+        let mut frag = html::parse_html(html_str, self.html_styles()).rich();
         if !pills {
             frag.marks.retain(|m| !m.mark.is_pill());
         }
         // HTML that only colours or lays out text (a code editor's copy) would collapse the
         // plain text's whitespace for nothing.
         let frag = self.keep_allowed(frag);
-        let unformatted = frag.marks.is_empty() && frag.blocks.iter().all(|&b| b == Block::Paragraph);
+        let unformatted = frag.marks.is_empty() && frag.attrs.is_empty() && frag.blocks.iter().all(|&b| b == Block::Paragraph);
         if !plain.is_empty() && (frag.text.is_empty() || unformatted) {
             return self.paste(plain);
         }
@@ -518,6 +518,8 @@ impl TextEdit {
         let own_line = fenced.text.is_some();
         let line_range = if own_line { ins_at..ins_at } else { self.line_range(line_idx) };
         let line_was_empty = line_range.is_empty();
+        // What the paste lands beside: nothing before it on its line, nothing after it.
+        let (at_line_start, at_line_end) = (ins_at == line_range.start, ins_at == line_range.end);
         let orig_block = if own_line { Block::Paragraph } else { self.blocks.get(line_idx).copied().unwrap_or(Block::Paragraph) };
 
         self.apply_fenced((at, at), fenced.text.as_deref().unwrap_or(&frag.text), &[], None, false, fenced.back);
@@ -549,6 +551,23 @@ impl TextEdit {
             }
         }
 
+        // The pasted paragraphs keep their style and alignment. The first and the last join
+        // the paragraph they land in, and take its attributes unless it holds nothing on
+        // that side, as a word processor pastes. Ids and atoms stay the field's own.
+        let mut styled = false;
+        if !frag.attrs.is_empty() {
+            for k in 0..frag_lines {
+                let joins = (k == 0 && !at_line_start) || (k + 1 == frag_lines && !at_line_end);
+                if joins && !(frag_lines == 1 && line_was_empty) { continue; }
+                let from = frag.paragraph(k);
+                if let Some(slot) = self.attrs_mut().get_mut(line_idx + k) {
+                    let was = *slot;
+                    (slot.style, slot.align) = (from.style, from.align);
+                    styled |= *slot != was;
+                }
+            }
+        }
+
         // Add `frag.marks` shifted by `ins_at`.
         for m in &frag.marks {
             self.marks.push(MarkRange {
@@ -562,7 +581,7 @@ impl TextEdit {
         // The pasted text's marks and blocks, as one change over it.
         let end = (ins_at + frag.text.len()).min(self.text.len());
         if !frag.marks.is_empty() { self.note_marks(ins_at..end); }
-        if frag_lines > 1 || frag.blocks.first().is_some_and(|&b| b != Block::Paragraph) {
+        if styled || frag_lines > 1 || frag.blocks.first().is_some_and(|&b| b != Block::Paragraph) {
             self.note_paragraphs(line_idx..line_idx + frag_lines.max(1));
         }
         self.record_change(before, EditKind::Other);

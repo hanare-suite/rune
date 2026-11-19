@@ -32,7 +32,7 @@ mod model;
 pub use model::{Baseline, Block, MAX_LIST_LEVEL, Mark, MarkColor, MarkRange, MarkSize, PageFlow, ParagraphInfo, ParagraphStyle, RichStyle};
 pub(crate) use model::{MARK_KINDS, atom_colors};
 mod paragraph;
-pub use paragraph::{ParagraphAlign, ParagraphAttrs};
+pub use paragraph::{HtmlStyle, ParagraphAlign, ParagraphAttrs};
 mod secure;
 pub(crate) use secure::{MULTILINE_SECURE_MASK, Masking};
 use secure::LineMode;
@@ -91,6 +91,8 @@ pub struct TextEdit {
     history_off: bool,
     /// What edits changed since [`TextEdit::take_changes`].
     changes: changes::ChangeLog,
+    /// How paragraph styles read and write as HTML ([`TextEdit::set_html_styles`]).
+    html_styles: Arc<[HtmlStyle]>,
 }
 
 impl std::fmt::Debug for TextEdit {
@@ -258,6 +260,7 @@ impl TextEdit {
             next_id: 0,
             history_off: false,
             changes: changes::ChangeLog::default(),
+            html_styles: Arc::default(),
         }
     }
 
@@ -365,7 +368,18 @@ impl TextEdit {
     /// and inline `style` for `font-weight`, `font-style`, `text-decoration`) into a [`TextEdit`].
     /// Unknown tags keep their text and strip the wrapper; `<script>` and `<style>` are dropped.
     pub fn from_html(html_str: &str) -> TextEdit {
-        html::parse_html(html_str).rich()
+        html::parse_html(html_str, &[]).rich()
+    }
+
+    /// Says which HTML element each paragraph style is: copying writes a paragraph of style
+    /// `n` as the first entry that names it (`<h1>`, `<p class="title">`), and pasting gives
+    /// a block that matches an entry its style. Without entries headings paste as bold text.
+    pub fn set_html_styles(&mut self, styles: impl Into<Arc<[HtmlStyle]>>) {
+        self.html_styles = styles.into();
+    }
+
+    pub(crate) fn html_styles(&self) -> &[HtmlStyle] {
+        &self.html_styles
     }
 
     /// Serialize the entire document's text, inline marks, and paragraph blocks to safe HTML.
