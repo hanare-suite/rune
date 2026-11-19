@@ -450,6 +450,13 @@ impl TextEdit {
         if !pills {
             frag.marks.retain(|m| !m.mark.is_pill());
         }
+        // Only a field that holds a document keeps a paste's fonts, sizes, colours and
+        // paragraph attributes. Any other field takes a code editor's coloured copy as the
+        // plain text it is.
+        if !self.attributed() {
+            frag.marks.retain(|m| !matches!(m.mark, Mark::Size(_) | Mark::Color(_) | Mark::Family(_) | Mark::Highlight(_) | Mark::Baseline(_)));
+            frag.attrs.clear();
+        }
         // HTML that only colours or lays out text (a code editor's copy) would collapse the
         // plain text's whitespace for nothing.
         let frag = self.keep_allowed(frag);
