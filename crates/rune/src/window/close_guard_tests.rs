@@ -13,7 +13,7 @@ use crate::close_guard::CloseGuard;
 use crate::quit::{Effect, Event, State as QuitState, step as quit_step};
 use crate::runtime::{Env, Runtime};
 use crate::window::host::app::{WindowApp, test_app_with_close_guard};
-use crate::window::host::close_guard::{Hold, Settle, hold_close_core, hold_quit_core, settle_plan};
+use crate::window::host::close_guard::{Hold, Settle, hold_close_core, hold_quit_core, quit_asks, settle_plan};
 use crate::window::{AnyHost, Life, WakeEvent};
 use crate::{Cx, El, Tx, el};
 
@@ -65,6 +65,7 @@ struct Win {
     keeps_loop: bool,
     ends_app: bool,
     asked: bool,
+    gone: Rc<std::cell::Cell<bool>>,
 }
 
 impl Win {
@@ -78,10 +79,10 @@ impl Win {
         clipboard.use_memory(mem);
         let mut life = Life::Unopened;
         life.show();
-        Self { app, clipboard, life, keeps_loop, ends_app: false, asked: false }
+        Self { app, clipboard, life, keeps_loop, ends_app: false, asked: false, gone: Rc::default() }
     }
 
-    fn closes(&self) -> bool { self.life.closes(false, true) }
+    fn closes(&self) -> bool { self.life.closes(false, true) && !self.gone.get() }
 
     fn hold_close(&mut self, exiting: bool) -> bool {
         let closes = self.closes();
@@ -94,11 +95,11 @@ impl AnyHost for Win {
     fn user_event(&mut self, _: &ActiveEventLoop, _: WakeEvent) {}
     fn owns(&self, _: WindowId) -> bool { false }
     fn window_event(&mut self, _: &ActiveEventLoop, _: WindowId, _: WindowEvent) {}
-    fn finished(&self) -> bool { self.life.finished() }
+    fn finished(&self) -> bool { self.life.finished() || self.gone.get() }
     fn keeps_loop(&self) -> bool { self.keeps_loop }
     fn hold_quit(&mut self, once: bool) -> bool {
-        let closes = self.closes();
-        hold_quit_core(&mut *self.app, &mut self.clipboard, closes, &mut self.ends_app, &mut self.asked, once) != Hold::No
+        let open = quit_asks(self.life, false) && !self.gone.get();
+        hold_quit_core(&mut *self.app, &mut self.clipboard, open, &mut self.ends_app, &mut self.asked, once) != Hold::No
     }
     fn terminate(&mut self) {
         if !self.closes() { return; }
@@ -204,18 +205,33 @@ fn the_last_main_window_closing_asks_a_guarded_secondary_before_the_app_ends() {
 }
 
 #[test]
-fn the_app_ends_once_the_guarded_secondary_is_answered() {
+fn a_cancelled_app_end_is_dropped_and_the_app_ends_with_the_last_window_to_close() {
     let (log, mem) = events();
     let mut main = Win::new("main", true, None, &log, &mem);
     main.life.finish();
-    let mut hosts: Vec<Option<Box<dyn AnyHost>>> = vec![
-        Some(Box::new(main)),
-        Some(Box::new(Win::new("second", false, Some(Answer::Lower), &log, &mem))),
-    ];
+    let second = Win::new("second", false, Some(Answer::Lower), &log, &mem);
+    let gone = second.gone.clone();
+    let mut hosts: Vec<Option<Box<dyn AnyHost>>> = vec![Some(Box::new(main)), Some(Box::new(second))];
     let mut quit = QuitState::Running;
+    // The question goes up, and the answer (the guard goes down) is a cancel, not a close.
     assert!(!cleanup_hosts(&mut hosts, &mut Vec::new(), true, false, false, step_quit(&mut quit)));
-    assert!(cleanup_hosts(&mut hosts, &mut Vec::new(), true, false, false, step_quit(&mut quit)), "unguarded now: the app ends");
-    assert_eq!(*log.borrow(), vec!["second:ask", "second:on_close"]);
+    // Another window event: the app is not ended by a guard that went down.
+    assert!(!cleanup_hosts(&mut hosts, &mut Vec::new(), true, false, false, step_quit(&mut quit)));
+    assert_eq!(*log.borrow(), vec!["second:ask"]);
+    // The window closes as any would: the app ends through the normal path.
+    gone.set(true);
+    assert!(cleanup_hosts(&mut hosts, &mut Vec::new(), true, false, false, step_quit(&mut quit)));
+    assert_eq!(*log.borrow(), vec!["second:ask"]);
+}
+
+#[test]
+fn a_hidden_keep_running_window_is_asked_by_a_quit() {
+    let mut life = Life::Unopened;
+    life.show();
+    life.hide(crate::platform::reopen::stamp);
+    assert!(quit_asks(life, true), "its ask runs, and shows the window if the app wants it seen");
+    life.finish();
+    assert!(!quit_asks(life, true));
 }
 
 #[test]

@@ -32,6 +32,11 @@ pub(in crate::window) fn settle_plan(ended: bool, window: Option<bool>) -> Settl
     }
 }
 
+/// Whether a quit asks this window: any window not gone, a hidden `keep_running` one too.
+pub(in crate::window) fn quit_asks(life: crate::window::Life, keep_running: bool) -> bool {
+    life.closes(keep_running, true)
+}
+
 /// The host-free core of `Host::holds_close`: asks the guard of a window that closes, unless the
 /// loop is exiting. True when it holds. An `ask` that leaves the guard up and asks to close the
 /// window all the same would only ask again, so that close is dropped.
