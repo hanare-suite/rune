@@ -1,0 +1,1 @@
+- Port API change: the guard `App::on_close_request(guarded, ask)` that held closes and a macOS Quit back is now `App::on_close_guard(guarded, ask)`, because `App::on_close_request(|s, tx| -> CloseResponse)` is the hook for a user's close request.

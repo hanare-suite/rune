@@ -172,7 +172,7 @@ pub(crate) struct TextCold {
     /// Visual palette for rich block and inline decorations; the default's when unset.
     pub(crate) rich_style: Option<crate::edit::RichStyle>,
     pub(crate) secure_revealed: bool,
-    /// [`El::paragraph_styles`](crate::El::paragraph_styles): what each [`Block::Styled`](crate::Block::Styled) names.
+    /// [`El::paragraph_styles`](crate::El::paragraph_styles): what each paragraph's [`ParagraphAttrs::style`](crate::ParagraphAttrs) names.
     pub(crate) paragraph_styles: Option<std::rc::Rc<[crate::edit::ParagraphStyle]>>,
     /// [`El::page_flow`](crate::El::page_flow).
     pub(crate) page_flow: Option<crate::edit::PageFlow>,
@@ -269,6 +269,15 @@ impl TextSpec {
     /// paragraph.
     pub(crate) fn flowed(&self) -> bool {
         self.cold.flow_key != 0
+    }
+
+    /// Sets the paragraph attributes the field's text lays out with, and takes the flow's keys
+    /// again when they differ from the ones it had.
+    pub(crate) fn set_attrs(&mut self, attrs: Vec<crate::edit::ParagraphAttrs>) {
+        if attrs != self.cold.attrs {
+            self.cold.attrs = attrs;
+            self.rekey_flow();
+        }
     }
 
     /// Takes `flow_key` and `styles_key` again from the paragraph styles, the page flow and
@@ -420,11 +429,16 @@ impl TextSpec {
     /// edit shapes only the paragraphs it changed: a wrapped, uncut field's text of more than
     /// one paragraph, or of any when each paragraph takes its own direction. Others stay one
     /// layout (a static text splits into one text per paragraph instead).
+    ///
+    /// Paragraph styles and page flow take effect only here: a field without it (one that
+    /// truncates, caps its lines, holds inline boxes or is redacted) ignores them.
     pub(crate) fn by_paragraph(&self, input: bool) -> bool {
-        (input || self.by_line) && self.wrap && !self.redacted && !self.truncate && !self.truncate_fade
+        let by_paragraph = (input || self.by_line) && self.wrap && !self.redacted && !self.truncate && !self.truncate_fade
             && self.max_lines == 0 && self.cold.live.is_none() && self.cold.advance_in.is_none()
             && self.cold.inline_boxes.is_empty()
-            && (self.by_line || matches!(self.dir, TextDir::Plaintext(_)) || self.content.contains('\n') || self.flowed())
+            && (self.by_line || matches!(self.dir, TextDir::Plaintext(_)) || self.content.contains('\n') || self.flowed());
+        debug_assert!(by_paragraph || !self.flowed(), "El::paragraph_styles and El::page_flow need a wrapped text_input without max_lines, truncate, inline boxes or redaction: they would be ignored");
+        by_paragraph
     }
 
     /// Zeroizes the shown string (spare capacity included) and shows `content` instead.

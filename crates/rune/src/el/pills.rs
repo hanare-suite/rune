@@ -326,3 +326,29 @@ pub(crate) fn with_pill_colors(spans: &[Span], pills: &[PillChip]) -> Vec<Span> 
 
 #[cfg(test)]
 mod tests;
+
+impl El {
+    pub(super) fn sync_input_pills(&mut self) {
+        let (Some(inp), Some(t)) = (&self.cold.input, &mut self.text) else { return };
+        if inp.edit.is_plain() {
+            t.cold.pills.clear();
+            return;
+        }
+        t.cold.pills = inp
+            .edit
+            .display_pills()
+            .into_iter()
+            .map(|(start, end, id)| {
+                let st = inp.pill_style.as_ref().map(|f| f(id)).unwrap_or_default();
+                let image = inp.pill_image.as_ref().and_then(|f| f(id));
+                let icon = if image.is_some() {
+                    None
+                } else {
+                    st.icon.or_else(|| inp.pill_icon.as_ref().and_then(|f| f(id)))
+                };
+                let stand_in = icon.is_some() && inp.edit.pill_is_object(id);
+                crate::text::PillChip { start, end, icon, image, bg: st.bg, fg: st.fg, ring: st.ring, radius: st.radius, bare: None, stand_in }
+            })
+            .collect();
+    }
+}

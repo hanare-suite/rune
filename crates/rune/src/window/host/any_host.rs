@@ -26,10 +26,10 @@ impl AnyHost for Host {
     fn keeps_loop(&self) -> bool { self.keeps_loop }
     fn closing_ends_app(&mut self) { self.ends_app = true; }
     fn close_guarded(&mut self) -> bool {
-        if !self.closes() { return false; }
+        if !self.app.has_close_guard() || !self.closes() { return false; }
         self.in_turn(|h| h.app.close_guarded())
     }
-    fn close_request(&mut self) { self.in_turn(|h| { h.holds_close(); }) }
+    fn close_request(&mut self, event_loop: &ActiveEventLoop) { self.in_turn(|h| { h.holds_close(event_loop); }) }
     fn key(&self) -> Option<&str> { Some(self.native_handle.key()) }
     fn reopen_candidate(&self) -> crate::platform::reopen::Candidate {
         let shown = self.shown_win();

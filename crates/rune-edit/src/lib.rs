@@ -26,6 +26,7 @@ mod keys;
 mod marks;
 mod model;
 mod paragraph;
+mod pills;
 mod replace;
 mod secure;
 mod typing;
@@ -328,7 +329,9 @@ impl TextEdit {
 
     /// The seven inline mark kinds allowed on a [`TextEdit`] by default (`Bold`, `Italic`,
     /// `Underline`, `Strike`, `Code`, `Link`, and `Pill`), excluding [`Mark::Color`] so pasted
-    /// browser or editor ink colours never enter a rich field unless the app opts in.
+    /// browser or editor ink colours never enter a rich field unless the app opts in, and
+    /// [`Mark::Size`], [`Mark::Family`], [`Mark::Highlight`] and [`Mark::Baseline`], which the
+    /// app opts into the same way (see [`DOCUMENT_MARKS`](Self::DOCUMENT_MARKS)).
     pub(crate) const DEFAULT_ALLOWED_MARKS: u16 =
         (1 << 0) | (1 << 1) | (1 << 2) | (1 << 3) | (1 << 4) | (1 << 5) | (1 << 6);
 
@@ -348,24 +351,6 @@ impl TextEdit {
 
     pub(crate) fn effective_allowed_marks(&self) -> u16 {
         self.allowed_marks.unwrap_or(Self::DEFAULT_ALLOWED_MARKS)
-    }
-
-    /// Construct a [`TextEdit`] from plain text, inline [`MarkRange`]s, and per-line [`Block`]s.
-    /// Caret starts at the end of `text`. Ranges are clamped to char boundaries and canonicalized,
-    /// and `blocks` is padded or truncated to match the number of `\n`-separated lines in `text`.
-    /// Passing any run style in `marks` ([`Mark::Color`], [`Mark::Size`], [`Mark::Family`],
-    /// [`Mark::Highlight`] or [`Mark::Baseline`]) makes the returned field a document field,
-    /// which keeps all of them.
-    pub fn from_parts(text: impl Into<String>, marks: Vec<MarkRange>, blocks: Vec<Block>) -> TextEdit {
-        let mut edit = Self::new(text).rich();
-        if marks.iter().any(|m| Self::DOCUMENT_MARKS & 1 << m.mark.kind_order() != 0) {
-            edit.open_document();
-        }
-        edit.marks = marks;
-        edit.blocks = blocks;
-        edit.clamp_list_levels();
-        edit.sync_invariants();
-        edit
     }
 
     /// Internal constructor for `html::parse_html` that keeps parsed run styles ([`Mark::Color`],
@@ -446,9 +431,11 @@ impl TextEdit {
     /// Kinds match by [`Mark::same_kind`], so any [`Mark::Link`] allows links and any
     /// [`Mark::Color`] allows colours. The field never
     /// holds a disallowed mark: marks it already has, or that `set_marks` adds, are dropped.
-    /// Every kind except [`Mark::Color`] is allowed by default (opt into colour with
-    /// [`allow_color`](Self::allow_color) or by including `Mark::Color(String::new())` here), and
-    /// [`Mark::Pill`] always is: pills are the app's own tokens, not formatting.
+    /// Every kind except [`Mark::Color`], [`Mark::Size`], [`Mark::Family`], [`Mark::Highlight`]
+    /// and [`Mark::Baseline`] is allowed by default (opt into colour with
+    /// [`allow_color`](Self::allow_color) or by including `Mark::Color(String::new())` here, and
+    /// into sizes by including `Mark::Size(MarkSize::pt(1.0))`), and [`Mark::Pill`] always is:
+    /// pills are the app's own tokens, not formatting.
     ///
     /// ```
     /// # use rune_edit::{Mark, TextEdit};
@@ -842,86 +829,6 @@ impl TextEdit {
         self.typing = Typing::Inherited;
         self.column = Column::Free;
         self.affinity = parley::Affinity::Downstream;
-    }
-
-    /// The [`Mark::Pill`]s in `self.text`, in order, with their byte ranges and ids.
-    pub fn pills(&self) -> impl Iterator<Item = (Range<usize>, &str)> + '_ {
-        let t = &self.text;
-        self.marks.iter().filter_map(move |m| {
-            let id = m.mark.pill_id()?;
-            (m.start < m.end && m.end <= t.len() && t.is_char_boundary(m.start) && t.is_char_boundary(m.end) && !t.as_bytes()[m.start..m.end].contains(&b'\n'))
-                .then(|| (m.range(), id))
-        })
-    }
-
-    /// Replace the selection with `label` as one [`Mark::Pill`] carrying `id`, and put the
-    /// caret after it: one undo step. Line breaks in `label` become spaces.
-    pub fn insert_pill(&mut self, id: impl Into<String>, label: &str) {
-        let (a, b) = self.range();
-        self.replace_with_pill(a..b, id, label);
-    }
-
-    /// Replace byte range `range` with `label` as one [`Mark::Pill`] carrying `id` (an `@query`
-    /// the user typed, say), and put the caret after it: one undo step. The range grows to
-    /// cover any pill it cuts into. Line breaks in `label` become spaces; an empty label or a
-    /// secure field inserts nothing.
-    pub fn replace_with_pill(&mut self, range: Range<usize>, id: impl Into<String>, label: &str) {
-        let label: String = label.chars().map(|c| if c.is_control() || matches!(c, '\u{2028}' | '\u{2029}') { ' ' } else { c }).collect();
-        if self.secure || label.is_empty() {
-            return;
-        }
-        self.sync_invariants();
-        self.break_history_group();
-        let before = self.snapshot();
-        let a = Self::clamp_char_boundary(&self.text, range.start.min(range.end));
-        let b = Self::clamp_char_boundary(&self.text, range.end.max(range.start));
-        let (a, b) = self.cover_pills(a, b);
-        self.typing = Typing::Inherited;
-        self.apply_text_and_attr_replace((a, b), &label, &[], None, false);
-        // Code blocks keep no inline marks: there the label stays plain text.
-        self.marks.push(MarkRange { start: a, end: a + label.len(), mark: Mark::Pill(id.into()) });
-        self.normalize_marks();
-        self.record_change(before, EditKind::Other);
-    }
-
-    /// The pill, or the locked atom, strictly containing byte `i` (`start < i < end`).
-    fn pill_around(&self, i: usize) -> Option<(usize, usize)> {
-        self.marks.iter().find(|m| m.mark.is_pill() && m.start < i && i < m.end).map(|m| (m.start, m.end))
-            .or_else(|| self.atom_at(i).filter(|&(s, e)| s < i && i < e))
-    }
-
-    /// `i` moved out of any pill it lands inside, to its end when `forward`, else its start.
-    fn out_of_pill(&self, i: usize, forward: bool) -> usize {
-        self.pill_around(i).map_or(i, |(s, e)| if forward { e } else { s })
-    }
-
-    /// `a..b` grown to cover any pill either end cuts into; an empty range inside one moves
-    /// to its end.
-    fn cover_pills(&self, a: usize, b: usize) -> (usize, usize) {
-        if a == b {
-            let i = self.out_of_pill(a, true);
-            return (i, i);
-        }
-        (self.out_of_pill(a, false), self.out_of_pill(b, true))
-    }
-
-    /// Keeps the caret off a pill's inside: a caret goes to the nearer edge, a selection grows
-    /// to cover the pill.
-    #[doc(hidden)]
-    pub fn snap_to_pills(&mut self) {
-        if !self.marks.iter().any(|m| m.mark.is_pill()) && !self.has_atoms() {
-            return;
-        }
-        if self.anchor == self.focus {
-            if let Some((s, e)) = self.pill_around(self.focus) {
-                let to = if self.focus - s < e - self.focus { s } else { e };
-                (self.anchor, self.focus) = (to, to);
-            }
-        } else {
-            let forward = self.focus > self.anchor;
-            self.anchor = self.out_of_pill(self.anchor, !forward);
-            self.focus = self.out_of_pill(self.focus, forward);
-        }
     }
 
     pub fn selected(&self) -> &str {

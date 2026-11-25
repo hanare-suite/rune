@@ -6,12 +6,19 @@
 
 use super::*;
 
-fn pages(height: f64, gap: f64, keep: bool) -> Option<Pages> {
-    Some(Pages { height, stride: height + gap, keep })
+/// Pages `height` tall with `gap` between them, the last paragraph having ended at `ended`.
+fn pages(height: f64, gap: f64, keep: bool, ended: f64) -> Pager<'static> {
+    let flow = PageFlow::new(height as f32, gap as f32);
+    Pager { pages: Some(Pages { flow, scale: 1.0, stride: height + gap, keep }), styles: &[], ended }
+}
+
+/// No room around a paragraph, and no page break before it.
+fn bare() -> Own {
+    Own { before: 0.0, after: 0.0, page_break: false }
 }
 
 /// Each line's top and bottom after `placed` moved them.
-fn drawn(placed: &Placed, lines: &[(f32, f32)]) -> Vec<(f64, f64)> {
+fn drawn(placed: &Spot, lines: &[(f32, f32)]) -> Vec<(f64, f64)> {
     let mut shift = 0.0;
     lines.iter().enumerate().map(|(i, l)| {
         shift += placed.gaps.iter().filter(|g| g.0 as usize == i).map(|g| f64::from(g.1)).sum::<f64>();
@@ -23,11 +30,11 @@ fn drawn(placed: &Placed, lines: &[(f32, f32)]) -> Vec<(f64, f64)> {
 fn a_line_taller_than_the_page_sits_alone_and_the_next_starts_a_page_below_it() {
     for keep in [true, false] {
         let lines = vec![(0.0, 30.0), (30.0, 60.0)];
-        let placed = place(pages(10.0, 3.0, keep), 0.0, true, 0.0, false, 60.0, || lines.clone());
+        let placed = place(&pages(10.0, 3.0, keep, 0.0), 0.0, true, &bare(), 60.0, || lines.clone());
         assert_eq!((placed.top, placed.gaps.as_slice()), (0.0, &[(1, 9.0)][..]), "keep {keep}: the second line starts the page at 39");
 
         let lines = vec![(0.0, 30.0), (30.0, 60.0), (60.0, 90.0)];
-        let placed = place(pages(10.0, 3.0, keep), 0.0, true, 0.0, false, 90.0, || lines.clone());
+        let placed = place(&pages(10.0, 3.0, keep, 0.0), 0.0, true, &bare(), 90.0, || lines.clone());
         assert_eq!(placed.gaps, [(1, 9.0), (2, 9.0)], "keep {keep}");
     }
 }
@@ -36,7 +43,7 @@ fn a_line_taller_than_the_page_sits_alone_and_the_next_starts_a_page_below_it() 
 fn a_tall_line_among_short_ones_moves_only_what_follows_it() {
     // Pages of 40 with 10 between: a 20 px line, a 100 px line, a 20 px line.
     let lines = vec![(0.0, 20.0), (20.0, 120.0), (120.0, 140.0)];
-    let placed = place(pages(40.0, 10.0, false), 0.0, true, 0.0, false, 140.0, || lines.clone());
+    let placed = place(&pages(40.0, 10.0, false, 0.0), 0.0, true, &bare(), 140.0, || lines.clone());
     // The tall line starts page 2 at 50 and runs to 150, the top of page 4, where the last starts.
     assert_eq!(drawn(&placed, &lines), [(0.0, 20.0), (50.0, 150.0), (150.0, 170.0)]);
 }
@@ -56,7 +63,7 @@ fn no_gap_is_negative_and_a_line_that_fits_a_page_stays_on_one() {
             at += h;
         }
         let y = below(4) as f64 * stride + below(height as u64) as f64;
-        let placed = place(pages(height, gap, keep), y, false, 0.0, false, at, || lines.clone());
+        let placed = place(&pages(height, gap, keep, y), y, false, &bare(), at, || lines.clone());
         let why = format!("round {round}: page {height}, gap {gap}, keep {keep}, y {y}, lines {lines:?}, gaps {:?}, top {}", placed.gaps, placed.top);
         assert!(placed.gaps.iter().all(|g| g.1 >= 0.0), "{why}");
         assert!(placed.top >= y, "{why}");

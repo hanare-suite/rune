@@ -82,6 +82,7 @@ pub use layout_seed::LayoutSeed;
 mod motion;
 mod node_index;
 use node_index::NodeIndex;
+mod pages_read;
 mod paint;
 mod paint_probe;
 mod pick;

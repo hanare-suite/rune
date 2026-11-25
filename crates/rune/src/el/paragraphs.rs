@@ -8,6 +8,9 @@ impl El {
     /// [`ParagraphAttrs::style`](crate::ParagraphAttrs). Each gives its paragraph's text style
     /// and the room above and below it. A paragraph whose index has no entry keeps the field's
     /// own style.
+    ///
+    /// A field that truncates, caps its lines with `max_lines`, holds inline boxes or is
+    /// redacted lays out as one piece and ignores them (a debug build asserts).
     pub fn paragraph_styles(mut self, styles: impl Into<Rc<[crate::ParagraphStyle]>>) -> El {
         let Some(t) = self.text.as_mut() else { return self };
         t.cold.paragraph_styles = Some(styles.into());
@@ -32,6 +35,9 @@ impl El {
     /// ([`Cx::layout_size`](crate::Cx::layout_size)) is its page count, and
     /// [`PageFlow::page_top`](crate::PageFlow::page_top) where each starts, for the app to draw
     /// the pages behind it.
+    ///
+    /// A field that truncates, caps its lines with `max_lines`, holds inline boxes or is
+    /// redacted lays out as one piece and ignores the flow (a debug build asserts).
     pub fn page_flow(mut self, flow: crate::PageFlow) -> El {
         let Some(t) = self.text.as_mut() else { return self };
         t.cold.page_flow = Some(flow);

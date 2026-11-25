@@ -7,32 +7,89 @@
 //! them on their page with no mapping of its own.
 
 use super::*;
-use crate::ParagraphAlign;
+use crate::{PageFlow, ParagraphAlign, ParagraphStyle};
 
-/// A field's pages in device px.
+/// A field's pages in device px. Page `i`'s top is its point position (`PageFlow::page_top`)
+/// rounded once, and its bottom the point position of its end rounded the same way, so the
+/// rounding never adds up from one page to the next and the app's sheets, drawn from the same
+/// points, stay within half a pixel of the text on every page.
 #[derive(Clone, Copy)]
-pub(super) struct Pages {
-    height: f64,
-    /// A page and the gap after it.
+struct Pages {
+    flow: PageFlow,
+    scale: f32,
+    /// A page and the gap after it, unrounded.
     stride: f64,
     /// Widow and orphan control: no line of a paragraph alone at a page's end or top.
     keep: bool,
 }
 
 impl Pages {
-    pub(super) fn of(spec: &TextInput<'_>, scale: f32) -> Option<Pages> {
+    fn of(spec: &TextInput<'_>, scale: f32) -> Option<Pages> {
         let flow = spec.flow?.page?;
-        let height = f64::from((flow.height * scale).round().max(1.0));
-        Some(Pages { height, stride: height + f64::from((flow.gap * scale).round().max(0.0)), keep: flow.keep_lines })
+        let keep = flow.keep_lines;
+        let flow = PageFlow::new(flow.height.max(1.0 / scale), flow.gap.max(0.0));
+        Some(Pages { flow, scale, stride: f64::from((flow.height + flow.gap) * scale), keep })
     }
 
-    fn top(self, y: f64) -> f64 {
-        (y / self.stride).floor() * self.stride
+    fn top_of(self, page: usize) -> f64 {
+        f64::from((self.flow.page_top(page) * self.scale).round())
     }
 
-    /// The height of a field whose last line ends at `bottom`: whole pages and their gaps.
-    pub(super) fn field_height(self, bottom: f64) -> f64 {
-        self.top((bottom - 1.0).max(0.0)) + self.height
+    fn bottom_of(self, page: usize) -> f64 {
+        f64::from(((self.flow.page_top(page) + self.flow.height) * self.scale).round())
+    }
+
+    /// The page `y` is on, or the one before the gap it is in.
+    fn index(self, y: f64) -> usize {
+        let mut page = (y / self.stride).floor().max(0.0) as usize;
+        while page > 0 && self.top_of(page) > y { page -= 1; }
+        while self.top_of(page + 1) <= y { page += 1; }
+        page
+    }
+}
+
+/// The room around a paragraph, in device px, and whether it starts a page.
+pub(super) struct Own {
+    before: f64,
+    pub(super) after: f64,
+    page_break: bool,
+}
+
+/// What a field of paragraph styles and pages keeps as it lays its paragraphs out.
+pub(super) struct Pager<'a> {
+    pages: Option<Pages>,
+    styles: &'a [ParagraphStyle],
+    /// Where the last paragraph ended, before the room below it.
+    ended: f64,
+}
+
+impl<'a> Pager<'a> {
+    pub(super) fn new(spec: &TextInput<'a>, scale: f32) -> Pager<'a> {
+        Pager { pages: Pages::of(spec, scale), styles: spec.flow.map_or(&[], |f| f.styles), ended: 0.0 }
+    }
+
+    /// A paragraph whose attributes name a style is shaped in it, with its room around it; any
+    /// other takes the field's. A field of paragraph styles or pages places its paragraphs at whole
+    /// pixels, so no paragraph's lines are broken from a fraction of one.
+    /// Gives the room, the text style and its line height in px.
+    pub(super) fn own(&self, attrs: ParagraphAttrs, field: TextStyle, scale: f32) -> (Own, TextStyle, f32) {
+        let own = self.styles.get(attrs.style as usize);
+        let style = own.map_or(field, |o| o.text);
+        let px = |pt: f32| f64::from((pt * scale).round());
+        let room = Own { before: own.map_or(0.0, |o| px(o.space_before)), after: own.map_or(0.0, |o| px(o.space_after)), page_break: attrs.page_break_before };
+        (room, style, style.line_px() * scale)
+    }
+
+    /// Notes that a paragraph `height` px tall now ends from `top`, and gives where the next one
+    /// starts below the room under it.
+    pub(super) fn end(&mut self, top: f64, height: f32, after: f64) -> f64 {
+        self.ended = top + f64::from(height);
+        self.ended + after
+    }
+
+    /// The field's height once its last paragraph is placed: whole pages and their gaps, or `y`.
+    pub(super) fn field_end(&self, y: f64) -> f64 {
+        self.pages.map_or(y, |p| p.bottom_of(p.index((self.ended - 1.0).max(0.0))))
     }
 }
 
@@ -66,22 +123,71 @@ impl Shape {
 
 /// Where a paragraph's layout starts, and the lines of it that start a page: each line's
 /// index and the device px its top moves down by.
-pub(super) struct Placed {
-    pub(super) top: f64,
-    pub(super) gaps: Vec<(u32, f32)>,
+struct Spot {
+    top: f64,
+    gaps: Vec<(u32, f32)>,
 }
 
-impl Placed {
-    /// What the gaps add to the layout's height.
-    pub(super) fn added(&self) -> f32 {
-        self.gaps.iter().map(|g| g.1).sum()
+/// What a paged field's paragraph keeps beyond a plain one's: when it crosses a page's end,
+/// the lines that start a page and the px each moved down by, its layout without them (which
+/// the next layout places again) and its height without what the gaps added.
+#[derive(Clone)]
+pub(super) struct Paged {
+    pub(super) gaps: Box<[(u32, f32)]>,
+    pub(super) natural: Option<Rc<Layout<Ink>>>,
+    pub(super) natural_height: f32,
+}
+
+impl Paged {
+    /// A paragraph that crosses no page's end, `height` px tall.
+    pub(super) fn plain(height: f32) -> Paged {
+        Paged { gaps: Box::default(), natural: None, natural_height: height }
     }
 }
 
-/// Places a paragraph `height` px tall after what ends at `y`, with `before` px above it.
-/// `forced` starts it on a new page. `lines` gives its lines' tops and bottoms in its layout,
-/// and is asked only when it doesn't fit what is left of its page. The room above is dropped
-/// at the top of a page the paragraph flowed onto, and kept under a forced break.
+/// A paragraph placed: where it starts, how far its label sits below that (a locked atom's, in
+/// a box taller than it), its height with the gaps, the height it takes, its layout and what it
+/// keeps.
+pub(super) struct Placed {
+    pub(super) top: f64,
+    pub(super) lead: f64,
+    pub(super) height: f32,
+    /// What the paragraph takes of the field from `top`: its block for an atom, else `height`.
+    pub(super) extent: f32,
+    pub(super) layout: Rc<Layout<Ink>>,
+    pub(super) paged: Paged,
+}
+
+impl TextSystem {
+    /// Places a paragraph `height` px tall, laid out as `layout`, after what ends at `y`. On its
+    /// page: the lines past the page's end move to the next, in a layout broken with that room
+    /// above them (the last layout's, when `kept` moved the same lines and `layout` is not new).
+    /// A locked atom is one block as tall as the app made it, its label in the middle.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn place_on_page(&mut self, pager: &Pager<'_>, y: f64, first: bool, own: &Own, shape: Shape, layout: Rc<Layout<Ink>>, height: f32, kept: Option<&Paragraph>, fresh: bool, blocks: &[Block], (indent, size): (f32, f32), scale: f32, max_width: Option<f32>) -> Placed {
+        let total = shape.atom.map_or(height, |h| h.max(height));
+        let lead = f64::from(((total - height) / 2.0).round());
+        let spot = place(pager, y, first, own, total, || if shape.atom.is_some() { vec![(0.0, total)] } else { lines_of(&layout, height) });
+        let natural_height = height;
+        let height = height + spot.gaps.iter().map(|g| g.1).sum::<f32>();
+        let (layout, natural) = if spot.gaps.is_empty() {
+            (layout, None)
+        } else if let Some(o) = kept.filter(|o| !fresh && *o.paged.gaps == *spot.gaps) {
+            (o.layout.clone(), Some(layout))
+        } else {
+            let mut l = layout.clone();
+            line_break::rebreak_paragraph(Rc::make_mut(&mut l), blocks, indent, size, scale, max_width, shape.align, shape.indent, &spot.gaps);
+            self.layout_ids.build(&l);
+            (l, Some(layout))
+        };
+        Placed { top: spot.top, lead, height, extent: total.max(height), layout, paged: Paged { gaps: spot.gaps.into(), natural, natural_height } }
+    }
+}
+
+/// Places a paragraph `height` px tall after what ends at `y`, the room below the last one
+/// included. `forced` starts it on a new page. `lines` gives its lines' tops and bottoms in its
+/// layout, and is asked only when it doesn't fit what is left of its page. The room above is
+/// dropped at the top of a page the paragraph flowed onto, and kept under a forced break.
 ///
 /// A line taller than a page stands alone on its page and runs past its end, and the line
 /// after it starts the first page below where it ends: a gap is never negative.
@@ -89,18 +195,21 @@ impl Placed {
 /// With [`Pages::keep`], the line that starts a page is never the paragraph's second (its
 /// first would stand alone at the page's end: an orphan) nor its last (a widow): one more line
 /// goes with it, or the whole paragraph.
-pub(super) fn place(pages: Option<Pages>, y: f64, first: bool, before: f64, forced: bool, height: f32, lines: impl FnOnce() -> Vec<(f32, f32)>) -> Placed {
-    let Some(p) = pages else { return Placed { top: y + before, gaps: Vec::new() } };
+fn place(pager: &Pager<'_>, y: f64, first: bool, own: &Own, height: f32, lines: impl FnOnce() -> Vec<(f32, f32)>) -> Spot {
+    let Some(p) = pager.pages else { return Spot { top: y + own.before, gaps: Vec::new() } };
     let mut y = y;
-    // What came before ended in the gap (its room below ran past the page).
-    if y - p.top(y) >= p.height { y = p.top(y) + p.stride; }
-    let forced = forced && !first;
-    if forced && y > p.top(y) { y = p.top(y) + p.stride; }
-    let flowed = y == p.top(y) && !forced && !first;
-    let mut top = if flowed { y } else { y + before };
-    let mut bottom = p.top(y) + p.height;
+    // What came before ended on a page, and its room below ran past the page's end, or on into
+    // the gap: both rooms are dropped and this paragraph starts the next page.
+    let last = p.index((pager.ended - 1.0).max(0.0));
+    if y >= p.bottom_of(last) { y = p.top_of(last + 1); }
+    let forced = own.page_break && !first;
+    let mut page = p.index(y);
+    if forced && y > p.top_of(page) { page += 1; y = p.top_of(page); }
+    let flowed = y == p.top_of(page) && !forced && !first;
+    let mut top = if flowed { y } else { y + own.before };
+    let mut bottom = p.bottom_of(page);
     if top + f64::from(height) <= bottom {
-        return Placed { top, gaps: Vec::new() };
+        return Spot { top, gaps: Vec::new() };
     }
     let lines = lines();
     let n = lines.len();
@@ -112,7 +221,7 @@ pub(super) fn place(pages: Option<Pages>, y: f64, first: bool, before: f64, forc
         let line_top = |k: usize, top: f64, shift: f64| top + shift + f64::from(lines[k].0);
         let line_bottom = top + shift + f64::from(lines[i].1);
         // A line alone on its page stays there, however tall.
-        if line_bottom <= bottom || line_top(i, top, shift) <= bottom - p.height {
+        if line_bottom <= bottom || line_top(i, top, shift) <= p.top_of(page) {
             i += 1;
             continue;
         }
@@ -121,14 +230,18 @@ pub(super) fn place(pages: Option<Pages>, y: f64, first: bool, before: f64, forc
             if j + 1 == n && j >= 2 { j -= 1; }
             if j == 1 && page_first == 0 { j = 0; }
             // A line already at its page's top can't move further.
-            if j < i && (j < page_first || line_top(j, top, shift) <= bottom - p.height) { j = i; }
+            if j < i && (j < page_first || line_top(j, top, shift) <= p.top_of(page)) { j = i; }
         }
         // The next page's top, or the first one below a line so tall it ran past that: a line
         // never moves up over the one before it.
-        let mut next = bottom - p.height + p.stride;
+        page += 1;
+        let mut next = p.top_of(page);
         if j > 0 {
             let at = line_top(j, top, shift);
-            if at > next { next += ((at - next) / p.stride).ceil() * p.stride; }
+            while next < at {
+                page += 1;
+                next = p.top_of(page);
+            }
         }
         if j == 0 {
             top = next - f64::from(lines[0].0);
@@ -137,14 +250,14 @@ pub(super) fn place(pages: Option<Pages>, y: f64, first: bool, before: f64, forc
             gaps.push((j as u32, gap as f32));
             shift += gap;
         }
-        bottom = next + p.height;
+        bottom = p.bottom_of(page);
         (page_first, i) = (j, j + 1);
     }
-    Placed { top, gaps }
+    Spot { top, gaps }
 }
 
 /// A layout's lines' tops and bottoms, one line `height` tall for a layout with none.
-pub(super) fn lines_of(layout: &Layout<Ink>, height: f32) -> Vec<(f32, f32)> {
+fn lines_of(layout: &Layout<Ink>, height: f32) -> Vec<(f32, f32)> {
     let lines: Vec<(f32, f32)> = layout.lines().map(|l| (l.metrics().block_min_coord, l.metrics().block_max_coord)).collect();
     if lines.is_empty() { vec![(0.0, height)] } else { lines }
 }
@@ -177,7 +290,8 @@ pub(super) fn reuse_rich(prev: &ParagraphLayout, spec: &TextInput<'_>, style_key
     let suffix = common_end(old, new).min(old.len().min(new.len()) - prefix);
     let delta = new.len() as isize - old.len() as isize;
     // The bytes of the old text an edit touched: `lo..hi`. A span that changed widens them.
-    let (mut lo, mut hi) = (prefix, old.len() - suffix);
+    // Equal texts touched no byte: only a span or an attribute that differs widens the range.
+    let (mut lo, mut hi) = if prefix == old.len() && old.len() == new.len() { (usize::MAX, 0) } else { (prefix, old.len() - suffix) };
     let (so, sn) = (keyed.spans.as_slice(), spec.spans);
     let moved = |at: u32| (at as isize + delta) as u32;
     let p = so.iter().zip(sn).take_while(|(a, b)| a == b).count();
@@ -201,8 +315,9 @@ pub(super) fn reuse_rich(prev: &ParagraphLayout, spec: &TextInput<'_>, style_key
     let same = ps.len().min(new_lines);
     let head_lines = (0..same).take_while(|&k| keyed.lines.get(k).copied() == Some(line_key(spec, k))).count();
     let tail_lines = (0..same).take_while(|&k| keyed.lines.get(ps.len() - 1 - k).copied() == Some(line_key(spec, new_lines - 1 - k))).count();
-    let h = ps.partition_point(|p| p.end < lo).min(head_lines);
-    let t = ps.partition_point(|p| p.start <= hi).max(ps.len() - tail_lines).max(h);
+    // At least one paragraph is keyed again: the caller keys from where the head ends.
+    let h = ps.partition_point(|p| p.end < lo).min(head_lines).min(ps.len().saturating_sub(1));
+    let t = ps.partition_point(|p| p.start <= hi).max(ps.len() - tail_lines).max(h + 1).min(ps.len());
     let at = |i: usize| (i as isize + delta) as usize;
     Some(Reuse {
         head: ps[..h].iter().map(|p| (p.start, p.end, p.flow, p.key, Box::default(), None)).collect(),

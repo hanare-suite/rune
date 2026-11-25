@@ -87,6 +87,11 @@ impl TextEdit {
     /// before it left. Apply them in order, and read inserted text from [`Self::text`] as
     /// [`EditChange`] describes.
     ///
+    /// Not every edit is reported. A [`secure`](Self::secure) field's edits are not: it keeps no
+    /// history of what was typed into it, and its changes would give that away. Nor is
+    /// [`Self::replace_text`], which sets the whole draft and drops the field's own history: the
+    /// app that calls it knows what it set, and starts its own history over from there.
+    ///
     /// The runtime hands the same list to [`El::on_input_edits`](crate::El::on_input_edits)
     /// after each event it routes to the field; call this after edits the app makes itself.
     pub fn take_changes(&mut self) -> Vec<EditChange> {
