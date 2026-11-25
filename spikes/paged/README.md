@@ -32,6 +32,7 @@ python3 spikes/paged/perf.py      # the numbers
 | `drag` | a drag from page 1 into page 2 selects on both, with no selection drawn in the gap |
 | `typing` | typing at a paragraph's end on page 1's last line moves its last line to page 2; Backspace brings it back |
 | `forced-break` | a paragraph whose style breaks the page starts at a page's top, with room left on the page before |
+| `fractional-scale` | at scale 1.25 a chapter heading on page 45 still sits at its sheet's top margin, within half a device pixel |
 | `ime-headless` | a composition on page 2 moves the input method's cursor rectangle with the caret |
 
 `perf.py` runs `paged-perf` (keystroke, Return, scroll, open and undo memory on a headless runtime) and times a fresh process to its first pixels, into `out/perf.txt`.
