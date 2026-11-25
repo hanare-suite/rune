@@ -11,6 +11,7 @@ import json, os, platform, selectors, statistics, subprocess, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
+TARGET = os.environ.get("CARGO_TARGET_DIR", os.path.join(ROOT, "target"))
 
 
 def sysctl(name):
@@ -19,14 +20,14 @@ def sysctl(name):
 
 lines = [f"MACHINE cpu={sysctl('machdep.cpu.brand_string')!r} cores={sysctl('hw.ncpu')} "
          f"memory_gb={int(sysctl('hw.memsize') or 0) // 2**30} os={platform.mac_ver()[0]!r}"]
-out = subprocess.run([os.path.join(ROOT, "target/perf/paged-perf"), "--gpu"], capture_output=True, text=True, check=True)
+out = subprocess.run([os.path.join(TARGET, "perf/paged-perf"), "--gpu"], capture_output=True, text=True, check=True)
 lines += out.stdout.strip().splitlines()
 
 # A new process each time, from exec to the first frame read back from the GPU; one warm-up run.
 runs = []
 for i in range(8):
     start = time.perf_counter()
-    proc = subprocess.Popen([os.path.join(ROOT, "target/perf/paged"), "--first-pixels", "--frames", "1"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    proc = subprocess.Popen([os.path.join(TARGET, "perf/paged"), "--first-pixels", "--frames", "1"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     with selectors.DefaultSelector() as selector:
         selector.register(proc.stdout, selectors.EVENT_READ)
         assert selector.select(timeout=30), "first pixels not ready after 30 s"

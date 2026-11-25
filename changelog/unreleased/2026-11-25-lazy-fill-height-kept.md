@@ -1,0 +1,1 @@
+- Fixed a text field laid out lazily (long plain text, `dir_by_paragraph`) losing a filled line's measured height on the next edit: a line shaped by a fill whose estimated height differed kept the estimate when an edit elsewhere kept it, so the field's height and the lines below it sat at the estimate until each line was shaped again.

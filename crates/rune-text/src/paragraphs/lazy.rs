@@ -217,7 +217,8 @@ impl TextSystem {
             let spans: Vec<Span> = spans_in(&lazy.spans, p.start, p.end, &[], lazy.disjoint_spans).collect();
             let l = self.layout_keyed(Some(p.key), words, &spans, &[], 0.0, &[], &[], &[], lazy.style, lazy.scale, laid.max_width, laid.align, lazy.wrap_anywhere, false, Keep::Owned, p.flow.base());
             moved |= l.height() != p.height;
-            (p.height, p.widths, p.layout, p.shaped) = (l.height(), [l.width(), l.full_width()], l, true);
+            (p.height, p.paged.natural_height) = (l.height(), l.height());
+            (p.widths, p.layout, p.shaped) = ([l.width(), l.full_width()], l, true);
             shaped_any = true;
         }
         let (mut y, mut width, mut full_width) = (0.0f64, 0.0f32, 0.0f32);
@@ -226,7 +227,8 @@ impl TextSystem {
             if p.shaped && (want_frac - p.y_frac).abs() > 1e-5 {
                 line_break::rebreak_at_y(Rc::make_mut(&mut p.layout), &[], 0.0, lazy.style.size, lazy.scale, laid.max_width, laid.align, f64::from(want_frac));
                 self.layout_ids.build(&p.layout);
-                (p.height, p.widths) = (p.layout.height(), [p.layout.width(), p.layout.full_width()]);
+                (p.height, p.paged.natural_height) = (p.layout.height(), p.layout.height());
+                p.widths = [p.layout.width(), p.layout.full_width()];
             }
             p.y = if want_frac != 0.0 { y.floor() as f32 } else { y.round() as f32 };
             p.y_frac = want_frac;
@@ -296,7 +298,7 @@ fn split_run(lazy: &Lazy, max_width: Option<f32>, paragraphs: &[Paragraph], k: u
                     sp.hash_layout(&mut hs);
                 }
                 let height = (f64::from(lines) * f64::from(h)) as f32;
-                out.push(Paragraph { start, end: e, y: y.round() as f32, y_frac: 0.0, height, widths: [widest, widest], pad: [0.0, 0.0], flow, key: hs.finish(), isolates: Box::default(), layout: r.layout.clone(), shaped: false, lines, run: true, gaps: Box::default(), natural: None, natural_height: height });
+                out.push(Paragraph { start, end: e, y: y.round() as f32, y_frac: 0.0, height, widths: [widest, widest], pad: [0.0, 0.0], flow, key: hs.finish(), isolates: Box::default(), layout: r.layout.clone(), shaped: false, lines, run: true, paged: super::paged::Paged::plain(height) });
                 y += f64::from(height);
             }
             continue;
@@ -308,7 +310,7 @@ fn split_run(lazy: &Lazy, max_width: Option<f32>, paragraphs: &[Paragraph], k: u
             sp.hash_layout(&mut hs);
         }
         let (height, w) = lazy.ascii.one_line(words, max_width, 0.0, true).unwrap_or((h, 0.0));
-        out.push(Paragraph { start: s, end: e, y: y.round() as f32, y_frac: 0.0, height, widths: [w, w], pad: [0.0, 0.0], flow, key: hs.finish(), isolates: Box::default(), layout: r.layout.clone(), shaped: false, lines: 1, run: false, gaps: Box::default(), natural: None, natural_height: height });
+        out.push(Paragraph { start: s, end: e, y: y.round() as f32, y_frac: 0.0, height, widths: [w, w], pad: [0.0, 0.0], flow, key: hs.finish(), isolates: Box::default(), layout: r.layout.clone(), shaped: false, lines: 1, run: false, paged: super::paged::Paged::plain(height) });
         y += f64::from(height);
     }
     out
