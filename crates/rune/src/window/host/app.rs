@@ -207,13 +207,24 @@ pub(in crate::window) fn test_app_with_close_request<S: 'static>(
     on_close: Option<fn(&mut S, &mut Tx)>,
     on_quit: Option<fn(&mut S, &mut Tx)>,
 ) -> Box<dyn WindowApp> {
+    test_app_with_close_guard(rt, on_close_request, None, on_close, on_quit)
+}
+
+#[cfg(test)]
+pub(in crate::window) fn test_app_with_close_guard<S: 'static>(
+    rt: Runtime<S>,
+    on_close_request: Option<fn(&mut S, &mut Tx) -> crate::CloseResponse>,
+    close_guard: Option<CloseGuard<S>>,
+    on_close: Option<fn(&mut S, &mut Tx)>,
+    on_quit: Option<fn(&mut S, &mut Tx)>,
+) -> Box<dyn WindowApp> {
     Box::new(TypedWindowApp {
         rt,
         shared: Arc::new(Shared::default()),
         comp: None,
         on_frame_drawn: None,
         on_close_request,
-        close_guard: None,
+        close_guard,
         on_close,
         on_rest: None,
         on_quit,
