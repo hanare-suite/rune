@@ -2,7 +2,7 @@
 # Re-makes vendor/tiny-skia-path: the tiny-skia-path crate exactly as published on crates.io at
 # <version>, plus vendor/tiny-skia-path.patch, which puts back how Skia itself strokes and splits
 # conics where tiny-skia's port has drifted (Rune's icons are covered as Chromium's Skia covers
-# them: crates/rune/src/text/area.rs):
+# them: crates/rune-text/src/icon/area.rs):
 #   - a conic becomes quads a quarter of a *device* pixel from it (the stroker passes its
 #     resolution scale), and one quad when that's close enough, not at least two;
 #   - the stroker keeps each tangent as a vector, measures its distance to the tangent line as
@@ -10,7 +10,9 @@
 #   - `set_point_length` multiplies in double and rounds once, as `SkPoint::setLength` does;
 #   - `PathBuilder::conic_to`, `set_conic_tolerance` and `AutoConicToQuads` are public.
 #   - `set_keep_conics` retains weighted conic segments for SVG arcs; the stroker fits the two
-#     contours against the conic itself instead of fitting against quadratic approximations.
+#     contours against the conic itself instead of fitting against quadratic approximations;
+#   - the package is renamed to `rune-tiny-skia-path` (keeping `[lib] name = "tiny_skia_path"`)
+#     so git consumers do not collide with crates.io's `tiny-skia-path` (used by `resvg`/`usvg`).
 # Run it when tiny-skia-path is bumped, then build: a patch that no longer applies fails here,
 # and the changes go back in by hand.
 # Usage: scripts/vendor-tiny-skia-path.sh <version>     e.g. scripts/vendor-tiny-skia-path.sh 0.11.4
@@ -23,5 +25,5 @@ curl -fsSL "https://static.crates.io/crates/tiny-skia-path/tiny-skia-path-$versi
 tar -xzf "$tmp/crate.tar.gz" -C "$tmp"
 rm -rf vendor/tiny-skia-path
 mv "$tmp/tiny-skia-path-$version" vendor/tiny-skia-path
-git apply --directory=vendor/tiny-skia-path vendor/tiny-skia-path.patch
+tr -d '\r' < vendor/tiny-skia-path.patch | git apply --directory=vendor/tiny-skia-path
 echo "vendor/tiny-skia-path: tiny-skia-path $version + vendor/tiny-skia-path.patch"

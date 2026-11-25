@@ -7,23 +7,25 @@ use crate::machine::Effects;
 use super::*;
 
 #[derive(Default)]
-pub(super) struct Titlebar {
+pub(in crate::runtime) struct Titlebar {
     /// What the press just delivered asks the shell to do, for `take_titlebar_action`.
-    pub(super) action: Option<TitlebarAction>,
+    pub(in crate::runtime) action: Option<TitlebarAction>,
+    /// Window resize edge requested by the press just delivered, for `take_resize_action`.
+    pub(in crate::runtime) resize: Option<crate::ResizeEdge>,
     /// The press in flight (`step`).
-    pub(super) press: TitlebarPress,
+    pub(in crate::runtime) press: TitlebarPress,
     /// Window points from the top that AppKit drags natively, over the content (0 elsewhere).
     native_band: f32,
     /// The window menu the shell opens next.
     window_menu: Option<WindowMenu>,
     /// What `Cx::chrome_insets` reports.
-    pub(super) insets: crate::ChromeInsets,
+    pub(in crate::runtime) insets: crate::ChromeInsets,
     /// The Windows caption buttons the view gets drawn over it, with their state.
-    pub(super) caption: Option<crate::titlebar::Caption>,
+    pub(in crate::runtime) caption: Option<crate::titlebar::Caption>,
     /// `Tx::toggle_maximized`, for the shell.
-    pub(super) toggle_maximized: bool,
-    /// `Tx::toggle_full_screen`, for the shell.
-    pub(super) toggle_full_screen: bool,
+    pub(in crate::runtime) toggle_maximized: bool,
+    /// `Tx::toggle_full_screen` and `Tx::set_full_screen`, for the shell; last call wins.
+    pub(in crate::runtime) full_screen: Option<crate::el::FullScreenRequest>,
     /// `Cx::set_titlebar` and `Cx::titlebar_height`, as the last view set them, and whether the
     /// shell has yet to see them.
     set: crate::titlebar::TitlebarSet,
@@ -31,11 +33,36 @@ pub(super) struct Titlebar {
     /// What a run without a window draws for `App::titlebar` (`headless_chrome`), so a new
     /// `Cx::set_titlebar` or `Cx::titlebar_height` draws again.
     headless: Option<(crate::Chrome, crate::Titlebar)>,
+    /// The resolved macOS chrome last computed by `headless_chrome`, kept current when
+    /// `set_titlebar` runs so headless `--chrome` overlays and overlap checks follow it.
+    headless_chrome: crate::Chrome,
+}
+
+/// One entry in the committed bare `.window_drag()` hit-test region, in top-to-bottom paint
+/// order and window points `[x0, y0, x1, y1]`: the first rect containing a point decides whether
+/// Windows answers `HTCAPTION` (`drag == true`) or `HTCLIENT` (`drag == false`).
+#[cfg(target_os = "windows")]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct DragHit {
+    pub rect: [f32; 4],
+    pub drag: bool,
+}
+
+/// Whether window point `(x, y)` hits a bare `.window_drag()` region in `hits` (top-to-bottom).
+#[cfg(target_os = "windows")]
+pub(crate) fn drag_hit_at(hits: &[DragHit], x: f32, y: f32) -> bool {
+    for hit in hits {
+        let r = hit.rect;
+        if x >= r[0] && y >= r[1] && x < r[2] && y < r[3] {
+            return hit.drag;
+        }
+    }
+    false
 }
 
 /// The window menu (Restore, Move, Size, Minimize, Maximize, Close) a custom titlebar opens
 /// where the native title bar would.
-#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+#[cfg_attr(not(any(target_os = "windows", all(unix, not(target_os = "macos"), not(target_os = "ios"), not(target_os = "android")))), allow(dead_code))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum WindowMenu {
     /// At the pointer: a secondary click on a bare `.window_drag()` region.
@@ -46,11 +73,11 @@ pub(crate) enum WindowMenu {
 
 /// A press that may pair with the next one: when it went down and where.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(super) struct Pair {
+pub(in crate::runtime) struct Pair {
     /// Clock seconds it went down at.
-    pub(super) at: f64,
+    pub(in crate::runtime) at: f64,
     /// Window points it went down at.
-    pub(super) point: (f32, f32),
+    pub(in crate::runtime) point: (f32, f32),
 }
 
 impl Pair {
@@ -64,7 +91,7 @@ impl Pair {
 /// The titlebar's press: what the next press can pair with, and whether a secondary press on a
 /// bare `.window_drag()` region still owes its release.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub(super) enum TitlebarPress {
+pub(in crate::runtime) enum TitlebarPress {
     /// No press is in flight.
     #[default]
     Rest,
@@ -77,13 +104,15 @@ pub(super) enum TitlebarPress {
 
 impl TitlebarPress {
     /// Whether a secondary press `SecondaryDown` began on a bare region owes its release.
-    pub(super) fn secondary_armed(self) -> bool { matches!(self, TitlebarPress::SecondaryOnRegion(_)) }
+    pub(in crate::runtime) fn secondary_armed(self) -> bool { matches!(self, TitlebarPress::SecondaryOnRegion(_)) }
 }
 
 /// What the titlebar's press sees.
-pub(super) enum Event {
+pub(in crate::runtime) enum Event {
     /// A primary press on a bare `.window_drag()` region.
     Region { now: f64, point: (f32, f32), interval: f64 },
+    /// A primary press on a bare `.window_resize(edge)` region.
+    Resize { edge: crate::ResizeEdge },
     /// A primary press that hit nothing; `band` when it is in the native titlebar band, where
     /// the system drags the window itself and only the double click is Rune's.
     Empty { now: f64, point: (f32, f32), interval: f64, band: bool },
@@ -97,9 +126,11 @@ pub(super) enum Event {
 
 /// What a press asks the window for, in that press event: the shell starts a native drag inside
 /// the press, and the window menu opens where the pointer is.
-pub(super) enum Request {
+pub(in crate::runtime) enum Request {
     /// Move the window, or the titlebar's double-click action.
     Action(TitlebarAction),
+    /// Resize the window from this edge or corner.
+    Resize(crate::ResizeEdge),
     /// Open the window menu at the pointer.
     Menu,
 }
@@ -130,13 +161,17 @@ fn keep_secondary(state: &TitlebarPress, pair: Option<Pair>) -> TitlebarPress {
     if state.secondary_armed() { TitlebarPress::SecondaryOnRegion(pair) } else { armed(pair) }
 }
 
-pub(super) fn step(state: &mut TitlebarPress, event: Event) -> Effects<Request> {
+pub(in crate::runtime) fn step(state: &mut TitlebarPress, event: Event) -> Effects<Request> {
     match event {
         // A press on a drag region always moves the window, unless it is the second of a pair.
         Event::Region { now, point, interval } => {
             let (next, double) = pair_of(pair(state), now, point, interval);
             *state = keep_secondary(state, next);
             Effects::one(Request::Action(if double { TitlebarAction::DoubleClick } else { TitlebarAction::Drag }))
+        }
+        Event::Resize { edge } => {
+            *state = keep_secondary(state, None);
+            Effects::one(Request::Resize(edge))
         }
         // AppKit drags the band itself and never sees the double click over the content.
         Event::Empty { now, point, interval, band } => {
@@ -164,18 +199,23 @@ pub(super) fn step(state: &mut TitlebarPress, event: Event) -> Effects<Request> 
 
 impl Titlebar {
     /// A press on a `.window_drag()` region: drag, or the double-click action on its second press.
-    pub(super) fn press_region(&mut self, now: f64, x: f32, y: f32, interval: f64) {
+    pub(in crate::runtime) fn press_region(&mut self, now: f64, x: f32, y: f32, interval: f64) {
         self.act(Event::Region { now, point: (x, y), interval });
+    }
+
+    /// A press on a `.window_resize(edge)` region: start an interactive resize from `edge`.
+    pub(in crate::runtime) fn press_resize(&mut self, edge: crate::ResizeEdge) {
+        self.act(Event::Resize { edge });
     }
 
     /// A press that hit nothing. In the native band AppKit moves the window itself but doesn't
     /// see the double click over the content view, so the second press asks for it here.
-    pub(super) fn press_empty(&mut self, now: f64, x: f32, y: f32, interval: f64) {
+    pub(in crate::runtime) fn press_empty(&mut self, now: f64, x: f32, y: f32, interval: f64) {
         let band = y < self.native_band;
         self.act(Event::Empty { now, point: (x, y), interval, band });
     }
 
-    pub(super) fn clear(&mut self) {
+    pub(in crate::runtime) fn clear(&mut self) {
         self.act(Event::Clear);
     }
 
@@ -183,65 +223,102 @@ impl Titlebar {
     fn act(&mut self, event: Event) {
         for request in step(&mut self.press, event) {
             match request {
-                Request::Action(action) => self.action = Some(action),
+                Request::Action(action) => {
+                    self.action = Some(action);
+                    self.resize = None;
+                }
+                Request::Resize(edge) => {
+                    self.resize = Some(edge);
+                    self.action = None;
+                }
                 Request::Menu => self.window_menu = Some(WindowMenu::Pointer),
             }
         }
     }
 }
 
-impl<S: 'static> Runtime<S> {
+impl RuntimeCore {
     /// The titlebar band, in window points from the top, that the system drags natively while
     /// the content view fills it (macOS full-size content without drag regions). Empty presses
     /// there take the titlebar double-click action. 0, the default, leaves them alone.
     pub fn set_native_titlebar_band(&mut self, points: f32) {
-        self.titlebar.native_band = points;
+        self.host.titlebar.native_band = points;
     }
 
     /// A window drag or titlebar double-click requested by the press just delivered. The shell
     /// must act on it before returning from that press event.
     pub fn take_titlebar_action(&mut self) -> Option<TitlebarAction> {
-        self.titlebar.action.take()
+        self.host.titlebar.action.take()
+    }
+
+    /// A window resize edge requested by the press just delivered on an
+    /// [`El::window_resize`](crate::El::window_resize) region. The shell must act on it before
+    /// returning from that press event.
+    pub fn take_resize_action(&mut self) -> Option<crate::ResizeEdge> {
+        self.host.titlebar.resize.take()
     }
 
     /// What [`Cx::chrome_insets`] reports. Native windows set it from their controls on every
     /// resize, full screen included; a change re-runs the view.
     pub fn set_chrome_insets(&mut self, insets: crate::ChromeInsets) {
-        if insets != self.titlebar.insets {
-            self.titlebar.insets = insets;
-            self.dirty = true;
+        if insets != self.host.titlebar.insets {
+            self.host.titlebar.insets = insets;
+            self.commit.dirty = true;
         }
     }
 
     pub fn chrome_insets(&self) -> crate::ChromeInsets {
-        self.titlebar.insets
+        self.host.titlebar.insets
     }
 
     /// The caption buttons to draw over the view, and their hover and press state; `None`
     /// draws none. A change re-runs the view.
     pub(crate) fn set_caption(&mut self, caption: Option<crate::titlebar::Caption>) {
-        if caption == self.titlebar.caption { return; }
-        self.titlebar.caption = caption;
-        self.dirty = true;
+        if caption == self.host.titlebar.caption { return; }
+        self.host.titlebar.caption = caption;
+        self.commit.dirty = true;
     }
 
     /// What a run without a window reports and draws for `App::titlebar` on this platform, as
     /// its window would at rest: `Cx::titlebar_inset`, `Cx::chrome_insets` and the caption
     /// buttons. Returns the frame the headless traffic-light checks see.
     pub(crate) fn headless_chrome(&mut self, chrome: crate::Chrome, titlebar: Option<crate::Titlebar>, borderless: bool) -> crate::Chrome {
+        self.headless_chrome_with(chrome, titlebar, borderless, crate::labels::rtl())
+    }
+
+    fn headless_chrome_with(&mut self, chrome: crate::Chrome, titlebar: Option<crate::Titlebar>, borderless: bool, rtl: bool) -> crate::Chrome {
         let titlebar = titlebar.filter(|_| !borderless);
-        self.titlebar.headless = titlebar.map(|t| (chrome, t));
-        let titlebar = titlebar.map(|t| self.titlebar.set.over(t));
-        let chrome = match titlebar {
-            Some(t) if cfg!(target_os = "macos") => t.mac_chrome(chrome),
-            _ => chrome,
+        self.host.titlebar.headless = titlebar.map(|t| (chrome, t));
+        let titlebar = titlebar.map(|t| self.host.titlebar.set.over(t));
+        // A borderless window has no title bar and no traffic lights, even under `Chrome::DEFAULT`
+        // or explicit `Chrome::traffic_lights`. Headless `--chrome` models macOS traffic lights on
+        // every platform, so `App::titlebar` (and `Cx::set_titlebar` / `Cx::titlebar_height`)
+        // resolves through `Titlebar::mac_chrome` everywhere.
+        let chrome = if borderless {
+            crate::Chrome { full_size_content: false, traffic_lights: None, ..chrome }
+        } else {
+            match titlebar {
+                Some(t) if !t.has_controls() => crate::Chrome { full_size_content: false, traffic_lights: None, drag_regions: true },
+                Some(t) => t.mac_chrome(chrome),
+                None => chrome,
+            }
         };
-        let inset = if borderless { 0.0 } else { chrome.titlebar_inset() };
+        self.host.titlebar.headless_chrome = chrome;
+        let inset = chrome.titlebar_inset();
         self.set_titlebar_inset(inset);
-        let caption = titlebar.filter(|_| cfg!(target_os = "windows")).map(|t| crate::titlebar::Caption::new(t.height()));
+        let caption = titlebar.filter(|_| cfg!(target_os = "windows")).map(|t| {
+            let mut caption = crate::titlebar::Caption::new(t.height());
+            caption.hidden = !t.has_controls();
+            caption.mirrored = rtl;
+            caption
+        });
         let height = titlebar.filter(|_| cfg!(any(target_os = "macos", target_os = "windows"))).map_or(0.0, |t| t.height());
-        let leading = if cfg!(target_os = "macos") { inset } else { 0.0 };
-        let trailing = caption.map_or(0.0, |c| c.width(self.env.scale));
+        let lights = if cfg!(target_os = "macos") { inset } else { 0.0 };
+        let buttons = caption.map_or(0.0, |c| c.width(self.env.scale));
+        // The traffic lights' room is on the right in a right-to-left app on macOS, as the
+        // caption buttons' is on the left on Windows.
+        let (leading, trailing) = if rtl { (0.0, lights) } else { (lights, 0.0) };
+        let (leading, trailing) = if caption.is_some_and(|c| c.mirrored) { (leading + buttons, trailing) } else { (leading, trailing + buttons) };
         self.set_chrome_insets(crate::ChromeInsets::new(leading, trailing, height));
         self.set_caption(caption);
         chrome
@@ -250,40 +327,47 @@ impl<S: 'static> Runtime<S> {
     /// Takes a `Tx::toggle_maximized`, for the shell to carry out.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub(crate) fn take_toggle_maximized(&mut self) -> bool {
-        std::mem::take(&mut self.titlebar.toggle_maximized)
+        std::mem::take(&mut self.host.titlebar.toggle_maximized)
     }
 
-    /// Takes a `Tx::toggle_full_screen`, for the shell to carry out.
+    /// Takes a `Tx::toggle_full_screen` or `Tx::set_full_screen`, for the shell to carry out.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
-    pub(crate) fn take_toggle_full_screen(&mut self) -> bool {
-        std::mem::take(&mut self.titlebar.toggle_full_screen)
+    pub(crate) fn take_full_screen_request(&mut self) -> Option<crate::el::FullScreenRequest> {
+        self.host.titlebar.full_screen.take()
     }
 
     /// The window menu a secondary click on a drag region or an unclaimed Alt+Space asked for,
     /// for the shell to open.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub(crate) fn take_window_menu(&mut self) -> Option<WindowMenu> {
-        self.titlebar.window_menu.take()
+        self.host.titlebar.window_menu.take()
     }
 
     /// Alt+Space no handler took opens the window menu (`Unhandled::WindowMenu`).
-    pub(super) fn request_window_menu(&mut self) {
-        self.titlebar.window_menu = Some(WindowMenu::Keyboard);
+    pub(in crate::runtime) fn request_window_menu(&mut self) {
+        self.host.titlebar.window_menu = Some(WindowMenu::Keyboard);
+    }
+
+    /// The resolved macOS chrome last computed by `headless_chrome`, updated whenever the view
+    /// changes its titlebar (`Cx::set_titlebar`, `Cx::titlebar_height`).
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    pub(crate) fn headless_chrome_current(&self) -> crate::Chrome {
+        self.host.titlebar.headless_chrome
     }
 
     /// `Cx::set_titlebar` and `Cx::titlebar_height`, as the last view set them; empty keeps
     /// `App::titlebar`'s.
     pub(crate) fn titlebar_set(&self) -> crate::titlebar::TitlebarSet {
-        self.titlebar.set
+        self.host.titlebar.set
     }
 
     /// Notes the titlebar a view set. A run without a window draws it at once; a window's shell
     /// resizes its frame and moves the traffic lights (`take_titlebar_changed`).
-    pub(super) fn set_titlebar(&mut self, set: crate::titlebar::TitlebarSet) {
-        if set == self.titlebar.set { return; }
-        self.titlebar.set = set;
-        self.titlebar.set_changed = true;
-        if let Some((chrome, titlebar)) = self.titlebar.headless {
+    pub(in crate::runtime) fn set_titlebar(&mut self, set: crate::titlebar::TitlebarSet) {
+        if set == self.host.titlebar.set { return; }
+        self.host.titlebar.set = set;
+        self.host.titlebar.set_changed = true;
+        if let Some((chrome, titlebar)) = self.host.titlebar.headless {
             self.headless_chrome(chrome, Some(titlebar), false);
         }
     }
@@ -291,31 +375,119 @@ impl<S: 'static> Runtime<S> {
     /// Whether the titlebar the view set changed since the shell last asked.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub(crate) fn take_titlebar_changed(&mut self) -> bool {
-        std::mem::take(&mut self.titlebar.set_changed)
+        std::mem::take(&mut self.host.titlebar.set_changed)
     }
 
     /// Notes whether a secondary press at (x, y) landed on a bare `.window_drag()` region of a
     /// custom titlebar, where its release opens the window menu.
-    pub(super) fn secondary_region_down(&mut self, x: f32, y: f32, captured: bool) {
-        let region = !captured && self.titlebar.caption.is_some()
+    pub(in crate::runtime) fn secondary_region_down(&mut self, x: f32, y: f32, captured: bool) {
+        let region = !captured && self.host.titlebar.caption.is_some()
             && self.primary_target(x, y).is_some_and(|t| self.bare_drag_region(t));
-        self.titlebar.act(Event::SecondaryDown { region });
+        self.host.titlebar.act(Event::SecondaryDown { region });
     }
 
     /// A secondary release that ends the press `secondary_region_down` noted on a drag region
     /// asks the shell for the window menu.
-    pub(super) fn secondary_region_up(&mut self, x: f32, y: f32) {
+    pub(in crate::runtime) fn secondary_region_up(&mut self, x: f32, y: f32) {
         // A release with no press on a region has nothing to ask for, as `take` returned false.
-        if !self.titlebar.press.secondary_armed() { return; }
+        if !self.host.titlebar.press.secondary_armed() { return; }
         let region = self.primary_target(x, y).is_some_and(|t| self.bare_drag_region(t));
-        self.titlebar.act(Event::SecondaryUp { region });
+        self.host.titlebar.act(Event::SecondaryUp { region });
     }
 
     /// A `.window_drag()` element with nothing of its own to do with a press: a press there
     /// moves the window, and a secondary click opens the window menu.
-    pub(super) fn bare_drag_region(&self, t: usize) -> bool {
-        let n = &self.nodes[t];
+    pub(in crate::runtime) fn bare_drag_region(&self, t: usize) -> bool {
+        let n = &self.tree.nodes[t];
         n.window_drag == crate::el::WindowDrag::Drag && n.handlers.on_press.is_none() && n.handlers.on_double_press.is_none() && n.handlers.on_drag.is_none()
             && n.handlers.drag_out.is_none() && self.textbox_input(t).is_none()
     }
+
+    /// A `.window_resize(edge)` element with nothing of its own to do with a press: a press
+    /// there starts an interactive OS/compositor window resize from `edge`, and hover shows the
+    /// matching resize cursor unless overridden.
+    pub(in crate::runtime) fn bare_resize_edge(&self, t: usize) -> Option<crate::ResizeEdge> {
+        let n = &self.tree.nodes[t];
+        let crate::el::WindowDrag::Resize(edge) = n.window_drag else { return None };
+        (n.handlers.on_press.is_none()
+            && n.handlers.on_double_press.is_none()
+            && n.handlers.on_drag.is_none()
+            && n.handlers.drag_out.is_none()
+            && self.textbox_input(t).is_none())
+            .then_some(edge)
+    }
+
+    /// Number of committed view/layout passes so far.
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    #[inline]
+    pub(crate) fn commit_generation(&self) -> u64 {
+        self.commit.commits
+    }
+
+    /// A `.window_drag()` element that Windows may answer `HTCAPTION` for directly: bare as
+    /// [`Self::bare_drag_region`] defines it, with no secondary, middle, hover, pointer-move or
+    /// gesture handler of its own that needs client messages over it.
+    #[cfg(target_os = "windows")]
+    fn win32_bare_drag_region(&self, t: usize) -> bool {
+        let n = &self.tree.nodes[t];
+        self.bare_drag_region(t)
+            && n.handlers.on_secondary_press.is_none()
+            && n.handlers.on_middle_press.is_none()
+            && n.handlers.on_hover.is_none()
+            && n.handlers.on_hover_change.is_none()
+            && n.handlers.on_pointer_move.is_none()
+            && n.handlers.gestures.is_none()
+    }
+
+    /// Committed bare `.window_drag()` hit-test region in top-to-bottom paint order and window
+    /// points, empty while any modal is active or when no bare drag region is drawn.
+    ///
+    /// Keeps only hits overlapping the union bounds of bare drag regions (from the bottommost bare
+    /// drag region upward), plus any non-drag tooltip regions above them, so Windows'
+    /// `WM_NCHITTEST` stays bounded to controls over the titlebar and keeps interactive children,
+    /// selectable text, `.no_window_drag()` elements, overlays and tooltips in `HTCLIENT`.
+    #[cfg(target_os = "windows")]
+    pub(crate) fn window_drag_hits(&self) -> Vec<DragHit> {
+        if self.active_modal().is_some() { return Vec::new(); }
+        let hits = self.hit.hits();
+        let mut bounds = [f32::INFINITY, f32::INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY];
+        let mut min_idx = None;
+        for (idx, &(id, r)) in hits.iter().enumerate() {
+            let Some(&i) = self.tree.node_index.get(&id) else { continue };
+            if self.subtree_exiting(i) || !self.allowed(i) || !self.win32_bare_drag_region(i) { continue; }
+            let rect = self.to_window(self.hit_screen_rect(id, r));
+            if rect[2] <= rect[0] || rect[3] <= rect[1] { continue; }
+            min_idx.get_or_insert(idx);
+            bounds[0] = bounds[0].min(rect[0]);
+            bounds[1] = bounds[1].min(rect[1]);
+            bounds[2] = bounds[2].max(rect[2]);
+            bounds[3] = bounds[3].max(rect[3]);
+        }
+        let Some(min_idx) = min_idx else { return Vec::new() };
+        let overlaps_bounds = |r: [f32; 4]| r[0] < bounds[2] && r[2] > bounds[0] && r[1] < bounds[3] && r[3] > bounds[1];
+        let help = self.hit.help_hits();
+        let mut hi = help.len();
+        let mut out = Vec::new();
+        for (idx, &(id, r)) in hits.iter().enumerate().skip(min_idx).rev() {
+            while hi > 0 && help[hi - 1].2 > idx {
+                hi -= 1;
+                let (hid, hr, _, _) = help[hi];
+                let Some(&j) = self.tree.node_index.get(&hid) else { continue };
+                if self.subtree_exiting(j) || !self.allowed(j) || self.win32_bare_drag_region(j) { continue; }
+                let rect = self.to_window(self.hit_screen_rect(hid, hr));
+                if rect[2] <= rect[0] || rect[3] <= rect[1] || !overlaps_bounds(rect) { continue; }
+                out.push(DragHit { rect, drag: false });
+            }
+            let Some(&i) = self.tree.node_index.get(&id) else { continue };
+            if self.subtree_exiting(i) || !self.allowed(i) { continue; }
+            let rect = self.to_window(self.hit_screen_rect(id, r));
+            if rect[2] <= rect[0] || rect[3] <= rect[1] || !overlaps_bounds(rect) { continue; }
+            out.push(DragHit { rect, drag: self.win32_bare_drag_region(i) });
+        }
+        out
+    }
 }
+
+#[cfg(test)]
+#[path = "titlebar_tests.rs"]
+mod tests;

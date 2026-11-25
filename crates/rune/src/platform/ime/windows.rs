@@ -11,6 +11,8 @@
 //! reachable there, so each answer comes from what it published, and each finding waits for it
 //! in a cell, taken in order before the preedit it belongs to.
 
+#![allow(unsafe_code)]
+
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ops::Range;
@@ -20,7 +22,7 @@ use windows_sys::Win32::UI::Input::Ime::{
     ATTR_TARGET_CONVERTED, ATTR_TARGET_NOTCONVERTED, GCS_COMPATTR, GCS_COMPCLAUSE, GCS_COMPSTR, IMR_CONFIRMRECONVERTSTRING,
     IMR_DOCUMENTFEED, IMR_RECONVERTSTRING, ImmGetCompositionStringW, ImmGetContext, ImmReleaseContext, RECONVERTSTRING,
 };
-use windows_sys::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
+use windows_sys::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass};
 use windows_sys::Win32::UI::WindowsAndMessaging::{WM_IME_COMPOSITION, WM_IME_REQUEST, WM_NCDESTROY};
 
 use crate::edit::{Clause, ImeText};
@@ -74,6 +76,26 @@ pub(crate) fn take_select(window: &winit::window::Window) -> Option<Range<usize>
     WINDOWS.with_borrow_mut(|all| all.get_mut(&k).and_then(|w| w.select.take()))
 }
 
+/// Whether any keyboard layout installed on this Windows session belongs to a right-to-left
+/// language, matching Chrome's `IsRTLKeyboardLayoutInstalled` (`GetKeyboardLayoutList`).
+pub(crate) fn has_rtl_keyboard_layout() -> bool {
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::GetKeyboardLayoutList;
+    // SAFETY: passing (0, null) queries the count of installed keyboard layouts.
+    let count = unsafe { GetKeyboardLayoutList(0, std::ptr::null_mut()) };
+    if count <= 0 {
+        return false;
+    }
+    let mut layouts = vec![std::ptr::null_mut(); count as usize];
+    // SAFETY: `layouts` has capacity for `count` HKL handles.
+    let got = unsafe { GetKeyboardLayoutList(count, layouts.as_mut_ptr()) };
+    if got <= 0 {
+        return false;
+    }
+    layouts[..got.min(count) as usize]
+        .iter()
+        .any(|&hkl| super::is_rtl_primary_lang_id((hkl as usize as u16) & 0x03ff))
+}
+
 unsafe extern "system" fn procedure(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM, _: usize, _: usize) -> LRESULT {
     match message {
         WM_IME_COMPOSITION if lparam as u32 & GCS_COMPSTR != 0 => {
@@ -105,7 +127,11 @@ unsafe extern "system" fn procedure(hwnd: HWND, message: u32, wparam: WPARAM, lp
             });
             return 1;
         }
-        WM_NCDESTROY => { WINDOWS.with_borrow_mut(|all| { all.remove(&(hwnd as usize)); }); }
+        WM_NCDESTROY => {
+            WINDOWS.with_borrow_mut(|all| { all.remove(&(hwnd as usize)); });
+            // SAFETY: removes this subclass from the window it was installed on.
+            unsafe { RemoveWindowSubclass(hwnd, Some(procedure), SUBCLASS); }
+        }
         _ => {}
     }
     // SAFETY: the next procedure in this window's chain.

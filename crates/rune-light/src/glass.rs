@@ -1,8 +1,21 @@
 //! Thick refracting glass over a lit frame (see `shaders/glass.wgsl` for the optics).
 //!
-//! ```ignore
+//! ```
+//! # use rune_light::{Glass, GlassLight, GlassRenderer, GlassSettings, LightRenderer};
+//! # fn _draw(
+//! #     glass: &mut GlassRenderer,
+//! #     gi: &LightRenderer,
+//! #     device: &wgpu::Device,
+//! #     queue: &wgpu::Queue,
+//! #     encoder: &mut wgpu::CommandEncoder,
+//! #     lights: &[GlassLight],
+//! #     lit: &wgpu::TextureView,
+//! #     target: &wgpu::TextureView,
+//! #     (x, y, w, h, s): (f32, f32, f32, f32, f32),
+//! # ) {
 //! let card = Glass::rounded(x, y, w, h, 40.0 * s).thickness(36.0 * s).bevel(28.0 * s).gap(10.0 * s);
-//! glass.render(&device, &queue, &mut encoder, &[card], &lights, GlassSettings::default(), &lit, lights.inspect().fluence, &target);
+//! glass.render(device, queue, encoder, &[card], lights, GlassSettings::default(), lit, gi.inspect().fluence, target);
+//! # }
 //! ```
 
 use bytemuck::{Pod, Zeroable};
@@ -24,6 +37,16 @@ pub struct Glass {
     /// absorption per px rgb (Beer–Lambert), rim glow from GI
     pub tint: [f32; 4],
 }
+
+const _: () = {
+    assert!(std::mem::size_of::<Glass>() == 96);
+    assert!(std::mem::offset_of!(Glass, a) == 0);
+    assert!(std::mem::offset_of!(Glass, b) == 16);
+    assert!(std::mem::offset_of!(Glass, r) == 32);
+    assert!(std::mem::offset_of!(Glass, p0) == 48);
+    assert!(std::mem::offset_of!(Glass, p1) == 64);
+    assert!(std::mem::offset_of!(Glass, tint) == 80);
+};
 
 impl Glass {
     /// Crown glass (n = 1.5 at 550 nm, a little stronger dispersion than real for visibility), faintly green in depth.
@@ -111,6 +134,12 @@ pub struct GlassLight {
     pub color: [f32; 4],
 }
 
+const _: () = {
+    assert!(std::mem::size_of::<GlassLight>() == 32);
+    assert!(std::mem::offset_of!(GlassLight, pos) == 0);
+    assert!(std::mem::offset_of!(GlassLight, color) == 16);
+};
+
 impl GlassLight {
     /// From an emissive primitive: a sphere of the element's size, `z` px above the UI, radiance × `gain`.
     pub fn from_emitter(p: &Prim, z: f32, gain: f32) -> Option<GlassLight> {
@@ -145,11 +174,18 @@ impl Default for GlassSettings {
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
-struct GlassU {
-    size: [f32; 4],
-    misc: [f32; 4],
-    shadow: [f32; 4],
+pub(crate) struct GlassU {
+    pub(crate) size: [f32; 4],
+    pub(crate) misc: [f32; 4],
+    pub(crate) shadow: [f32; 4],
 }
+
+const _: () = {
+    assert!(std::mem::size_of::<GlassU>() == 48);
+    assert!(std::mem::offset_of!(GlassU, size) == 0);
+    assert!(std::mem::offset_of!(GlassU, misc) == 16);
+    assert!(std::mem::offset_of!(GlassU, shadow) == 32);
+};
 
 const MAX_GLASS: usize = 8;
 const MAX_GLIGHTS: usize = 32;
@@ -179,7 +215,7 @@ pub struct GlassRenderer {
     staging: Option<rune_staging::Staging>,
 }
 
-fn section(name: &str) -> String {
+pub(crate) fn section(name: &str) -> String {
     let src = include_str!("shaders/glass.wgsl");
     let (main, pyr) = src.split_once("// ---- pyramid ----").unwrap_or((src, ""));
     if name == "pyramid" {

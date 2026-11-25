@@ -1,8 +1,28 @@
 //! `El::dir_by_paragraph`: each paragraph of a text in the direction of its own words, as CSS's
 //! `unicode-bidi: plaintext` lays a block's paragraphs out.
 use super::*;
+use rune_text::paragraph_ranges as paragraphs;
 
 impl El {
+    /// Lays out each newline-ended line as its own `Layout`, reusing
+    /// unchanged lines across commits (shaping only changed lines; per-commit keying still hashes
+    /// each line when spans are present, and long plain/colour-only ASCII interiors in a
+    /// start-aligned, LTR, fixed-pitch monospace face wait as runs even when other lines carry
+    /// layout spans; if the monospace slot resolves to a proportional fallback—such as on a host
+    /// with no monospace font installed and none bundled—lines shape eagerly instead) while staying
+    /// one selectable text element in its own direction.
+    ///
+    /// Silently falls back to a single layout when the text does not wrap, is truncated or
+    /// line-clamped, is live (`El::live` / `El::advance_in`), is redacted, or is a shared-run
+    /// cell (multi-line inputs already lay out by paragraph with greedy wrapping); a text flight
+    /// landing on a `by_line` node is dropped so the text appears in place without flying.
+    pub fn by_line(mut self) -> El {
+        if let Some(t) = self.text.as_mut() {
+            t.by_line = true;
+        }
+        self
+    }
+
     /// Lays each paragraph of this text (a line a newline ends) out in the direction of its own
     /// first strong character, as CSS's `unicode-bidi: plaintext` does: right to left when that's
     /// Arabic or Hebrew, else left to right, left to right too when it has none, whatever
@@ -38,12 +58,20 @@ impl El {
                 Some(*last)
             })
             .collect();
-        let whole = t.redacted || t.cold.live.is_some() || t.cold.advance_in.is_some() || t.truncate || t.truncate_fade || t.max_lines > 0;
+        let whole = t.redacted || t.cold.live.is_some() || t.cold.advance_in.is_some() || !t.cold.inline_boxes.is_empty() || t.truncate || t.truncate_fade || t.max_lines > 0;
         if whole || dirs.iter().all(|&d| d == dirs[0]) {
             return self;
         }
         let Some(t) = self.text.take() else { return self };
         let cursor = self.handlers.cursor;
+        // The I-beam `El::selectable` gave stays its own on every piece, so an
+        // `El::selection_enabled(false)` subtree still takes it back; the column, which keeps no
+        // text, drops it.
+        let given = t.flags.has(crate::el::text_spec::TextFlags::SELECTABLE_CURSOR) && cursor == Some(Cursor::Text);
+        if given { self.handlers.cursor = None; }
+        let a11y_disabled = self.cold.a11y.disabled;
+        let focus_disabled = self.cold.focus.disabled;
+        let focus_opt_out = self.cold.focus.opt_out;
         let last = paragraphs.len() - 1;
         let pieces: Vec<El> = paragraphs.iter().enumerate().map(|(k, &range)| {
             let mut e = text(String::new()).key(format!("p{k}"));
@@ -53,7 +81,15 @@ impl El {
             }
             let links = paragraph(&t, k, range, k == last, &mut e);
             if let Some(c) = cursor { e = e.cursor(c); }
-            if links { e.cold_mut().focus.enabled = true; }
+            if given && let Some(pt) = &mut e.text { pt.flags.set(crate::el::text_spec::TextFlags::SELECTABLE_CURSOR, true); }
+            if a11y_disabled { e.cold_mut().a11y.disabled = true; }
+            if focus_disabled || focus_opt_out {
+                let f = &mut *e.cold_mut().focus;
+                f.disabled = focus_disabled;
+                f.opt_out = true;
+            } else if links {
+                e.cold_mut().focus.enabled = true;
+            }
             e
         }).collect();
         // The links' Tab stops went with them.
@@ -64,32 +100,6 @@ impl El {
         self.children = pieces.into_iter().chain(kept).collect();
         self
     }
-}
-
-/// The byte ranges of `content`'s paragraphs, the separators between them left out: a UAX #9
-/// paragraph separator (a newline) ends each but the last, CR LF as one.
-fn paragraphs(content: &str) -> Vec<(usize, usize)> {
-    use icu_properties::{CodePointMapData, props::BidiClass};
-    let classes = CodePointMapData::<BidiClass>::new();
-    let mut out = Vec::new();
-    let mut start = 0;
-    let mut chars = content.char_indices().peekable();
-    while let Some((i, c)) = chars.next() {
-        if classes.get(c) != BidiClass::ParagraphSeparator {
-            continue;
-        }
-        let end = match chars.peek() {
-            Some(&(j, '\n')) if c == '\r' => {
-                chars.next();
-                j + 1
-            }
-            _ => i + c.len_utf8(),
-        };
-        out.push((start, i));
-        start = end;
-    }
-    out.push((start, content.len()));
-    out
 }
 
 /// Fills `e` with paragraph `k` of `t`, bytes `a..b`: its words and the spans, links, pills,
@@ -111,11 +121,33 @@ fn paragraph(t: &TextSpec, k: usize, (a, b): (usize, usize), last: bool, e: &mut
         cold.uncopied = t.cold.uncopied.iter().filter_map(|&(s, e)| clip(s, e)).collect();
         cold.rings = t.cold.rings.iter().filter_map(|&(s, e, c, w)| clip(s, e).map(|(s, e)| (s, e, c, w))).collect();
         cold.strikes = t.cold.strikes.iter().filter_map(|&(s, e, c)| clip(s, e).map(|(s, e)| (s, e, c))).collect();
+        cold.overlines = t.cold.overlines.iter().filter_map(|&(s, e, c)| clip(s, e).map(|(s, e)| (s, e, c))).collect();
+        cold.span_boxes = t.cold.span_boxes.iter().filter_map(|b| {
+            let (start, end) = clip(b.start, b.end)?;
+            let (cs, ce) = (b.start < a32, b.end > b32);
+            let mut style = b.style;
+            if cs || ce {
+                let c = style.corner_radii();
+                style = style
+                    .pad_x(if cs { 0.0 } else { style.pad_left() }, if ce { 0.0 } else { style.pad_right() })
+                    .corners([
+                        if cs { 0.0 } else { c[0] },
+                        if ce { 0.0 } else { c[1] },
+                        if ce { 0.0 } else { c[2] },
+                        if cs { 0.0 } else { c[3] },
+                    ]);
+            }
+            Some(crate::text::SpanBoxRun { start, end, style })
+        }).collect();
         cold.highlights = t.cold.highlights.iter().filter_map(|h| clip(h.start, h.end).map(|(start, end)| crate::text::TextHighlight { start, end, ..h.clone() })).collect();
+        cold.line_fills = t.cold.line_fills.iter().filter_map(|f| clip(f.start, f.end).map(|(start, end)| crate::el::LineFill { start, end, ..*f })).collect();
         // A chip lies inside one line; one across a newline has no paragraph to sit in.
         cold.pills = t.cold.pills.iter().filter(|c| a32 <= c.start && c.end <= b32).map(|c| crate::text::PillChip { start: c.start - a32, end: c.end - a32, ..c.clone() }).collect();
         cold.blocks = t.cold.blocks.get(k).copied().into_iter().collect();
         cold.soft_breaks.clear();
+        if k > 0 {
+            cold.text_indent = 0.0;
+        }
         cold.copy_breaks = [if k == 0 { t.cold.copy_breaks[0] } else { 1 }, if last { t.cold.copy_breaks[1] } else { 1 }];
         cold.copy_prefix = if k == 0 { t.cold.copy_prefix.clone() } else { None };
     }
