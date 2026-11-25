@@ -5,14 +5,14 @@
     python3 spikes/paged/check.py [--bin target/perf/paged]
 
 Every check writes the script it ran to `scripts/`, a screenshot and the facts it read from the
-element tree to `evidence/`, and prints PASS or FAIL. Exits 1 when a check fails.
+element tree to `out/` (ignored by git), and prints PASS or FAIL. Exits 1 when a check fails.
 """
 import json, os, struct, subprocess, sys, tempfile, zlib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 BIN = sys.argv[sys.argv.index("--bin") + 1] if "--bin" in sys.argv else os.path.join(ROOT, "target/perf/paged")
-SCRIPTS, EVIDENCE = os.path.join(HERE, "scripts"), os.path.join(HERE, "evidence")
+SCRIPTS, EVIDENCE = os.path.join(HERE, "scripts"), os.path.join(HERE, "out")
 MARGIN, CONTENT_H, STRIDE, LINE = 71.0, 700.0, 858.0, 14.0
 failed = []
 

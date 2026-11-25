@@ -1,6 +1,6 @@
 # Paged rich text in one text field
 
-A throwaway spike. It answers one question: can a word processor's editor be Rune's `text_input` and `TextEdit`, extended with run styles, paragraph styles and page flow, or does it have to draw its own? The answer on this branch is that it can. The numbers and their pass marks are in `evidence/`.
+A throwaway spike. It answers one question: can a word processor's editor be Rune's `text_input` and `TextEdit`, extended with run styles, paragraph styles and page flow, or does it have to draw its own? The answer on this branch is that it can: `check.py` holds the pass marks and `perf.py` takes the numbers.
 
 The app shows a generated German document of 25,335 words on 51 A4 pages in one field. The words come from a fixed list and a fixed seed, so every run lays out the same document.
 
@@ -22,7 +22,7 @@ python3 spikes/paged/check.py     # the interaction checks, headless
 python3 spikes/paged/perf.py      # the numbers
 ```
 
-`check.py` drives the app with one script per check (`scripts/`), reads the element tree and a screenshot, and writes what it found to `evidence/<check>.json` and `evidence/<check>*.png`:
+`check.py` drives the app with one script per check (`scripts/`), reads the element tree and a screenshot, and writes what it found to `out/<check>.json` and `out/<check>*.png`, which git ignores:
 
 | Check | What it proves |
 |---|---|
@@ -34,7 +34,7 @@ python3 spikes/paged/perf.py      # the numbers
 | `forced-break` | a paragraph whose style breaks the page starts at a page's top, with room left on the page before |
 | `ime-headless` | a composition on page 2 moves the input method's cursor rectangle with the caret |
 
-`perf.py` runs `paged-perf` (keystroke, Return, scroll, open and undo memory on a headless runtime) and times a fresh process to its first pixels, into `evidence/perf.txt`.
+`perf.py` runs `paged-perf` (keystroke, Return, scroll, open and undo memory on a headless runtime) and times a fresh process to its first pixels, into `out/perf.txt`.
 
 ## Not proven here
 

@@ -5,7 +5,7 @@
     cargo build --profile perf -p paged-spike --features profile --bin paged-perf
     python3 spikes/paged/perf.py
 
-Writes what it measured to `evidence/perf.txt` and prints it.
+Writes what it measured to `out/perf.txt` (ignored by git) and prints it.
 """
 import json, os, platform, selectors, statistics, subprocess, time
 
@@ -40,5 +40,6 @@ runs.sort()
 lines.append(f"PROCESS case=open-process metric=wall_ms p50={statistics.median(runs):.1f} max={runs[-1]:.1f} n={len(runs)}")
 
 text = "\n".join(lines) + "\n"
-open(os.path.join(HERE, "evidence", "perf.txt"), "w").write(text)
+os.makedirs(os.path.join(HERE, "out"), exist_ok=True)
+open(os.path.join(HERE, "out", "perf.txt"), "w").write(text)
 print(text, end="")
