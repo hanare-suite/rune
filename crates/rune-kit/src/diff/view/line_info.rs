@@ -1,9 +1,9 @@
 //! [`FoldRow::LineInfo`]: folded unchanged lines as Pierre's `line-info-basic` separator draws
 //! them in OpenCode Desktop's review.
 
-use rune::{Anim, Cursor, El, Icon, Span, Tx, col, icon, rich, row, text};
+use rune::{Anim, Cursor, El, Icon, Span, col, icon, rich, row, text};
 
-use super::View;
+use super::{DiffLabel, View};
 use crate::diff::state::{DiffState, EXPAND_STEP, Expand, GAP_H};
 
 // Pierre's separator glyphs (`diffs-icon-expand`, `diffs-icon-expand-all`). Its "up" button
@@ -45,31 +45,30 @@ pub enum FoldRow {
     LineInfo,
 }
 
-impl<S: 'static> View<S> {
+impl View {
     /// The unchanged lines between two hunks as [`FoldRow::LineInfo`] draws them.
     pub(super) fn line_info(&self, st: &DiffState, f: usize, gap: usize) -> El {
         let l = &self.look;
         let file = &st.files()[f];
         let hidden = st.hidden(f, gap).unwrap_or(0);
         let (first, last) = (gap == 0, gap == file.hunks.len());
-        // Pierre's words, which OpenCode Desktop shows untranslated.
-        let count = if hidden == 1 { "1 unmodified line".to_owned() } else { format!("{hidden} unmodified lines") };
+        // Pierre's words, which OpenCode Desktop shows untranslated by default.
+        let count = self.label(DiffLabel::UnmodifiedLines(hidden));
         let mut inner = row().key("inner").h(GAP_H).min_w(0.0);
         if hidden > 0 && file.expandable() {
             let steps: Vec<(Expand, &'static Icon, String)> = match (first, last) {
-                (true, _) => vec![(Expand::Up, &LINE_INFO_DOWN, format!("Show {} more lines above", hidden.min(EXPAND_STEP)))],
-                (_, true) => vec![(Expand::Down, &LINE_INFO_UP, format!("Show {} more lines below", hidden.min(EXPAND_STEP)))],
-                _ if hidden <= EXPAND_STEP => vec![(Expand::All, &LINE_INFO_ALL, format!("Show {hidden} hidden lines"))],
+                (true, _) => vec![(Expand::Up, &LINE_INFO_DOWN, self.label(DiffLabel::ShowMoreLinesAbove(hidden.min(EXPAND_STEP))))],
+                (_, true) => vec![(Expand::Down, &LINE_INFO_UP, self.label(DiffLabel::ShowMoreLinesBelow(hidden.min(EXPAND_STEP))))],
+                _ if hidden <= EXPAND_STEP => vec![(Expand::All, &LINE_INFO_ALL, self.label(DiffLabel::ShowHiddenLines(hidden)))],
                 _ => vec![
-                    (Expand::Down, &LINE_INFO_UP, format!("Show {EXPAND_STEP} more lines below")),
-                    (Expand::Up, &LINE_INFO_DOWN, format!("Show {EXPAND_STEP} more lines above")),
+                    (Expand::Down, &LINE_INFO_UP, self.label(DiffLabel::ShowMoreLinesBelow(EXPAND_STEP))),
+                    (Expand::Up, &LINE_INFO_DOWN, self.label(DiffLabel::ShowMoreLinesAbove(EXPAND_STEP))),
                 ],
             };
             let w = self.gutter_w(st, f) - LINE_INFO_GAP;
             let h = if steps.len() == 2 { (GAP_H - LINE_INFO_GAP) / 2.0 } else { GAP_H };
             let buttons = steps.into_iter().map(|(how, glyph, label)| {
-                let get = self.d.get_mut.clone();
-                row()
+                let btn = row()
                     .key(format!("{how:?}"))
                     .w(w)
                     .h(h)
@@ -79,28 +78,20 @@ impl<S: 'static> View<S> {
                     .cursor(Cursor::Pointer)
                     .role("button")
                     .label(label)
-                    .child(icon(glyph, 16.0).color(l.faint).group_color(l.text).absolute((w - 16.0) / 2.0, (h - 16.0) / 2.0))
-                    .on_press_tx(move |s: &mut S, tx: &mut Tx| get(s).expand(f, gap, if tx.mods().shift { Expand::All } else { how }))
+                    .child(icon(glyph, 16.0).color(l.faint).group_color(l.text).absolute((w - 16.0) / 2.0, (h - 16.0) / 2.0));
+                self.bind.bind_expand(btn, f, gap, how, true)
             });
             inner = inner.child(col().key("expand").w(w + LINE_INFO_GAP).h(GAP_H).gap(LINE_INFO_GAP).fill(l.bg).children(buttons));
             // The words open the range from both ends; the pointer anywhere on the row underlines them.
-            let get = self.d.get_mut.clone();
-            let words = col()
-                .key("words")
-                .role("button")
-                .label(count.clone())
-                .cursor(Cursor::Pointer)
-                .on_press_tx(move |s: &mut S, _| {
-                    let st = get(s);
-                    let ends: &[Expand] = match (first, last) {
-                        (true, _) => &[Expand::Up],
-                        (_, true) => &[Expand::Down],
-                        _ => &[Expand::Down, Expand::Up],
-                    };
-                    for &how in ends {
-                        st.expand(f, gap, how);
-                    }
-                })
+            let words = self
+                .bind
+                .bind_expand_both(
+                    col().key("words").role("button").label(count.clone()).cursor(Cursor::Pointer),
+                    f,
+                    gap,
+                    first,
+                    last,
+                )
                 .child(text(count.clone()).key("count").font(l.separator_text).color(l.faint).group_opacity(1.0, 0.0))
                 .child(
                     rich(count.clone(), vec![Span::new(0, count.len()).underline(l.faint)])

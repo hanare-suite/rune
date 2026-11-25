@@ -5,13 +5,14 @@
 //! winit ends the loop and `Windows::exiting` runs every window's `App::on_quit`, then its
 //! `on_close`.
 
+#![allow(unsafe_code)]
+
 use std::cell::Cell;
 use std::ffi::{c_char, c_void};
 
 use objc2::runtime::{AnyClass, AnyObject, Bool, Sel};
-use objc2::{msg_send, sel};
+use objc2::{MainThreadMarker, msg_send, sel};
 use objc2_app_kit::NSApplication;
-use objc2_foundation::MainThreadMarker;
 
 thread_local! {
     /// The delegate class Rune added the method to.
@@ -34,7 +35,7 @@ thread_local! {
 }
 
 extern "C" fn should_terminate(_: *mut AnyObject, _: Sel, _: *mut AnyObject) -> usize {
-    // A guarded window (`App::on_close_request`) holds the quit back, and a logout with it:
+    // A guarded window (`App::on_close_guard`) holds the quit back, and a logout with it:
     // the loop has the guarded windows ask.
     if super::GUARDED.load(std::sync::atomic::Ordering::Relaxed) {
         HELD.with_borrow(|held| if let Some(held) = held { held() });

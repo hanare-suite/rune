@@ -40,7 +40,7 @@ lines.append("RUN pages=51 words=25000 caret_page=25 limits=F0")
 small = harness()
 lines += small
 undo = next(l for l in small if l.startswith("UNDO"))
-heap = float(re.search(r"heap_extra_mb=([\d.]+)", undo).group(1))
+heap = float(re.search(r"heap_extra_mb=(-?[\d.]+)", undo).group(1))
 passed = True
 for case, metric, percentile, limit in LIMITS:
     got = value(small, case, metric, percentile)

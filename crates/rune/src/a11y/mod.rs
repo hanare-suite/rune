@@ -1,7 +1,7 @@
 //! Accessibility on the OS side: each window and overlay gets an AccessKit platform adapter
 //! (UI Automation on Windows, NSAccessibility on macOS, AT-SPI on Linux). The adapter's
 //! handlers run wherever the OS calls them; they only queue what they heard and wake the host,
-//! whose thread then activates the runtime's tree (`runtime/a11y/tree.rs`), runs the actions
+//! whose thread then activates the runtime's tree (`a11y/tree.rs`), runs the actions
 //! and sends tree updates. Until a client asks, the runtime builds nothing.
 #![cfg_attr(not(all(feature = "accessibility", any(target_os = "windows", target_os = "macos", target_os = "linux"))), allow(dead_code))]
 
@@ -11,8 +11,25 @@ use accesskit::{ActionHandler, ActionRequest, ActivationHandler, DeactivationHan
 
 use crate::runtime::Runtime;
 
+pub(crate) mod actions;
+mod atoms;
+#[cfg(test)]
+mod actions_tests;
+#[cfg(test)]
+mod aria_tests;
+#[cfg(test)]
+mod auto_complete_tests;
 pub(crate) mod dump;
+#[cfg(test)]
+mod dump_tests;
+pub(crate) mod node;
 pub(crate) mod roles;
+#[cfg(test)]
+mod tests;
+mod text;
+pub(crate) mod tree;
+#[cfg(test)]
+mod tree_tests;
 
 #[cfg(all(feature = "accessibility", target_os = "macos"))]
 mod macos;
@@ -36,7 +53,7 @@ impl Announcement {
         self.text = text;
         self.how = how;
         self.said = self.said.wrapping_add(1);
-        self.at = Some(crate::time::Instant::now());
+        self.at = Some(crate::time::now());
     }
 
     pub(crate) fn said(&self) -> u32 { self.said }
@@ -141,14 +158,19 @@ impl AccessibilityLink {
 
     /// Runs what the link heard on `rt`, then returns the tree's changes for the adapter, as a
     /// host's turn does. `name` names the root when the runtime has no window title.
+    #[inline(always)]
     pub fn service<S: 'static>(&mut self, rt: &mut Runtime<S>, name: &str) -> Option<TreeUpdate> {
+        self.service_core(rt.core_mut(), name)
+    }
+
+    fn service_core(&mut self, rt: &mut crate::runtime::RuntimeCore, name: &str) -> Option<TreeUpdate> {
         self.receive(rt, name);
         self.update(rt)
     }
 
     /// The runtime's tree belonged to an earlier adapter: drop it before this link reads or
     /// writes it.
-    fn adopt<S: 'static>(&mut self, rt: &mut Runtime<S>) {
+    fn adopt(&mut self, rt: &mut crate::runtime::RuntimeCore) {
         if !std::mem::replace(&mut self.adopted, true) { rt.a11y_deactivate(); }
     }
 
@@ -156,16 +178,27 @@ impl AccessibilityLink {
         self.shared.inbox.lock().map(|mut i| std::mem::take(&mut *i)).unwrap_or_default()
     }
 
-    fn receive<S: 'static>(&mut self, rt: &mut Runtime<S>, name: &str) -> bool {
+    #[cfg(test)]
+    pub(crate) fn receive_core(&mut self, rt: &mut crate::runtime::RuntimeCore, name: &str) -> bool {
+        self.receive(rt, name)
+    }
+
+    fn receive(&mut self, rt: &mut crate::runtime::RuntimeCore, name: &str) -> bool {
         self.adopt(rt);
         let inbox = self.take();
+        let mut queued = false;
         if inbox.settings {
+            let was_dirty = rt.commit.dirty;
             rt.set_system_reduced_motion(crate::platform::preferences::reduced_motion());
             rt.set_system_contrast(crate::platform::preferences::contrast());
             rt.set_system_increased_contrast(crate::platform::preferences::increased_contrast());
+            queued |= !was_dirty && rt.commit.dirty;
         }
         match inbox.asked {
-            Asked::Activate => rt.a11y_activate(name),
+            Asked::Activate => {
+                rt.a11y_activate(name);
+                queued |= rt.a11y_activation_build_pending();
+            }
             Asked::Deactivate => rt.a11y_deactivate(),
             Asked::Nothing => {}
         }
@@ -173,7 +206,6 @@ impl AccessibilityLink {
             let said = if inbox.asked == Asked::Activate { "activated" } else { "deactivated" };
             eprintln!("rune: a11y {name:?}: {said}");
         }
-        let mut queued = false;
         for request in &inbox.actions {
             let ran = rt.a11y_action(request);
             if log() { eprintln!("rune: a11y {name:?}: {:?} on {:?} {}", request.action, request.target_node, if ran { "queued" } else { "refused" }); }
@@ -182,9 +214,9 @@ impl AccessibilityLink {
         queued
     }
 
-    fn update<S: 'static>(&mut self, rt: &mut Runtime<S>) -> Option<TreeUpdate> {
+    fn update(&mut self, rt: &mut crate::runtime::RuntimeCore) -> Option<TreeUpdate> {
         self.adopt(rt);
-        let started = log().then(crate::time::Instant::now);
+        let started = log().then(crate::time::now);
         let update = rt.a11y_update()?;
         if let Some(t) = started { eprintln!("rune: a11y update: {} nodes in {:.0} us", update.nodes.len(), t.elapsed().as_secs_f64() * 1e6); }
         Some(update)
@@ -260,28 +292,29 @@ impl Adapter {
     /// Runs what the adapter heard on `rt`, then sends the tree's changes. Returns whether
     /// actions were queued, which need a frame. `name` names the root when the runtime has no
     /// window title.
-    pub(crate) fn service<S: 'static>(&mut self, rt: &mut Runtime<S>, name: &str) -> bool {
-        let queued = self.receive(rt, name);
-        self.sync(rt);
+    pub(crate) fn service_core(&mut self, rt: &mut crate::runtime::RuntimeCore, name: &str) -> bool {
+        let queued = self.receive_core(rt, name);
+        self.sync_core(rt);
         queued
     }
 
     /// Runs what the adapter heard on `rt`: activation, deactivation and actions. True when
     /// an action was queued for the next frame. Windows hosts call it from the wake, not from
     /// `about_to_wait`, where a redraw request would wait for the loop's next wake.
-    pub(crate) fn receive<S: 'static>(&mut self, rt: &mut Runtime<S>, name: &str) -> bool {
+    pub(crate) fn receive_core(&mut self, rt: &mut crate::runtime::RuntimeCore, name: &str) -> bool {
         self.link.receive(rt, name)
     }
 
     /// Tells assistive clients the window's content changed, so one that looked before this
     /// adapter existed asks again.
+    #[cfg(target_os = "windows")]
     pub(crate) fn notify_structure(&self) {
         #[cfg(all(feature = "accessibility", target_os = "windows"))]
-        self.inner.notify(crate::runtime::a11y_tree::Changes { structure: true, moved: false });
+        self.inner.notify(tree::Changes { structure: true, moved: false });
     }
 
     /// Sends the tree's changes since the last update, when a client listens.
-    pub(crate) fn sync<S: 'static>(&mut self, rt: &mut Runtime<S>) {
+    pub(crate) fn sync_core(&mut self, rt: &mut crate::runtime::RuntimeCore) {
         if let Some(update) = self.link.update(rt) {
             self.send(update);
             #[cfg(all(feature = "accessibility", target_os = "windows"))]

@@ -11,7 +11,7 @@ The app shows a generated German document of 25,335 words on 52 A4 pages in one 
 - `Mark::Size`, `Color`, `Family`, `Highlight` and `Baseline` style a run.
 - The field's own history is off (`TextEdit::set_history(false)`). Every edit reports the bytes it changed (`El::on_input_edits`), and the document follows the field through those reports: each event is one step of the document's history, which shares the paragraphs an edit did not touch. Cmd+Z reaches the app's key handler.
 
-A paragraph that crosses a page's end keeps one layout. Its lines after the end are broken again with the gap above them (`text/paragraphs/paged.rs`, `line_break::rebreak_paragraph`), so the caret, presses, selection boxes, glyphs, caret follow and the input method's cursor rectangle need no page mapping of their own.
+A paragraph that crosses a page's end keeps one layout. Its lines after the end are broken again with the gap above them (`crates/rune-text/src/paragraphs/paged.rs`, `line_break::rebreak_paragraph`), so the caret, presses, selection boxes, glyphs, caret follow and the input method's cursor rectangle need no page mapping of their own.
 
 ## Run it
 

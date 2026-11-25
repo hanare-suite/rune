@@ -6,6 +6,7 @@
 //! do. Without it `--keys` and `--pointer` stop the run with a message naming the feature.
 #![cfg_attr(not(any(debug_assertions, feature = "keys-overlay")), allow(dead_code, unused_imports))]
 
+use super::key_table;
 use crate::edit::{Key, KeyEvent, Mods};
 use crate::el::{El, col, el, text};
 use crate::runtime::{Cx, Env, Runtime};
@@ -90,7 +91,7 @@ impl Keycaps {
     pub(crate) fn chord(&mut self, t: f64, shortcut: &crate::Shortcut) {
         let name = shortcut.to_string();
         let key = name.rsplit('+').next().unwrap_or_default();
-        self.push(t, format!("{}{}", mod_glyphs(shortcut.modifiers()), named_glyph(key)), false);
+        self.push(t, format!("{}{}", key_table::modifier_glyphs(shortcut.modifiers()), key_table::overlay_named_label(key)), false);
     }
 
     fn push(&mut self, t: f64, label: String, typing: bool) {
@@ -115,13 +116,6 @@ impl Keycaps {
     }
 }
 
-/// Apple's order: Control, Option, Shift, Command. `cmd` is Ctrl off macOS.
-fn mod_glyphs(m: Mods) -> String {
-    let mac = cfg!(target_os = "macos");
-    let held = [(m.ctrl || (!mac && m.cmd), "⌃"), (m.alt, "⌥"), (m.shift, "⇧"), (m.logo || (mac && m.cmd), "⌘")];
-    held.iter().filter(|(on, _)| *on).map(|(_, g)| *g).collect()
-}
-
 /// The cap text for a key, and whether it is plain typing (no ⌘, ⌃ or ⌥).
 fn key_label(ev: &KeyEvent) -> (String, bool) {
     let m = ev.mods;
@@ -129,58 +123,19 @@ fn key_label(ev: &KeyEvent) -> (String, bool) {
     let key = match &ev.key {
         Key::Text(s) if !chord => return (s.clone(), true),
         Key::Text(s) if s == " " => "␣".to_owned(),
-        Key::Text(s) => title(s),
+        Key::Text(s) => key_table::title_case(s),
         Key::Command(c) => {
             let mods = Mods { cmd: true, ..m };
-            let label = if *c == ' ' { "␣".to_owned() } else { title(&c.to_string()) };
-            return (format!("{}{label}", mod_glyphs(mods)), false);
+            let label = if *c == ' ' { "␣".to_owned() } else { key_table::title_case(&c.to_string()) };
+            return (format!("{}{label}", key_table::modifier_glyphs(mods)), false);
         }
-        Key::Enter => "↩".into(),
-        Key::Backspace => "⌫".into(),
-        Key::Delete => "⌦".into(),
-        Key::Left => "←".into(),
-        Key::Right => "→".into(),
-        Key::Up => "↑".into(),
-        Key::Down => "↓".into(),
-        Key::Home => "↖".into(),
-        Key::End => "↘".into(),
-        Key::PageUp => "⇞".into(),
-        Key::PageDown => "⇟".into(),
-        Key::Insert => "Ins".into(),
-        Key::PrintScreen => "PrtSc".into(),
-        Key::ScrollLock => "ScrLk".into(),
-        Key::Pause => "Pause".into(),
-        Key::Escape => "⎋".into(),
-        Key::Tab => "⇥".into(),
         Key::Function(n) => format!("F{n}"),
-        Key::ContextMenu => "≣".into(),
         // Its own flag is already in `mods`.
         Key::Modifier { modifier: crate::Modifier::Fn, .. } => "fn".into(),
-        Key::Modifier { .. } => return (mod_glyphs(m), false),
+        Key::Modifier { .. } => return (key_table::modifier_glyphs(m), false),
+        other => key_table::overlay_key_label(other).unwrap_or("").to_owned(),
     };
-    (format!("{}{key}", mod_glyphs(m)), false)
-}
-
-/// A physical key's stable name (`Shortcut`'s) as a cap.
-fn named_glyph(name: &str) -> String {
-    match name {
-        "space" => "␣", "enter" => "↩", "escape" => "⎋", "tab" => "⇥", "backspace" => "⌫", "delete" => "⌦",
-        "left" => "←", "right" => "→", "up" => "↑", "down" => "↓", "home" => "↖", "end" => "↘",
-        "pageup" => "⇞", "pagedown" => "⇟", "insert" => "Ins", "minus" => "-", "equal" => "=", "comma" => ",",
-        "period" => ".", "slash" => "/", "semicolon" => ";", "quote" => "'", "bracketleft" => "[",
-        "bracketright" => "]", "backslash" => "\\", "backquote" => "`",
-        other => return title(other),
-    }.to_owned()
-}
-
-/// As on a keycap: "k" draws as "K" and "capslock" as "Capslock". A capital that doesn't
-/// lower-case back to the same letter (Turkish "ı" → "I") stays as typed.
-fn title(name: &str) -> String {
-    let mut chars = name.chars();
-    let Some(first) = chars.next() else { return String::new() };
-    let upper: String = first.to_uppercase().collect();
-    let first = if upper.to_lowercase() == first.to_string() { upper } else { first.to_string() };
-    format!("{first}{}", chars.as_str().to_lowercase())
+    (format!("{}{key}", key_table::modifier_glyphs(m)), false)
 }
 
 #[cfg(any(debug_assertions, feature = "keys-overlay"))]
@@ -337,8 +292,14 @@ mod tests {
         k.chord(0.8, &"cmd+space".parse().unwrap());
         k.key(0.9, &KeyEvent { key: Key::Escape, mods: Mods::default() });
         k.key(1.0, &KeyEvent { key: Key::Enter, mods: Mods::default() });
-        let cmd = if cfg!(target_os = "macos") { "⌘" } else { "⌃" };
-        assert_eq!(labels(&mut k, 1.0), [format!("{cmd}␣"), "⎋".into(), "↩".into()]);
+        // `cmd` in a `Shortcut` is always `Super` (`⌘` in the overlay); `mod` is the platform primary.
+        assert_eq!(labels(&mut k, 1.0), ["⌘␣", "⎋", "↩"]);
+        k.chord(1.1, &"mod+space".parse().unwrap());
+        let primary = if cfg!(target_os = "macos") { "⌘" } else { "⌃" };
+        assert_eq!(labels(&mut k, 1.1), ["⎋".into(), "↩".into(), format!("{primary}␣")]);
+        k.chord(1.2, &"printscreen".parse().unwrap());
+        k.chord(1.3, &"ctrl+printscreen".parse().unwrap());
+        assert_eq!(labels(&mut k, 1.3), [format!("{primary}␣"), "PrtSc".into(), "⌃PrtSc".into()]);
     }
 
     #[test]
@@ -349,7 +310,7 @@ mod tests {
         let ctrl = |s: &str| KeyEvent { key: Key::Text(s.into()), mods: Mods { ctrl: true, ..Mods::default() } };
         k.key(0.2, &ctrl("SPACE"));
         assert_eq!(labels(&mut k, 0.2), ["⌥⇧K", "⌥F12", "⌃Space"]);
-        assert_eq!((title("ı"), title("ß"), title("capslock")), ("ı".into(), "ß".into(), "Capslock".into()));
+        assert_eq!((key_table::title_case("ı"), key_table::title_case("ß"), key_table::title_case("capslock")), ("ı".into(), "ß".into(), "Capslock".into()));
     }
 
     #[test]
@@ -368,6 +329,36 @@ mod tests {
         assert_eq!(Corner::parse("middle"), None);
         assert_eq!((parse_theme("auto"), parse_theme("light"), parse_theme("dark"), parse_theme("blue")),
             (Some(None), Some(Some(false)), Some(Some(true)), None));
+    }
+
+    #[cfg(any(debug_assertions, feature = "keys-overlay"))]
+    #[test]
+    fn leaving_cap_collapses_its_slot_without_overlapping_the_next_cap() {
+        let mut ov = Overlay::new((400.0, 300.0), 1.0, Some(Corner::BottomLeft), Some(true), false);
+        ov.key(0.0, &KeyEvent { key: Key::Escape, mods: Mods::default() });
+        ov.key(0.1, &KeyEvent { key: Key::Enter, mods: Mods::default() });
+        ov.key(0.2, &KeyEvent { key: Key::Tab, mods: Mods::default() });
+        let mut t = 0.2;
+        for _ in 0..45 {
+            t += 1.0 / 60.0;
+            ov.frame(t, 1.0 / 60.0, true);
+        }
+        let init_h = ov.rt.presented("cap-0").expect("cap-0 visible").0[3];
+        assert!(init_h > 20.0);
+        // A fourth cap pushes cap-0 out while cap-1 and cap-2 remain.
+        ov.key(t, &KeyEvent { key: Key::Down, mods: Mods::default() });
+        let mut saw_shrunk = false;
+        for f in 0..30 {
+            t += 1.0 / 60.0;
+            let rt = ov.frame(t, 1.0 / 60.0, true);
+            let Some((c0, _)) = rt.presented("cap-0") else { break };
+            let (c1, _) = rt.presented("cap-1").expect("cap-1 remains");
+            assert!(c0[1] + c0[3] <= c1[1] + 0.5, "f={f}: leaving cap-0 {:?} overlapped cap-1 {:?}", c0, c1);
+            if c0[3] < init_h * 0.7 {
+                saw_shrunk = true;
+            }
+        }
+        assert!(saw_shrunk, "leaving keycap should collapse its height as it exits");
     }
 }
 
