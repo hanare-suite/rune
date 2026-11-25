@@ -22,7 +22,10 @@ fn on_key(s: &mut State, k: &KeyEvent, tx: &mut Tx) -> bool {
 
 /// Runs `script` against an app whose guard says `guarded`, whose `on_close_request` defers when
 /// `defers`, and returns the tree's `closed` flag and the log of what ran.
-fn run(script: &str, guarded: bool, defers: bool) -> (bool, String) {
+fn run(script: &str, guarded: bool, defers: bool) -> (bool, String) { run_app(script, guarded, defers, false) }
+
+/// As `run`, for an app that `keep_running` or not.
+fn run_app(script: &str, guarded: bool, defers: bool, keep_running: bool) -> (bool, String) {
     if !rune::render::Gpu::test_adapter_available() { return (false, String::new()); }
     static RUNS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     let n = RUNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -34,7 +37,9 @@ fn run(script: &str, guarded: bool, defers: bool) -> (bool, String) {
         on_key: Some(on_key),
         ..AppSpec::new("close-guard", (200.0, 100.0), State::default, view)
     };
-    App::new(spec)
+    let app = App::new(spec);
+    let app = if keep_running { app.keep_running() } else { app };
+    app
         .init(move || State { guarded, defers, log: Vec::new() })
         .on_close_request(|s, _| {
             s.log.push("request");
@@ -87,6 +92,24 @@ fn a_deferred_close_request_stands_with_the_guard_off() {
 #[test]
 fn tx_quit_is_not_held_by_the_guard() {
     if !rune::render::Gpu::test_adapter_available() { return; }
-    let script = r#"[{"t": 0.1, "type": "type", "text": "q"}]"#;
-    assert_eq!(run(script, true, false), (false, "key".into()));
+    // The guard is installed and holds: the close at the end asks. The Tx::quit before it did not.
+    let script = r#"[{"t": 0.1, "type": "type", "text": "q"}, {"t": 0.3, "close": true}]"#;
+    assert_eq!(run(script, true, false), (false, "key,request,ask".into()));
+}
+
+#[test]
+fn a_window_that_ends_the_app_closes_once() {
+    if !rune::render::Gpu::test_adapter_available() { return; }
+    let script = r#"[{"t": 0.1, "close": true}, {"t": 0.3, "close": true}]"#;
+    assert_eq!(run(script, false, false), (true, "request,close".into()));
+}
+
+#[test]
+fn a_keep_running_window_closes_again_after_a_reopen() {
+    if !rune::render::Gpu::test_adapter_available() { return; }
+    let script = r#"[{"t": 0.1, "close": true}, {"t": 0.2, "reopen": true}, {"t": 0.3, "close": true}]"#;
+    assert_eq!(run_app(script, false, false, true), (true, "request,close,request,close".into()));
+    // Between the two the window was open again.
+    let script = r#"[{"t": 0.1, "close": true}, {"t": 0.2, "reopen": true}]"#;
+    assert_eq!(run_app(script, false, false, true), (false, "request,close".into()));
 }

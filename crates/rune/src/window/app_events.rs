@@ -36,6 +36,9 @@ pub(super) fn quit_hosts(
     exit
 }
 
+/// A quit asks the windows that hold back their close (`App::on_close_guard`). True when one holds.
+pub(super) fn hold_quit(_hosts: &mut [Option<Box<dyn AnyHost>>], _once: bool) -> bool { false }
+
 /// Runs every registered `App::on_display_close` hook once on the UI thread, in registration
 /// order, draining them so later exit steps never invoke them again.
 pub(super) fn run_display_close(hooks: &mut Vec<crate::app::OnDisplayClose>) {
@@ -211,3 +214,6 @@ impl Windows {
 #[cfg(test)]
 #[path = "app_events_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "close_guard_tests.rs"]
+mod close_guard_tests;

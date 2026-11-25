@@ -22,7 +22,7 @@ use crate::windows::{WindowOptions, WindowSpec};
 
 pub(in crate::window) mod any_host;
 pub(in crate::window) mod app;
-mod close_guard;
+pub(in crate::window) mod close_guard;
 pub(in crate::window) mod create;
 pub(in crate::window) mod draw;
 pub(in crate::window) mod events;

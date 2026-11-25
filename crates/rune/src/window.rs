@@ -245,6 +245,7 @@ pub(crate) trait AnyHost {
     fn vanish(&mut self) {}
     /// The close about to come ends the app (`Host::close`).
     fn closing_ends_app(&mut self) {}
+    fn hold_quit(&mut self, _once: bool) -> bool { false }
     /// Whether the window holds back its close now (`App::on_close_guard`).
     fn close_guarded(&mut self) -> bool { false }
     /// A macOS Quit was held back: a guarded window asks (`App::on_close_guard`).
