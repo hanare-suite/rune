@@ -576,18 +576,27 @@ impl TextEdit {
         }
         // Where the caret landed.
         let at = self.range().0;
+        // The line the paste lands in keeps its block, its attributes and its atom: a paste at
+        // its start goes before it, and the fragment's last line joins its text only when the
+        // fragment ends open and the line is no atom's. Only a single line pasted into an empty
+        // plain line gives it the pasted paragraph's attributes.
+        let recv_line = self.line_of_byte(at);
+        let recv_range = self.line_range(recv_line);
+        let recv = (self.paragraph(recv_line), self.blocks.get(recv_line).copied().unwrap_or(Block::Paragraph));
+        let recv_start = at == recv_range.start;
+        let plain_single = frag.blocks.len() == 1 && recv_range.is_empty() && recv.0 == ParagraphAttrs::default() && recv.1 == Block::Paragraph;
         // An atom the fragment starts or ends with stays on a line of its own: behind a line
         // break unless the line starts here, and before one unless it ends here. Beside an
         // atom of the field the fence below does the same.
         let frag_atom = |frag: &TextEdit, line: usize| frag.attrs.get(line).is_some_and(|a| a.atom.is_some());
         if frag.attrs.iter().any(|a| a.atom.is_some()) {
-            let here = self.line_of_byte(at);
-            let (range, beside_atom) = (self.line_range(here), self.paragraph(here).atom.is_some());
-            if frag_atom(&frag, frag.blocks().len() - 1) && at < range.end && !beside_atom {
+            let beside_atom = recv.0.atom.is_some();
+            let before_line = recv_start && !plain_single;
+            if frag_atom(&frag, frag.blocks().len() - 1) && (at < recv_range.end || before_line) && !beside_atom {
                 frag.set_caret(frag.text.len());
                 frag.insert("\n");
             }
-            if frag_atom(&frag, 0) && at > range.start && !beside_atom {
+            if frag_atom(&frag, 0) && at > recv_range.start && !beside_atom {
                 frag.set_caret(0);
                 frag.insert("\n");
             }
@@ -601,28 +610,30 @@ impl TextEdit {
         let line_was_empty = line_range.is_empty();
         // What the paste lands beside: nothing before it on its line, nothing after it.
         let (at_line_start, at_line_end) = (ins_at == line_range.start, ins_at == line_range.end);
-        let mut orig_block = if own_line { Block::Paragraph } else { self.blocks.get(line_idx).copied().unwrap_or(Block::Paragraph) };
+        let orig_block = if own_line { Block::Paragraph } else { self.blocks.get(line_idx).copied().unwrap_or(Block::Paragraph) };
 
         self.apply_fenced((at, at), fenced.text.as_deref().unwrap_or(&frag.text), &[], None, false, fenced.back);
 
         // Apply `frag.blocks` and `frag.soft_breaks`.
         let frag_lines = frag.blocks.len();
-        // A fragment that ends in a line break, pasted at the start of a line with text,
-        // pushes that line down whole: the line keeps its block, its attributes and its id,
-        // and the pasted paragraphs above it are new ones.
-        let ends_open = frag_lines > 1 && frag.text.ends_with('\n');
-        if ends_open && at_line_start && !at_line_end && !own_line {
-            let last = line_idx + frag_lines - 1;
-            if last < self.attrs.len() {
-                self.attrs.swap(line_idx, last);
+        // A paste at the start of the line it lands in goes before it: the fragment's lines up
+        // to the one the line's text is on are new paragraphs, and that one is the line itself.
+        let added = fenced.text.as_deref().unwrap_or(&frag.text).bytes().filter(|&c| c == b'\n').count();
+        let before_line = recv_start && fenced.lead == 0 && !plain_single;
+        let kept_line = line_idx + added;
+        if before_line {
+            for k in 0..added.min(frag_lines) {
+                if let Some(slot) = self.blocks.get_mut(line_idx + k) {
+                    *slot = frag.blocks[k];
+                }
             }
-            if last < self.blocks.len() {
-                self.blocks.swap(line_idx, last);
-                self.blocks[line_idx] = Block::Paragraph;
+            // An empty paragraph the fragment's last line joins takes that line's block, so a
+            // pasted list keeps its last item.
+            let joined_empty = recv_range.is_empty() && recv.1 == Block::Paragraph && added + 1 == frag_lines && !frag.text.ends_with('\n');
+            if let Some(slot) = self.blocks.get_mut(kept_line) {
+                *slot = if joined_empty { frag.blocks[frag_lines - 1] } else { recv.1 };
             }
-            orig_block = Block::Paragraph;
-        }
-        if frag_lines == 1 {
+        } else if frag_lines == 1 {
             if line_was_empty && orig_block == Block::Paragraph && frag.blocks[0] != Block::Paragraph {
                 if let Some(slot) = self.blocks.get_mut(line_idx) {
                     *slot = frag.blocks[0];
@@ -635,11 +646,14 @@ impl TextEdit {
                 }
             }
             // The line a trailing break leaves the caret on keeps the block it had.
-            for k in 1..frag_lines - usize::from(ends_open) {
+            let ends_break = frag.text.ends_with('\n');
+            for k in 1..frag_lines - usize::from(ends_break) {
                 if let Some(slot) = self.blocks.get_mut(line_idx + k) {
                     *slot = frag.blocks[k];
                 }
             }
+        }
+        if frag_lines > 1 {
             for &sb in &frag.soft_breaks {
                 let target = line_idx + sb as usize;
                 if target > 0 {
@@ -648,12 +662,15 @@ impl TextEdit {
             }
         }
 
-        // The pasted paragraphs keep their style and alignment. The first and the last join
-        // the paragraph they land in, and take its attributes unless it holds nothing on
-        // that side, as a word processor pastes. Ids stay the field's own, and a pasted atom
-        // takes a new one.
+        // The pasted paragraphs keep their style and alignment, and take no indents. The first
+        // and the last join the paragraph they land in, and take its attributes unless it
+        // holds nothing on that side, as a word processor pastes. Ids stay the field's own,
+        // and a pasted atom takes a new one.
         let mut styled = false;
-        if !frag.attrs.is_empty() {
+        if before_line && self.attributed() {
+            let pool: Vec<u64> = self.attrs_mut()[line_idx..=kept_line].iter().map(|a| a.id).collect();
+            styled = self.paste_before_line(&frag, line_idx, kept_line, recv.0, pool);
+        } else if !frag.attrs.is_empty() {
             for k in 0..frag_lines {
                 let joins = (k == 0 && !at_line_start) || (k + 1 == frag_lines && !at_line_end);
                 if joins && !(frag_lines == 1 && line_was_empty) { continue; }
@@ -664,6 +681,7 @@ impl TextEdit {
                 if let Some(slot) = self.attrs_mut().get_mut(line_idx + k) {
                     let was = *slot;
                     (slot.style, slot.align) = (from.style, from.align);
+                    if !joins { (slot.indent, slot.first_line_indent) = (0.0, 0.0); }
                     if let Some(id) = atom_id {
                         (slot.atom, slot.id) = (from.atom, if id == 0 { slot.id } else { id });
                     }

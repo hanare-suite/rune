@@ -13,6 +13,7 @@
    "5* Bild – in di",
    "6 Am Ende steh"
   ],
+  "atom_id": 3,
   "bold": [
    "90..91"
   ],
@@ -32,11 +33,31 @@
    "5* Bild – in di",
    "6 Am Ende steh"
   ],
+  "atom_id": 3,
   "bold": [
    "42..43"
   ],
   "x_at_byte": 42,
   "reported": "replaced:42..42>9,marks:42..50>8,paragraphs:42..50>8",
+  "document_in_sync": "true"
+ },
+ "before-with-break": {
+  "paragraphs_after": [
+   "1 Gesperrte Bl",
+   "2 Davor steht ",
+   "7 Xy",
+   "8:b L1",
+   "3* Tabelle – in",
+   "4 Danach steht",
+   "5* Bild – in di",
+   "6 Am Ende steh"
+  ],
+  "atom_id": 3,
+  "bold": [
+   "42..43"
+  ],
+  "x_at_byte": 42,
+  "reported": "replaced:42..42>6,marks:42..48>6,paragraphs:42..95>53",
   "document_in_sync": "true"
  }
 }

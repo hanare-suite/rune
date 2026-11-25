@@ -181,6 +181,28 @@ impl TextEdit {
         id
     }
 
+    /// The attributes of a fragment pasted at the start of line `first`, once its text is in:
+    /// lines `first..kept` are the fragment's own paragraphs and line `kept` is the one it was
+    /// pasted before, which gets `recv` back whole. `ids` are those of lines `first..=kept` as
+    /// the text left them, one of them `recv`'s. Each new paragraph takes one of the others,
+    /// the fragment's style and alignment and its atom, and none of the receiving line's
+    /// indents. Returns whether the paste brought any.
+    pub(super) fn paste_before_line(&mut self, frag: &TextEdit, first: usize, kept: usize, recv: ParagraphAttrs, mut ids: Vec<u64>) -> bool {
+        match ids.iter().position(|&id| id == recv.id) {
+            Some(own) => { ids.remove(own); }
+            None => { ids.pop(); }
+        }
+        for k in 0..kept - first {
+            let id = ids.get(k).copied().unwrap_or_else(|| self.fresh_id());
+            let from = frag.paragraph(k);
+            let mut own = ParagraphAttrs::default().id(id).style(from.style).align(from.align);
+            own.atom = from.atom;
+            self.attrs_mut()[first + k] = own;
+        }
+        self.attrs_mut()[kept] = recv;
+        kept > first
+    }
+
     /// The attributes, one a line: an empty list (every paragraph the default) filled out.
     pub(super) fn attrs_mut(&mut self) -> &mut Vec<ParagraphAttrs> {
         let lines = if self.secure { 0 } else { 1 + count_newlines(self.text.as_bytes()) };

@@ -375,3 +375,19 @@ fn a_single_line_pasted_into_an_empty_plain_line_still_gives_it_the_pasted_attri
     let got = rows(&e);
     assert_eq!((got[1].0.as_str(), got[1].2, got[1].3, got[1].6), ("A", 5, ParagraphAlign::Center, bullet()), "{got:?}");
 }
+
+#[test]
+fn a_paste_at_a_lines_end_joins_the_line_and_brings_paragraphs_without_its_indents() {
+    let got = {
+        let mut e = start_field("XYZ", false);
+        reported(&mut e, |e| {
+            e.set_caret(7);
+            e.paste_fragment(start_fragment("A\nB", false), "");
+        });
+        rows(&e)
+    };
+    assert_eq!(got[1], kept_row("XYZA", None, bullet()));
+    assert_eq!(got[2].2, 6);
+    assert_eq!((got[2].0.as_str(), got[2].3, got[2].4, got[2].6), ("B", ParagraphAlign::Justified, (0.0, 0.0), bullet()), "{got:?}");
+    assert!(![1, 2, 3].contains(&got[2].1), "{got:?}");
+}

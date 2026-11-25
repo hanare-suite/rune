@@ -93,7 +93,7 @@ fn a_rich_paste_of_paragraphs_over_a_selected_atom_stays_between_its_neighbours(
     assert_eq!(e.marks(), [MarkRange::new(7..8, Mark::Bold)]);
     let p = Block::Paragraph;
     assert_eq!(e.blocks(), [p, p, Block::Bullet(0), Block::Bullet(0), p]);
-    assert_eq!((ids(&e), atoms(&e)), (vec![1, 10, 11, 12, 3], vec![false; 5]));
+    assert_eq!((ids(&e), atoms(&e)), (vec![1, 11, 12, 10, 3], vec![false; 5]));
 }
 
 #[test]
