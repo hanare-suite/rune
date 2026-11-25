@@ -1,0 +1,25 @@
+{
+ "events": [
+  {
+   "t": 0.2,
+   "type": "tap",
+   "x": 300,
+   "y": 785
+  },
+  {
+   "t": 0.6,
+   "type": "mark",
+   "name": "last-line"
+  },
+  {
+   "t": 0.7,
+   "type": "key",
+   "name": "Down"
+  },
+  {
+   "t": 1.4,
+   "type": "mark",
+   "name": "down"
+  }
+ ]
+}
