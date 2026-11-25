@@ -400,11 +400,16 @@ impl TextSpec {
     /// edit shapes only the paragraphs it changed: a wrapped, uncut field's text of more than
     /// one paragraph, or of any when each paragraph takes its own direction. Others stay one
     /// layout (a static text splits into one text per paragraph instead).
+    ///
+    /// Paragraph styles and page flow take effect only here: a field without it (one that
+    /// truncates, caps its lines, holds inline boxes or is redacted) ignores them.
     pub(crate) fn by_paragraph(&self, input: bool) -> bool {
-        (input || self.by_line) && self.wrap && !self.redacted && !self.truncate && !self.truncate_fade
+        let by_paragraph = (input || self.by_line) && self.wrap && !self.redacted && !self.truncate && !self.truncate_fade
             && self.max_lines == 0 && self.cold.live.is_none() && self.cold.advance_in.is_none()
             && self.cold.inline_boxes.is_empty()
-            && (self.by_line || matches!(self.dir, TextDir::Plaintext(_)) || self.content.contains('\n') || self.flowed())
+            && (self.by_line || matches!(self.dir, TextDir::Plaintext(_)) || self.content.contains('\n') || self.flowed());
+        debug_assert!(by_paragraph || !self.flowed(), "El::paragraph_styles and El::page_flow need a wrapped text_input without max_lines, truncate, inline boxes or redaction: they would be ignored");
+        by_paragraph
     }
 
     /// Zeroizes the shown string (spare capacity included) and shows `content` instead.
