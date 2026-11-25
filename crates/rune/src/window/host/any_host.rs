@@ -154,7 +154,6 @@ impl Host {
     /// The loop's turn ends: the frame the window wants next is asked for, and on Windows a
     /// window whose paint the system keeps putting off behind another's paints now (`Redraw`).
     fn turn_ends_in_turn(&mut self, event_loop: &ActiveEventLoop, now: Instant) {
-        if self.settle_due { self.settle_open(event_loop); }
         let Some(w) = &self.win else { return };
         let paints = cfg!(target_os = "windows") && self.life.uncovered() && !w.minimized();
         let (next, effect) = w.redraw.get().step(RedrawEvent::TurnEnds { now, paints });
@@ -394,6 +393,9 @@ impl Host {
     }
 
     fn about_to_wait_in_turn(&mut self, event_loop: &ActiveEventLoop) -> bool {
+        // Before the loop looks for windows that finished: an answer that closes its window ends
+        // the app in this turn.
+        if self.settle_due { self.settle_open(event_loop); }
         if self.idle_geometry(event_loop) { return false; }
         #[cfg(target_os = "macos")]
         {

@@ -52,14 +52,16 @@ pub(in crate::window) fn hold_close_core(
     true
 }
 
-/// The host-free core of a quit asking a guarded window (`open`: `quit_asks`). With `once` (the
-/// app's end held for a window) the window asks once, and the end stays dropped, however the
-/// answer goes, until the window is gone; without it every quit asks (a macOS Quit).
+/// The host-free core of a quit asking a guarded window (`open`: `quit_asks`, `shown`: the window
+/// shows). With `once` (the app's end held for a window) the window asks once, and the end stays
+/// dropped, however the answer goes, for as long as the window shows or its guard holds; a window
+/// that closed (a `keep_running` one hides) with its guard down holds nothing. Without `once`
+/// every quit asks (a macOS Quit).
 pub(in crate::window) fn hold_quit_core(
     app: &mut dyn WindowApp,
     clipboard: &mut crate::clipboard::Client,
     open: bool,
-    _shown: bool,
+    shown: bool,
     ends_app: &mut bool,
     asked: &mut bool,
     once: bool,
@@ -68,8 +70,13 @@ pub(in crate::window) fn hold_quit_core(
         *asked = false;
         return Hold::No;
     }
+    let guarded = app.close_guarded();
+    if !shown && !guarded {
+        *asked = false;
+        return Hold::No;
+    }
     if once && *asked { return Hold::Held; }
-    if !app.close_guarded() { return Hold::No; }
+    if !guarded { return Hold::No; }
     *asked |= once;
     if hold_close_core(app, clipboard, open, false, ends_app) { Hold::Asked } else { Hold::No }
 }
@@ -86,7 +93,7 @@ impl Host {
         true
     }
 
-    /// A quit asks the window (`App::on_close_guard`); its follow-up comes with the turn's end.
+    /// A quit asks the window (`App::on_close_guard`); its follow-up comes before the turn ends (`about_to_wait`).
     pub(in crate::window) fn holds_quit(&mut self, once: bool) -> bool {
         let open = quit_asks(self.life);
         let shown = self.life.shown();
