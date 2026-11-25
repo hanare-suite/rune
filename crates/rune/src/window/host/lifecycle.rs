@@ -526,35 +526,12 @@ impl Host {
         );
         match decision {
             CloseDecision::Close => self.close(event_loop),
-            CloseDecision::Defer => {
-                self.shell(event_loop);
-                if self.life.finished() || event_loop.exiting() {
-                    return;
-                }
-                if let Some(w) = self.shown_win() {
-                    if !self.life.covered() && !w.minimized() {
-                        w.request_redraw();
-                    } else {
-                        self.covered_frame();
-                        self.shell(event_loop);
-                    }
-                } else {
-                    self.app.rt_mut().schedule_pending_wakes();
-                }
-            }
+            CloseDecision::Defer => self.settle_open(event_loop),
         }
     }
 
-    /// A guarded window stays open and asks (`App::on_close_guard`). True when it held the close.
-    pub(in crate::window) fn holds_close(&mut self) -> bool {
-        if !self.closes() || !self.app.hold_close() { return false; }
-        self.ends_app = false;
-        if let Some(w) = self.shown_win() { w.request_redraw(); }
-        true
-    }
-
     pub(in crate::window) fn close(&mut self, event_loop: &ActiveEventLoop) {
-        if self.holds_close() { return; }
+        if self.holds_close(event_loop) { return; }
         self.app.rt_mut().minimize_step(MinimizeEvent::Lost);
         if let Some(w) = &mut self.win {
             w.first_frame.hide();
