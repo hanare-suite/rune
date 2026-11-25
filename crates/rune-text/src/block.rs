@@ -39,7 +39,8 @@ pub struct ParagraphStyle {
 
 impl std::hash::Hash for ParagraphStyle {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        (self.text, self.space_before.to_bits(), self.space_after.to_bits(), self.page_break_before).hash(state);
+        // `-0.0 + 0.0` is `0.0`, so equal spaces hash alike.
+        (self.text, (self.space_before + 0.0).to_bits(), (self.space_after + 0.0).to_bits(), self.page_break_before).hash(state);
     }
 }
 

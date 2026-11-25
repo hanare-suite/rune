@@ -160,7 +160,8 @@ fn place(pager: &Pager<'_>, y: f64, first: bool, own: &Own, height: f32, lines: 
     let mut page = p.index(y);
     if forced && y > p.top_of(page) { page += 1; y = p.top_of(page); }
     let flowed = y == p.top_of(page) && !forced && !first;
-    let mut top = if flowed { y } else { y + own.before };
+    // The paragraph is drawn at whole pixels (`top.round()`), so it is fitted there too.
+    let mut top = if flowed { y } else { (y + own.before).round() };
     let mut bottom = p.bottom_of(page);
     if top + f64::from(height) <= bottom {
         return Spot { top, gaps: Vec::new() };
@@ -175,7 +176,7 @@ fn place(pager: &Pager<'_>, y: f64, first: bool, own: &Own, height: f32, lines: 
         page += 1;
         let next = p.top_of(page);
         if i == 0 {
-            top = next - f64::from(min);
+            top = (next - f64::from(min)).round();
         } else {
             let gap = next - line_top;
             gaps.push((i as u32, gap as f32));

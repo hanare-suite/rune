@@ -286,7 +286,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         .on_input_key(|s: &mut State, k, _: &mut Tx| s.key(k))
         .on_input_change(|s: &mut State, _: &mut Tx| s.changed());
     let sheets = (0..pages).map(|i| {
-        el().key(format!("page{}", i + 1)).size(PAGE.0, PAGE.1).fill(Color::WHITE).absolute(0.0, i as f32 * (PAGE.1 + DESK))
+        el().key(format!("page{}", i + 1)).size(PAGE.0, PAGE.1).fill(Color::WHITE).absolute(0.0, flow.page_top(i))
     });
     let paper = el().key("paper").size(PAGE.0, pages as f32 * (PAGE.1 + DESK) - DESK).children(sheets).child(field);
     col().w_full().h_full().fill(c("#e7e5e0"))
