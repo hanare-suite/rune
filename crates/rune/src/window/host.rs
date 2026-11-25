@@ -22,6 +22,7 @@ use crate::windows::{WindowOptions, WindowSpec};
 
 pub(in crate::window) mod any_host;
 pub(in crate::window) mod app;
+mod close_guard;
 pub(in crate::window) mod create;
 pub(in crate::window) mod draw;
 pub(in crate::window) mod events;
@@ -284,7 +285,7 @@ impl Host {
         let (on_close_request, on_close, on_rest, on_reopen, on_quit, turn_scope) = (
             app.on_close_request, app.on_close, app.on_rest, app.on_reopen, app.on_quit, app.turn_scope,
         );
-        let (on_geometry, close_guard) = (app.on_window_geometry, app.close_guard);
+        let on_geometry = app.on_window_geometry;
         let comp = app.compositor.take();
         let (layout_seed, keep_layout) = (app.layout_seed.take(), app.keep_layout.take());
         let (playground, attach_playground) = (app.playground.take(), app.attach_playground);
@@ -302,7 +303,7 @@ impl Host {
         let shared_core = shared.core.clone();
         let geometry = SpecGeometry { title: spec.title, size: spec.size, min_size: spec.min_size };
         let typed = Box::new(TypedWindowApp {
-            rt, shared, comp, on_frame_drawn, on_close_request, close_guard, on_close, on_rest, on_quit, on_reopen, on_geometry, turn_scope,
+            rt, shared, comp, on_frame_drawn, on_close_request, on_close, on_rest, on_quit, on_reopen, on_geometry, turn_scope,
             keep_layout, kept_layout: layout_seed,
         });
         Self::from_app(typed, HostInit {

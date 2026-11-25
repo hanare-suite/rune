@@ -6,14 +6,15 @@ no limit, and times a fresh process to its first pixels.
     cargo build --profile perf -p paged-spike --features profile --bin paged-perf
     python3 spikes/paged/perf.py
 
-Writes what it measured to `evidence/perf.txt` and prints it. Exits 1 when a 51-page number is
-past its limit.
+Writes what it measured to `out/perf.txt` (ignored by git) and prints it. Exits 1 when a 51-page
+number is past its limit.
 """
 import os, platform, re, selectors, statistics, subprocess, sys, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
-PERF = os.path.join(ROOT, "target/perf/paged-perf")
+TARGET = os.environ.get("CARGO_TARGET_DIR", os.path.join(ROOT, "target"))
+PERF = os.path.join(TARGET, "perf/paged-perf")
 # F0's limits for the 51-page document: (case, metric, percentile, limit).
 LIMITS = [("type", "wall_ms", "p50", 8.0), ("type", "wall_ms", "p95", 16.0), ("scroll", "wall_ms", "p95", 8.3), ("open", "wall_ms", "p50", 500.0)]
 
@@ -57,7 +58,7 @@ lines += harness("--words", "100000", "--page", "100", "--only", "open,type,ente
 runs = []
 for i in range(8):
     start = time.perf_counter()
-    proc = subprocess.Popen([os.path.join(ROOT, "target/perf/paged"), "--first-pixels", "--frames", "1"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    proc = subprocess.Popen([os.path.join(TARGET, "perf/paged"), "--first-pixels", "--frames", "1"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     with selectors.DefaultSelector() as selector:
         selector.register(proc.stdout, selectors.EVENT_READ)
         assert selector.select(timeout=30), "first pixels not ready after 30 s"
@@ -71,6 +72,7 @@ runs.sort()
 lines.append(f"PROCESS case=open-process metric=wall_ms p50={statistics.median(runs):.1f} max={runs[-1]:.1f} n={len(runs)}")
 
 text = "\n".join(lines) + "\n"
-open(os.path.join(HERE, "evidence", "perf.txt"), "w").write(text)
+os.makedirs(os.path.join(HERE, "out"), exist_ok=True)
+open(os.path.join(HERE, "out", "perf.txt"), "w").write(text)
 print(text, end="")
 sys.exit(0 if passed else "FAILED: a 51-page number is past its limit")

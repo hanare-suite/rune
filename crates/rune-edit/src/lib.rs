@@ -325,7 +325,9 @@ impl TextEdit {
 
     /// The seven inline mark kinds allowed on a [`TextEdit`] by default (`Bold`, `Italic`,
     /// `Underline`, `Strike`, `Code`, `Link`, and `Pill`), excluding [`Mark::Color`] so pasted
-    /// browser or editor ink colours never enter a rich field unless the app opts in.
+    /// browser or editor ink colours never enter a rich field unless the app opts in, and
+    /// [`Mark::Size`], [`Mark::Family`], [`Mark::Highlight`] and [`Mark::Baseline`], which the
+    /// app opts into the same way (see [`DOCUMENT_MARKS`](Self::DOCUMENT_MARKS)).
     pub(crate) const DEFAULT_ALLOWED_MARKS: u16 =
         (1 << 0) | (1 << 1) | (1 << 2) | (1 << 3) | (1 << 4) | (1 << 5) | (1 << 6);
 
@@ -345,24 +347,6 @@ impl TextEdit {
 
     pub(crate) fn effective_allowed_marks(&self) -> u16 {
         self.allowed_marks.unwrap_or(Self::DEFAULT_ALLOWED_MARKS)
-    }
-
-    /// Construct a [`TextEdit`] from plain text, inline [`MarkRange`]s, and per-line [`Block`]s.
-    /// Caret starts at the end of `text`. Ranges are clamped to char boundaries and canonicalized,
-    /// and `blocks` is padded or truncated to match the number of `\n`-separated lines in `text`.
-    /// Passing any run style in `marks` ([`Mark::Color`], [`Mark::Size`], [`Mark::Family`],
-    /// [`Mark::Highlight`] or [`Mark::Baseline`]) makes the returned field a document field,
-    /// which keeps all of them.
-    pub fn from_parts(text: impl Into<String>, marks: Vec<MarkRange>, blocks: Vec<Block>) -> TextEdit {
-        let mut edit = Self::new(text).rich();
-        if marks.iter().any(|m| Self::DOCUMENT_MARKS & 1 << m.mark.kind_order() != 0) {
-            edit.open_document();
-        }
-        edit.marks = marks;
-        edit.blocks = blocks;
-        edit.clamp_list_levels();
-        edit.sync_invariants();
-        edit
     }
 
     /// Internal constructor for `html::parse_html` that keeps parsed [`Mark::Color`] marks until
@@ -442,9 +426,11 @@ impl TextEdit {
     /// Kinds match by [`Mark::same_kind`], so any [`Mark::Link`] allows links and any
     /// [`Mark::Color`] allows colours. The field never
     /// holds a disallowed mark: marks it already has, or that `set_marks` adds, are dropped.
-    /// Every kind except [`Mark::Color`] is allowed by default (opt into colour with
-    /// [`allow_color`](Self::allow_color) or by including `Mark::Color(String::new())` here), and
-    /// [`Mark::Pill`] always is: pills are the app's own tokens, not formatting.
+    /// Every kind except [`Mark::Color`], [`Mark::Size`], [`Mark::Family`], [`Mark::Highlight`]
+    /// and [`Mark::Baseline`] is allowed by default (opt into colour with
+    /// [`allow_color`](Self::allow_color) or by including `Mark::Color(String::new())` here, and
+    /// into sizes by including `Mark::Size(MarkSize::pt(1.0))`), and [`Mark::Pill`] always is:
+    /// pills are the app's own tokens, not formatting.
     ///
     /// ```
     /// # use rune_edit::{Mark, TextEdit};

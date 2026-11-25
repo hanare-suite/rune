@@ -10,7 +10,8 @@ use crate::clipboard::MemoryClipboard;
 use crate::quit::{Effect, Event, State as QuitState, step as quit_step};
 use crate::runtime::{Env, Runtime};
 use crate::window::host::any_host::quit_hook_core;
-use crate::window::host::app::{WindowApp, test_app, test_app_with_close_request};
+use crate::close_guard::CloseGuard;
+use crate::window::host::app::{WindowApp, test_app, test_app_with_close_guard};
 use crate::window::host::lifecycle::{CloseDecision, ShellCloseAction, close_request_core, take_shell_action};
 use crate::window::state::FirstFrame;
 use crate::window::{AnyHost, Life, WakeEvent};
@@ -478,6 +479,7 @@ struct CloseRequestState {
     dirty: bool,
     prompt_open: bool,
     defer_count: u32,
+    guard_on: bool,
     copy_on_defer: Option<&'static str>,
     title_on_defer: Option<&'static str>,
 }
@@ -507,6 +509,14 @@ fn on_close_guard(s: &mut CloseRequestState, _: &mut Tx) {
     s.events.borrow_mut().push("on_close".into());
 }
 
+fn guard_is_on(s: &CloseRequestState) -> bool { s.guard_on }
+
+/// Where an app puts its question up: the guard holds until the answer turns it off.
+fn guard_asks(s: &mut CloseRequestState, _: &mut Tx) {
+    s.events.borrow_mut().push("ask".into());
+    s.guard_on = false;
+}
+
 fn on_quit_guard(s: &mut CloseRequestState, _: &mut Tx) {
     s.events.borrow_mut().push("on_quit".into());
 }
@@ -522,6 +532,7 @@ struct GuardedHost {
     ends_app: bool,
     redraws: u32,
     hides: u32,
+    holds: u32,
 }
 
 impl GuardedHost {
@@ -532,12 +543,29 @@ impl GuardedHost {
         events: Rc<RefCell<Vec<String>>>,
         mem: &MemoryClipboard,
     ) -> Self {
+        Self::build(dirty, with_hook, keep_running, false, events, mem)
+    }
+
+    /// With `App::on_close_guard` holding the close until its `ask` ran once.
+    fn guarded(dirty: bool, with_hook: bool, events: Rc<RefCell<Vec<String>>>, mem: &MemoryClipboard) -> Self {
+        Self::build(dirty, with_hook, false, true, events, mem)
+    }
+
+    fn build(
+        dirty: bool,
+        with_hook: bool,
+        keep_running: bool,
+        guard_on: bool,
+        events: Rc<RefCell<Vec<String>>>,
+        mem: &MemoryClipboard,
+    ) -> Self {
         let mut rt = Runtime::new(
             CloseRequestState {
                 events: events.clone(),
                 dirty,
                 prompt_open: false,
                 defer_count: 0,
+                guard_on,
                 copy_on_defer: Some("unsaved-draft"),
                 title_on_defer: Some("Save changes?"),
             },
@@ -546,9 +574,11 @@ impl GuardedHost {
             Env::default(),
         );
         rt.frame(0.0);
-        let app = test_app_with_close_request(
+        let guard = guard_on.then_some(CloseGuard { guarded: guard_is_on as fn(&CloseRequestState) -> bool, ask: guard_asks });
+        let app = test_app_with_close_guard(
             rt,
             with_hook.then_some(on_close_request_guard as fn(&mut CloseRequestState, &mut Tx) -> crate::CloseResponse),
+            guard,
             Some(on_close_guard),
             Some(on_quit_guard),
         );
@@ -568,6 +598,7 @@ impl GuardedHost {
             ends_app: false,
             redraws: 0,
             hides: 0,
+            holds: 0,
         }
     }
 
@@ -605,6 +636,12 @@ impl GuardedHost {
     }
 
     fn close(&mut self) {
+        // As `Host::close`: a guarded window asks first and stays.
+        if self.life.closes(self.keep_running, true) && self.app.hold_close() {
+            self.ends_app = false;
+            self.holds += 1;
+            return;
+        }
         self.first_frame.hide();
         if !self.life.closes(self.keep_running, true) { return; }
         let _ = std::mem::take(&mut self.ends_app);
@@ -690,6 +727,40 @@ fn close_request_defer_keeps_window_open_commits_tx_and_programmatic_close_bypas
     let mut quit_state = QuitState::Running;
     assert!(cleanup_hosts(&mut hosts, &mut display_close, true, false, false, step_quit(&mut quit_state)));
     assert_eq!(*events.borrow(), vec!["on_close", "on_quit", "main:on_display_close"]);
+}
+
+#[test]
+fn close_guard_asks_after_on_close_request_and_before_on_close_and_a_defer_stands_alone() {
+    let mem = crate::clipboard::memory();
+
+    // A deferred request never reaches the guard.
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let mut host = GuardedHost::guarded(true, true, events.clone(), &mem);
+    assert_eq!(host.close_requested(false), CloseDecision::Defer);
+    assert_eq!(*events.borrow(), vec!["on_close_request"]);
+    assert_eq!(host.holds, 0);
+
+    // A request that lets go asks the guard, which holds; the second request, after the answer, closes.
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let mut host = GuardedHost::guarded(false, true, events.clone(), &mem);
+    host.ends_app = true;
+    assert_eq!(host.close_requested(false), CloseDecision::Close);
+    assert_eq!(*events.borrow(), vec!["on_close_request", "ask"], "the guard holds the close and no on_close runs");
+    assert!(host.life.shown() && !host.life.finished());
+    assert!(!host.ends_app, "a held close must not leave a stale fast exit behind");
+    assert_eq!(host.holds, 1);
+    assert_eq!(host.hides, 0);
+    assert!(host.first_frame.revealing(), "a held close leaves FirstFrame alone");
+    assert_eq!(host.close_requested(false), CloseDecision::Close);
+    assert_eq!(*events.borrow(), vec!["on_close_request", "ask", "on_close_request", "on_close"]);
+    assert!(host.life.finished());
+
+    // A programmatic close skips on_close_request and meets the guard all the same.
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let mut host = GuardedHost::guarded(false, true, events.clone(), &mem);
+    host.close();
+    host.close();
+    assert_eq!(*events.borrow(), vec!["ask", "on_close"]);
 }
 
 #[test]

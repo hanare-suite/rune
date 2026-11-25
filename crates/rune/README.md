@@ -876,7 +876,7 @@ app.run();
   `CloseResponse::Close` proceeds to close as usual. Programmatic close (`Tx::close_window`,
   `AppHandle::close`, `WindowHandle::close`), quit/relaunch, teardown, and an already-exiting loop
   bypass `on_close_request`, and apps without the hook behave as before. Headless scripts deliver
-  it with `{"close_request": true}`.
+  it with `{"close_request": true}`; a `Close` goes on to `App::on_close_guard`.
 - `App::on_window(|w: &WindowHandle| ..)` runs on the UI thread after every native creation, for
   icons, native styles, or display-bound protocol objects through `WindowHandle::with_raw_handle`
   and `WindowHandle::with_raw_display_handle`. Pair `with_raw_display_handle` with
@@ -3628,9 +3628,11 @@ $L --desktop examples/launcher/backdrop.png --script examples/launcher/scripts/d
   `{"reopen": true}` reopens the app, as a click on its Dock icon (see "App lifetime").
   `{"open_url": "myapp://…"}` hands `App::on_open_url` a link, as the system does when a link
   opens the app.
-  `{"close": true}` presses the window's close button in a single window's run. A guarded
-  window (`App::on_close_guard`) asks and stays; once the window closes,
-  by the button or `Tx::close_window`, `--tree` carries `"closed": true` (the frames go on).
+  `{"close": true}` presses the window's close button in a single window's run, as a user's close
+  request goes: `App::on_close_request`, then the guard (`App::on_close_guard`), then `on_close`.
+  A guarded window asks and stays; once the window closes, by the button, `{"close_request": true}`
+  or `Tx::close_window` (the guard, then `on_close`), `--tree` carries `"closed": true` (the
+  frames go on).
   `{"open_files": ["a.torrent", "b.torrent"]}` hands `App::on_open_files` a batch of file paths,
   as the system does when files open with the app on macOS.
   `menu-pick` (with an `id`) and `menu-cancel` answer an open pop-up menu, `file-dialog` (with

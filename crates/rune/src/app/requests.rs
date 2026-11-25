@@ -231,6 +231,8 @@ pub(crate) struct Shared<S> {
     pub(crate) menus: crate::native_menu::Hub<S>,
     pub(crate) shortcuts: crate::shortcuts::Hub<S>,
     updates: Mutex<Vec<Update<S>>>,
+    /// `App::on_close_guard`.
+    pub(crate) close_guard: crate::close_guard::Slot<S>,
 }
 
 impl<S> Default for Shared<S> {
@@ -240,6 +242,7 @@ impl<S> Default for Shared<S> {
             menus: crate::native_menu::Hub::default(),
             shortcuts: crate::shortcuts::Hub::default(),
             updates: Mutex::default(),
+            close_guard: Default::default(),
         }
     }
 }

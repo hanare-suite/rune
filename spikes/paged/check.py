@@ -6,7 +6,7 @@
     python3 spikes/paged/check.py [--bin target/perf/paged] [--only name,name]
 
 Every check writes the script it ran to `scripts/`, a screenshot and the facts it read from the
-element tree to `evidence/`, and prints PASS or FAIL. Exits 1 when a check fails.
+element tree to `out/` (ignored by git), and prints PASS or FAIL. Exits 1 when a check fails.
 """
 import json, os, re, struct, subprocess, sys, tempfile, zlib
 
@@ -15,13 +15,13 @@ ROOT = os.path.dirname(os.path.dirname(HERE))
 BIN = sys.argv[sys.argv.index("--bin") + 1] if "--bin" in sys.argv else os.path.join(ROOT, "target/perf/paged")
 PERF = os.path.join(os.path.dirname(BIN), "paged-perf")
 ONLY = sys.argv[sys.argv.index("--only") + 1].split(",") if "--only" in sys.argv else None
-SCRIPTS, EVIDENCE = os.path.join(HERE, "scripts"), os.path.join(HERE, "evidence")
+SCRIPTS, EVIDENCE = os.path.join(HERE, "scripts"), os.path.join(HERE, "out")
 MARGIN, CONTENT_W, CONTENT_H, STRIDE, LINE = 71.0, 453.0, 700.0, 858.0, 14.0
 ATOM, ATOM_H = "Tabelle – in dieser Version nicht bearbeitbar", 120.0
 failed = []
 
 
-def run(name, events, at, snap=None, env=None):
+def run(name, events, at, snap=None, env=None, scale=None):
     """The element tree at mark `at` of `events`, and a screenshot there when `snap` names one."""
     script = os.path.join(SCRIPTS, name + ".json")
     with open(script, "w") as f:
@@ -30,7 +30,7 @@ def run(name, events, at, snap=None, env=None):
     with tempfile.TemporaryDirectory() as tmp:
         tree = os.path.join(tmp, "tree.json")
         png = os.path.join(EVIDENCE, snap) if snap else os.path.join(tmp, "snap.png")
-        cmd = [BIN, "--script", script, "--tree", tree, "--snap", png, "--at", "mark:" + at]
+        cmd = [BIN, "--script", script, "--tree", tree, "--snap", png, "--at", "mark:" + at] + (["--scale", str(scale)] if scale else [])
         out = subprocess.run(cmd, capture_output=True, text=True, env={**os.environ, "PAGED_FACTS": "1", **(env or {})})
         if out.returncode != 0:
             sys.exit(f"{' '.join(cmd)}\n{out.stdout}{out.stderr}")
@@ -227,6 +227,18 @@ def forced_break():
           and f["break"] == "true" and f["block"] == "paragraph")
     check("forced-break", ok, {"heading_caret": h, "heading_paragraph": {k: f[k] for k in ("style", "break", "block")},
                                "end_of_paragraph_before": p, "room_left_on_its_page": round(CONTENT_H - p["y_on_page"] - LINE, 2)})
+
+
+def fractional_scale():
+    # At 1.25, 700 points are 875 px and the 158 points between pages 197.5 px: a layout that rounds the
+    # gap adds 0.5 px a page, and by page 45 its text sits 18 points below the sheet's top margin.
+    env = {"PAGED_CARET": "Kapitel 6:"}
+    events = [key(0.2, "Right"), key(0.4, "Left"), mark(1.2, "heading")]
+    h = caret(run("fractional-scale", events, "heading", env=env, scale=1.25))
+    page = round(h["y"] / STRIDE)
+    off = h["y"] - page * STRIDE
+    ok = page >= 40 and abs(off) <= 0.5
+    check("fractional-scale", ok, {"scale": 1.25, "heading_caret": h, "page_index": page, "points_off_its_sheets_top_margin": round(off, 2)})
 
 
 def ime():
@@ -660,7 +672,7 @@ def pages_same_frame():
     check("pages-same-frame", ok, v)
 
 
-CHECKS = {"open": pages, "arrows": arrows, "tap": tap, "drag": drag, "typing": typing, "forced-break": forced_break, "ime-headless": ime,
+CHECKS = {"open": pages, "arrows": arrows, "tap": tap, "drag": drag, "typing": typing, "forced-break": forced_break, "fractional-scale": fractional_scale, "ime-headless": ime,
           "marks-family": marks_family, "marks-highlight": marks_highlight, "marks-baseline": marks_baseline,
           "attrs-align": attrs_align, "attrs-indent": attrs_indent, "attrs-split-merge": attrs_split_merge,
           "page-rules": page_rules, "atoms": atoms, "paste-over-atom": paste_over_atom, "paste-at-atom": paste_at_atom,
