@@ -473,3 +473,50 @@ fn undo_and_redo_give_back_the_ids_of_a_paste_and_a_return_at_a_lines_start() {
         assert_eq!((e.text.clone(), e.paragraph_attrs().to_vec()), (done, done_attrs));
     }
 }
+
+// A selection that starts at a line's start gives way to the text, which goes before what is
+// left of the line: the line keeps its id, attributes and block.
+
+#[test]
+fn text_over_a_selection_at_a_lines_start_goes_before_what_is_left_of_the_line() {
+    let select = |e: &mut TextEdit| e.set_selection(4, 5);
+    let want = vec![plain_row("A"), kept_row("BYZ", None, bullet())];
+    let edits: [(&str, fn(&mut TextEdit)); 4] = [
+        ("paste", |e| { e.set_selection(4, 5); e.paste("A\nB"); }),
+        ("insert", |e| { e.set_selection(4, 5); e.insert("A\nB"); }),
+        ("paste_html without marks", |e| { e.set_selection(4, 5); e.paste_html("<p>A</p><p>B</p>", "A\nB"); }),
+        ("paste_html with marks", |e| { e.set_selection(4, 5); e.paste_html("<p><b>A</b></p><p>B</p>", "A\nB"); }),
+    ];
+    for (name, edit) in edits {
+        let got = at_start(start_field("XYZ", false), edit);
+        assert_eq!(got, want, "{name}");
+    }
+    let got = at_start(start_field("XYZ", false), |e| { select(e); e.key(&enter(), None); });
+    assert_eq!(got, vec![above("", false), kept_row("YZ", None, bullet())]);
+}
+
+#[test]
+fn undo_and_redo_give_back_the_ids_of_text_over_a_selection_at_a_lines_start() {
+    let mut e = start_field("XYZ", false);
+    e.set_history(true);
+    e.set_selection(4, 5);
+    let (text, attrs) = (e.text.clone(), e.paragraph_attrs().to_vec());
+    e.paste("A\nB");
+    let (done, done_attrs) = (e.text.clone(), e.paragraph_attrs().to_vec());
+    e.undo();
+    assert_eq!((e.text.clone(), e.paragraph_attrs().to_vec()), (text, attrs));
+    e.redo();
+    assert_eq!((e.text.clone(), e.paragraph_attrs().to_vec()), (done, done_attrs));
+}
+
+#[test]
+fn a_fragment_ending_in_a_break_pasted_in_a_list_item_leaves_the_tail_in_the_list() {
+    let mut e = start_field("XYZ", false);
+    reported(&mut e, |e| {
+        e.set_caret(5);
+        e.paste_fragment(start_fragment("A\n", false), "");
+    });
+    let got = rows(&e);
+    assert_eq!((got[1].0.as_str(), got[1].1, got[1].6), ("XA", 2, bullet()), "{got:?}");
+    assert_eq!((got[2].0.as_str(), got[2].6), ("YZ", bullet()), "{got:?}");
+}
