@@ -372,7 +372,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         .on_input_key(|s: &mut State, k, _: &mut Tx| s.key(k))
         .on_input_edits(|s: &mut State, changes, _: &mut Tx| s.changed(changes));
     let sheets = (0..pages).map(|i| {
-        el().key(format!("page{}", i + 1)).size(PAGE.0, PAGE.1).fill(Color::WHITE).absolute(0.0, i as f32 * (PAGE.1 + DESK))
+        el().key(format!("page{}", i + 1)).size(PAGE.0, PAGE.1).fill(Color::WHITE).absolute(0.0, flow().page_top(i))
     });
     let paper = el().key("paper").size(PAGE.0, pages as f32 * (PAGE.1 + DESK) - DESK).children(sheets).child(field);
     let small = TextStyle::new(12.0, 400.0);

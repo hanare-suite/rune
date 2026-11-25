@@ -113,7 +113,7 @@ impl Shape {
             (None, ParagraphAlign::Right) => Alignment::Right,
             (None, ParagraphAlign::Justified) => Alignment::Justify,
         };
-        Shape { align, indent: [(attrs.indent * scale).round(), (attrs.first_line_indent * scale).round()], atom: attrs.atom.map(|h| (h * scale).round()) }
+        Shape { align, indent: attrs.indent_px(scale), atom: attrs.atom.map(|h| (h * scale).round()) }
     }
 
     pub(super) fn indented(self) -> bool {
@@ -206,7 +206,11 @@ fn place(pager: &Pager<'_>, y: f64, first: bool, own: &Own, height: f32, lines: 
     let mut page = p.index(y);
     if forced && y > p.top_of(page) { page += 1; y = p.top_of(page); }
     let flowed = y == p.top_of(page) && !forced && !first;
-    let mut top = if flowed { y } else { y + own.before };
+    // A paragraph that starts its page, with the room above it or without: its first line can't
+    // move off that page, or the page would stand blank.
+    let (opened, start_page) = (forced || first || flowed, page);
+    // The paragraph is drawn at whole pixels (`top.round()`), so it is fitted there too.
+    let mut top = if flowed { y } else { (y + own.before).round() };
     let mut bottom = p.bottom_of(page);
     if top + f64::from(height) <= bottom {
         return Spot { top, gaps: Vec::new() };
@@ -221,7 +225,8 @@ fn place(pager: &Pager<'_>, y: f64, first: bool, own: &Own, height: f32, lines: 
         let line_top = |k: usize, top: f64, shift: f64| top + shift + f64::from(lines[k].0);
         let line_bottom = top + shift + f64::from(lines[i].1);
         // A line alone on its page stays there, however tall.
-        if line_bottom <= bottom || line_top(i, top, shift) <= p.top_of(page) {
+        let pinned = |k: usize, page: usize| k == 0 && opened && page == start_page;
+        if line_bottom <= bottom || line_top(i, top, shift) <= p.top_of(page) || pinned(i, page) {
             i += 1;
             continue;
         }
@@ -230,7 +235,7 @@ fn place(pager: &Pager<'_>, y: f64, first: bool, own: &Own, height: f32, lines: 
             if j + 1 == n && j >= 2 { j -= 1; }
             if j == 1 && page_first == 0 { j = 0; }
             // A line already at its page's top can't move further.
-            if j < i && (j < page_first || line_top(j, top, shift) <= p.top_of(page)) { j = i; }
+            if j < i && (j < page_first || line_top(j, top, shift) <= p.top_of(page) || pinned(j, page)) { j = i; }
         }
         // The next page's top, or the first one below a line so tall it ran past that: a line
         // never moves up over the one before it.
@@ -244,7 +249,7 @@ fn place(pager: &Pager<'_>, y: f64, first: bool, own: &Own, height: f32, lines: 
             }
         }
         if j == 0 {
-            top = next - f64::from(lines[0].0);
+            top = (next - f64::from(lines[0].0)).round();
         } else {
             let gap = next - line_top(j, top, shift);
             gaps.push((j as u32, gap as f32));

@@ -8,7 +8,7 @@
 Every check writes the script it ran to `scripts/`, a screenshot and the facts it read from the
 element tree to `out/` (ignored by git), and prints PASS or FAIL. Exits 1 when a check fails.
 """
-import json, os, re, struct, subprocess, sys, tempfile, zlib
+import json, math, os, re, struct, subprocess, sys, tempfile, zlib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
@@ -237,8 +237,29 @@ def fractional_scale():
     h = caret(run("fractional-scale", events, "heading", env=env, scale=1.25))
     page = round(h["y"] / STRIDE)
     off = h["y"] - page * STRIDE
-    ok = page >= 40 and abs(off) <= 0.5
+    ok = page >= 40 and abs(off) <= 0.5 / 1.25
     check("fractional-scale", ok, {"scale": 1.25, "heading_caret": h, "page_index": page, "points_off_its_sheets_top_margin": round(off, 2)})
+
+
+def fractional_flow():
+    # At 1.25 the text is drawn at whole device px, so a line that starts a page sits at that page's top rounded
+    # to a device px (page 2's is 1073 px, page 3's 2145), not half a pixel or a pixel off it, and the last line
+    # of page 1 ends within its page. The tolerance is a hundredth of a point, not a half pixel (0.4 points).
+    scale, tol = 1.25, 0.01
+    # With widow and orphan control off (`PAGED_KEEP=0`), as the document this check counts lines in was set.
+    env = {"PAGED_KEEP": "0"}
+    top = lambda page: math.floor(page * STRIDE * scale + 0.5) / scale
+    events = [{"t": 0.2, "type": "tap", "x": 300, "y": 785}, mark(0.6, "last-line"), key(0.7, "Down"), mark(1.4, "down")]
+    a = caret(run("fractional-flow", events, "last-line", env=env, scale=scale))
+    b = caret(run("fractional-flow", events, "down", env=env, scale=scale))
+    # From the top of page 1 down to the first line of page 3: 83 presses of Down.
+    downs = [{"t": 0.2, "type": "tap", "x": 300, "y": 100}] + [key(0.4 + 0.1 * i, "Down") for i in range(83)] + [mark(9.4, "page-3")]
+    c = caret(run("fractional-flow-page-3", downs, "page-3", env=env, scale=scale))
+    bottom = a["y_on_page"] + a["window"][3]
+    ok = (a["page"] == 1 and bottom <= CONTENT_H + tol and CONTENT_H - bottom < a["window"][3]
+          and b["page"] == 2 and abs(b["y"] - top(1)) <= tol and c["page"] == 3 and abs(c["y"] - top(2)) <= tol)
+    check("fractional-flow", ok, {"scale": scale, "last_line_of_page_1": a, "its_bottom_on_the_page": round(bottom, 2), "first_line_of_page_2": b,
+                                  "first_line_of_page_3": c, "page_2_top": top(1), "page_3_top": top(2)})
 
 
 def ime():
@@ -683,7 +704,7 @@ def pages_same_frame():
     check("pages-same-frame", ok, v)
 
 
-CHECKS = {"open": pages, "arrows": arrows, "tap": tap, "drag": drag, "typing": typing, "forced-break": forced_break, "fractional-scale": fractional_scale, "ime-headless": ime,
+CHECKS = {"open": pages, "arrows": arrows, "tap": tap, "drag": drag, "typing": typing, "forced-break": forced_break, "fractional-scale": fractional_scale, "fractional-flow": fractional_flow, "ime-headless": ime,
           "marks-family": marks_family, "marks-highlight": marks_highlight, "marks-baseline": marks_baseline,
           "attrs-align": attrs_align, "attrs-indent": attrs_indent, "attrs-split-merge": attrs_split_merge,
           "page-rules": page_rules, "atoms": atoms, "paste-over-atom": paste_over_atom, "paste-at-atom": paste_at_atom,

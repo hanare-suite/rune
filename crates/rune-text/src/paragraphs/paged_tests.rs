@@ -73,3 +73,32 @@ fn no_gap_is_negative_and_a_line_that_fits_a_page_stays_on_one() {
         }
     }
 }
+
+#[test]
+fn a_paragraph_that_starts_its_page_with_room_above_it_stays_on_it() {
+    let before = |page_break| Own { before: 20.0, after: 0.0, page_break };
+    for keep in [true, false] {
+        // A 90 px atom after a page break, behind room above it: it opens page 2 and does not
+        // fit what is left of it, but moving on would leave that page blank.
+        let atom = vec![(0.0, 90.0)];
+        let placed = place(&pages(100.0, 10.0, keep, 95.0), 95.0, false, &before(true), 90.0, || atom.clone());
+        assert_eq!((placed.top, placed.gaps.as_slice()), (130.0, &[][..]), "keep {keep}: forced break");
+
+        // The field's first paragraph, with room above it, taller than its page.
+        let placed = place(&pages(100.0, 10.0, keep, 0.0), 0.0, true, &before(false), 90.0, || atom.clone());
+        assert_eq!((placed.top, placed.gaps.as_slice()), (20.0, &[][..]), "keep {keep}: first paragraph");
+
+        // Two lines, the second past the page's end: the paragraph is not moved off its page as
+        // a whole, only the line that doesn't fit.
+        let lines = vec![(0.0, 60.0), (60.0, 120.0)];
+        let placed = place(&pages(100.0, 10.0, keep, 0.0), 0.0, true, &before(false), 120.0, || lines.clone());
+        assert_eq!((placed.top, placed.gaps.as_slice()), (20.0, &[(1, 30.0)][..]), "keep {keep}: first paragraph, two lines");
+    }
+}
+
+#[test]
+fn a_plain_tall_first_paragraph_stays_on_the_first_page() {
+    let atom = vec![(0.0, 150.0)];
+    let placed = place(&pages(100.0, 10.0, true, 0.0), 0.0, true, &bare(), 150.0, || atom.clone());
+    assert_eq!((placed.top, placed.gaps.as_slice()), (0.0, &[][..]));
+}

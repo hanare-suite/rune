@@ -72,8 +72,6 @@ pub(in crate::runtime) fn emit_block_decorations(
             instances.push(rect_inst(r, border, 0.0, clip, fade));
         }
     };
-    // What a paragraph's own indents add to its block's, at its first line.
-    let own_indent = |k: usize| spec.cold.attrs.get(k).map_or(0.0, |a| ((a.indent + a.first_line_indent) * s).round());
 
     let mut had_lines = false;
     for line in layout.block_lines(spec.style.line_px() * s) {
@@ -117,7 +115,7 @@ pub(in crate::runtime) fn emit_block_decorations(
                     }
                     list_counts[l] = 0;
                     if !is_soft {
-                        let indent = (blk.indent_pt(spec.style.size) * s).round() + own_indent(para_idx);
+                        let indent = marker_x((blk.indent_pt(spec.style.size) * s).round(), spec.cold.attrs.get(para_idx), s);
                         markers.push((indent, baseline, blk, 0));
                     }
                 }
@@ -128,7 +126,7 @@ pub(in crate::runtime) fn emit_block_decorations(
                     }
                     if !is_soft {
                         list_counts[l] += 1;
-                        let indent = (blk.indent_pt(spec.style.size) * s).round() + own_indent(para_idx);
+                        let indent = marker_x((blk.indent_pt(spec.style.size) * s).round(), spec.cold.attrs.get(para_idx), s);
                         markers.push((indent, baseline, blk, list_counts[l]));
                     }
                 }
@@ -433,3 +431,13 @@ pub(in crate::runtime) fn push_spelling_marker(out: &mut Vec<Instance>, x0: f32,
         rect_inst([start + n as f32, (y + wave * k).round(), 1.0, t], color, 0.0, clip, fade)
     }));
 }
+
+/// Where a list marker's line starts, in device px: its block's indent and what its paragraph's
+/// own indents add at the first line, as layout rounds and clamps them.
+fn marker_x(block: f32, attrs: Option<&crate::ParagraphAttrs>, scale: f32) -> f32 {
+    (block + attrs.map_or(0.0, |a| a.indent_px(scale).iter().sum::<f32>())).max(0.0)
+}
+
+#[cfg(test)]
+#[path = "helpers_tests.rs"]
+mod tests;

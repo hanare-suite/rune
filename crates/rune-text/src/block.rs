@@ -35,7 +35,8 @@ pub struct ParagraphStyle {
 
 impl std::hash::Hash for ParagraphStyle {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        (self.text, self.space_before.to_bits(), self.space_after.to_bits()).hash(state);
+        // `-0.0 + 0.0` is `0.0`, so equal spaces hash alike.
+        (self.text, (self.space_before + 0.0).to_bits(), (self.space_after + 0.0).to_bits()).hash(state);
     }
 }
 
@@ -86,6 +87,13 @@ pub struct ParagraphAttrs {
 }
 
 impl ParagraphAttrs {
+    /// Its left and first-line indents in device px at `scale`, each rounded on its own: what
+    /// layout starts the lines at, and so where a list marker goes.
+    #[doc(hidden)]
+    pub fn indent_px(&self, scale: f32) -> [f32; 2] {
+        [(self.indent * scale).round(), (self.first_line_indent * scale).round()]
+    }
+
     pub fn style(mut self, style: u16) -> Self {
         self.style = style;
         self
