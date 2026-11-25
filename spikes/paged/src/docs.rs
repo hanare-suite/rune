@@ -51,8 +51,8 @@ impl Rng {
     }
 }
 
-fn red() -> MarkColor {
-    MarkColor::new(hex("#b3261e").unwrap_or(rune::Color::WHITE))
+fn red() -> String {
+    "#b3261e".into()
 }
 
 fn yellow() -> MarkColor {

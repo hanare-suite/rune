@@ -5,9 +5,9 @@
 //! colour, the atlas generation for glyphs and the image texels images sample.
 
 use super::Scene;
-use super::bin::{Bins, Solid, TILE_H, TILE_W, covers, interior};
+use super::bin::{Bins, Show, Solid, TILE_H, TILE_W, covers, interior};
 use super::shade::Clip;
-use crate::render::{KIND_GLYPH, KIND_IMAGE, KIND_LAYER, KIND_LAYER_END, KIND_RECT};
+use crate::render::{INSTANCE_WORDS, Kind};
 
 /// FxHash's step, word by word.
 #[inline]
@@ -17,6 +17,12 @@ fn mix(h: u64, w: u64) -> u64 { (h.rotate_left(5) ^ w).wrapping_mul(0x517c_c1b7_
 pub(super) fn hashes(scene: &Scene<'_>, bins: &Bins, each: &mut Vec<u64>, out: &mut Vec<u64>) {
     each.clear();
     each.extend((0..scene.instances.len()).map(|n| instance(scene, bins, n)));
+    // A turned layer's contents draw only through its end (`raster::turn`): its end stands for
+    // all of them.
+    for l in bins.layers.iter().filter(|l| l.turn.is_some() && l.show == Show::Render) {
+        let end = l.end as usize;
+        each[end] = each[l.begin as usize..end].iter().fold(each[end], |h, &w| mix(h, w));
+    }
     let flat: Vec<(u32, Flat)> = (0..scene.instances.len()).filter_map(|n| flat(&scene.instances[n]).map(|f| (n as u32, f))).collect();
     out.clear();
     out.extend((0..bins.tile_count()).map(|t| tile(scene, bins, each, t, |n| flat.binary_search_by_key(&n, |f| f.0).ok().map(|k| &flat[k].1))));
@@ -32,21 +38,26 @@ pub(super) fn rehash(scene: &Scene<'_>, bins: &Bins, each: &[u64], t: usize) -> 
 /// atlas's evictions for a glyph, an image's texels).
 pub(super) fn instance(scene: &Scene<'_>, bins: &Bins, n: usize) -> u64 {
     let i = &scene.instances[n];
-    let words: &[u32; 32] = bytemuck::cast_ref(i);
+    let words: &[u32; INSTANCE_WORDS] = bytemuck::cast_ref(i);
     let mut h = 0;
     for w in words.chunks_exact(2) { h = mix(h, u64::from(w[0]) | u64::from(w[1]) << 32); }
-    let kind = i.params[1];
-    if kind == KIND_LAYER || kind == KIND_LAYER_END {
-        if let Some(&p) = bins.scope.get(&(n as u32)) {
-            let l = &bins.layers[p as usize];
-            let b = l.bounds;
-            h = mix(mix(h, (b[0] as u32 as u64) | (b[1] as u32 as u64) << 32), (b[2] as u32 as u64) | (b[3] as u32 as u64) << 32);
-            h = mix(h, l.show as u64);
+    let b = bins.bounds[n];
+    h = mix(mix(h, (b[0] as u32 as u64) | (b[1] as u32 as u64) << 32), (b[2] as u32 as u64) | (b[3] as u32 as u64) << 32);
+    match i.kind() {
+        Some(Kind::Layer | Kind::LayerEnd) => {
+            if let Some(&p) = bins.scope.get(&(n as u32)) {
+                let l = &bins.layers[p as usize];
+                let b = l.bounds;
+                h = mix(mix(h, (b[0] as u32 as u64) | (b[1] as u32 as u64) << 32), (b[2] as u32 as u64) | (b[3] as u32 as u64) << 32);
+                h = mix(h, l.show as u64);
+            }
         }
-    } else if kind == KIND_GLYPH {
-        h = mix(h, scene.atlas_resets);
-    } else if kind == KIND_IMAGE {
-        h = image(scene, i, h);
+        Some(Kind::Glyph) => { h = mix(h, scene.atlas_resets); }
+        Some(Kind::Image) => { h = image(scene, i, h); }
+        Some(
+            Kind::Rect | Kind::Shadow | Kind::Inset | Kind::Gradient | Kind::Segment
+            | Kind::Triangle | Kind::Dashed | Kind::Radial | Kind::Effect | Kind::BackdropBlur,
+        ) | None => {}
     }
     h
 }
@@ -64,7 +75,7 @@ pub(super) struct Flat {
 }
 
 fn flat(i: &crate::render::Instance) -> Option<Flat> {
-    if i.params[1] != KIND_RECT || i.rect[2] < TILE_W as f32 || i.rect[3] < TILE_H as f32 { return None; }
+    if i.kind() != Some(Kind::Rect) || i.rect[2] < TILE_W as f32 || i.rect[3] < TILE_H as f32 { return None; }
     let solid = interior(i)?;
     let clip = Clip::of(i);
     let fill: &[u32; 4] = bytemuck::cast_ref(&i.fill);
@@ -89,12 +100,16 @@ fn tile<'f>(scene: &Scene<'_>, bins: &Bins, each: &[u64], t: usize, flat_of: imp
     let r = [(tx * TILE_W) as f32, (ty * TILE_H) as f32, ((tx + 1) * TILE_W).min(w) as f32, ((ty + 1) * TILE_H).min(h) as f32];
     for &n in bins.tile(t) {
         let token = match flat_of(n) {
-            Some(f) if inside(r, f.sure) || covers(Some(&f.solid), &f.clip, r) => f.token,
+            Some(f) if bounds_cover(bins.bounds[n as usize], r) && (inside(r, f.sure) || covers(Some(&f.solid), &f.clip, r)) => f.token,
             _ => each[n as usize],
         };
         hash = mix(hash, token);
     }
     hash
+}
+
+fn bounds_cover(b: [i32; 4], r: [f32; 4]) -> bool {
+    (b[0] as f32) <= r[0] && (b[1] as f32) <= r[1] && (b[2] as f32) >= r[2] && (b[3] as f32) >= r[3]
 }
 
 fn inside(r: [f32; 4], o: [f32; 4]) -> bool { r[0] >= o[0] && r[1] >= o[1] && r[2] <= o[2] && r[3] <= o[3] }

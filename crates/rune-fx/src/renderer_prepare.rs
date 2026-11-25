@@ -24,9 +24,9 @@ impl FxRenderer {
         let vw = frame.viewport[0] as f32;
         let vh = frame.viewport[1] as f32;
         self.viewport = frame.viewport;
-        self.blur_slot = 0;
+        self.blur_weights.clear();
         let wants_blur = |l: &FxLayer| match l.fx {
-            Fx::Distort(DistortParams::Lens(p)) => p.frost > 0.0,
+            Fx::Distort(DistortParams::Lens(p)) => p.frost_blur_pt() > 0.0,
             Fx::Fill(FillParams { style: FillStyle::FlutedGlass(p), .. }) => p.frost > 0.0,
             _ => false,
         };
@@ -76,7 +76,7 @@ impl FxRenderer {
             let needs_bd = layer.fx.needs_backdrop() || slot.blend.needs_backdrop();
             stats.needs_backdrop |= needs_bd;
             let blur_px = match layer.fx {
-                Fx::Distort(DistortParams::Lens(p)) => (p.frost.clamp(0.0, 1.0) * LENS_FROST_SIGMA * s).max(0.0),
+                Fx::Distort(DistortParams::Lens(p)) => (p.frost_blur_pt() * s).max(0.0),
                 Fx::Fill(FillParams { style: FillStyle::FlutedGlass(p), .. }) => (p.frost.clamp(0.0, 1.0) * LENS_FROST_SIGMA * s).max(0.0),
                 _ => 0.0,
             };
@@ -97,16 +97,8 @@ impl FxRenderer {
             self.scratch.push(inst);
         }
         let mut regrow = self.bg0.is_none();
-        if self.scratch.len() > self.inst_cap {
-            self.inst_cap = self.scratch.len().next_power_of_two();
-            self.insts = Self::buffer(device, "fx insts", self.inst_cap * INST_SIZE);
-            regrow = true;
-        }
-        if self.scratch_xf.len() > self.xform_cap {
-            self.xform_cap = self.scratch_xf.len().next_power_of_two();
-            self.xforms = Self::buffer(device, "fx xforms", self.xform_cap * 16);
-            regrow = true;
-        }
+        regrow |= self.insts.ensure(device, self.scratch.len());
+        regrow |= self.xforms.ensure(device, self.scratch_xf.len());
         if regrow {
             self.bg0 = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("fx0"),
@@ -119,13 +111,24 @@ impl FxRenderer {
             }));
         }
         let staging = self.staging(device, queue);
-        staging.write_buffer(&self.insts, 0, bytemuck::cast_slice(&self.scratch));
-        staging.write_buffer(&self.xforms, 0, bytemuck::cast_slice(&self.scratch_xf));
-        let g = [vw, vh, if self.opts.dither { 1.0 } else { 0.0 }, if self.srgb.unwrap_or(false) { 1.0 } else { 0.0 }];
+        staging.write_buffer(self.insts.buffer(), 0, bytemuck::cast_slice(&self.scratch));
+        staging.write_buffer(self.xforms.buffer(), 0, bytemuck::cast_slice(&self.scratch_xf));
+        let g = Globals {
+            viewport: [vw, vh],
+            dither: if self.opts.dither { 1.0 } else { 0.0 },
+            srgb: if self.srgb.unwrap_or(false) { 1.0 } else { 0.0 },
+        };
         let written = &mut self.staging.as_mut().unwrap().1;
         if *written != g {
             *written = g;
-            staging.write_buffer(&self.globals, 0, bytemuck::cast_slice(&g));
+            staging.write_buffer(&self.globals, 0, bytemuck::bytes_of(&g));
+        }
+        if self.uploaded_fade_stops != self.fade_stops {
+            let stops = self.fade_stops;
+            for (buf, (encoded, present)) in self.backdrop_encoding.iter().zip([(0.0f32, 0.0f32), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0)]) {
+                staging.write_buffer(buf, 0, bytemuck::cast_slice(&[encoded, present, stops[0], stops[1]]));
+            }
+            self.uploaded_fade_stops = stops;
         }
         // Submitted now, ahead of the frame that draws them, as queue writes would be.
         staging.submit();
@@ -135,6 +138,7 @@ impl FxRenderer {
 
     /// The upload staging; its globals start unknown (NaN), so the first `prepare` writes them.
     pub(super) fn staging(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) -> rune_staging::Staging {
-        self.staging.get_or_insert_with(|| (rune_staging::Staging::new(device, queue), [f32::NAN; 4])).0.clone()
+        let nan = Globals { viewport: [f32::NAN; 2], dither: f32::NAN, srgb: f32::NAN };
+        self.staging.get_or_insert_with(|| (rune_staging::Staging::new(device, queue), nan)).0.clone()
     }
 }

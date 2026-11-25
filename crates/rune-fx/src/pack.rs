@@ -88,6 +88,26 @@ pub(crate) struct InstRaw {
     pub fade: [u32; 4],
 }
 
+const _: () = {
+    assert!(std::mem::size_of::<InstRaw>() == 256);
+    assert!(std::mem::offset_of!(InstRaw, rect) == 0);
+    assert!(std::mem::offset_of!(InstRaw, shape) == 16);
+    assert!(std::mem::offset_of!(InstRaw, bounds) == 32);
+    assert!(std::mem::offset_of!(InstRaw, c0) == 48);
+    assert!(std::mem::offset_of!(InstRaw, c1) == 64);
+    assert!(std::mem::offset_of!(InstRaw, c2) == 80);
+    assert!(std::mem::offset_of!(InstRaw, p0) == 96);
+    assert!(std::mem::offset_of!(InstRaw, p1) == 112);
+    assert!(std::mem::offset_of!(InstRaw, p2) == 128);
+    assert!(std::mem::offset_of!(InstRaw, p3) == 144);
+    assert!(std::mem::offset_of!(InstRaw, t) == 160);
+    assert!(std::mem::offset_of!(InstRaw, aux) == 176);
+    assert!(std::mem::offset_of!(InstRaw, aux2) == 192);
+    assert!(std::mem::offset_of!(InstRaw, xf) == 208);
+    assert!(std::mem::offset_of!(InstRaw, clip) == 224);
+    assert!(std::mem::offset_of!(InstRaw, fade) == 240);
+};
+
 const KIND_GLOW: usize = 0;
 const KIND_PULSE: usize = 1;
 const KIND_ELECTRIC: usize = 2;
@@ -98,8 +118,8 @@ const KIND_EXTRAS: usize = 6;
 pub(crate) const KIND_FILL: usize = 7;
 pub(crate) const KINDS: usize = 8;
 
-/// Blur sigma (pt) of a fully frosted lens (`LensParams::frost = 1`).
-pub(crate) const LENS_FROST_SIGMA: f32 = 18.0;
+/// Default blur sigma (pt) of a fully frosted lens (`LensParams::frost = 1`) and fluted glass.
+pub(crate) const LENS_FROST_SIGMA: f32 = LensParams::DEFAULT_FROST_SIGMA;
 
 /// Calm pose for looping noise effects under reduced motion: frozen at a fixed, pleasant time.
 pub(crate) const CALM_T: f32 = 2.37;
@@ -263,9 +283,11 @@ impl FxLayer {
                     }
                     DistortParams::Lens(l) => {
                         i.t[2] = 2.0;
-                        i.c0 = l.tint.v4();
+                        let veil = if l.veil.is_finite() { l.veil.clamp(0.0, 1.0) } else { 0.0 };
+                        let frost = if l.frost_blur_pt() > 0.0 { l.frost } else { 0.0 };
+                        i.c0 = [l.tint.0[0], l.tint.0[1], l.tint.0[2], veil];
                         i.p0 = [l.bevel, l.depth, l.dispersion, l.magnification];
-                        i.p1 = [l.presence.clamp(0.0, 1.0), l.frost, l.shadow, l.rim];
+                        i.p1 = [l.presence.clamp(0.0, 1.0), frost, l.shadow, l.rim];
                         let mut b = r;
                         if let Some(s2) = l.second {
                             i.p2 = [l.light_angle, l.tint_amount, l.union_k, s2.radius.min(s2.rect.w * 0.5).min(s2.rect.h * 0.5)];
