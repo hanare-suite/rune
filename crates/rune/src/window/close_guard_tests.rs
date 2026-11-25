@@ -66,6 +66,8 @@ struct Win {
     ends_app: bool,
     asked: bool,
     gone: Rc<std::cell::Cell<bool>>,
+    /// The window shows: a `keep_running` window that closed is hidden, not gone.
+    shown: Rc<std::cell::Cell<bool>>,
 }
 
 impl Win {
@@ -79,7 +81,7 @@ impl Win {
         clipboard.use_memory(mem);
         let mut life = Life::Unopened;
         life.show();
-        Self { app, clipboard, life, keeps_loop, ends_app: false, asked: false, gone: Rc::default() }
+        Self { app, clipboard, life, keeps_loop, ends_app: false, asked: false, gone: Rc::default(), shown: Rc::new(std::cell::Cell::new(true)) }
     }
 
     fn closes(&self) -> bool { self.life.closes(false, true) && !self.gone.get() }
@@ -98,8 +100,8 @@ impl AnyHost for Win {
     fn finished(&self) -> bool { self.life.finished() || self.gone.get() }
     fn keeps_loop(&self) -> bool { self.keeps_loop }
     fn hold_quit(&mut self, once: bool) -> bool {
-        let open = quit_asks(self.life, false) && !self.gone.get();
-        hold_quit_core(&mut *self.app, &mut self.clipboard, open, &mut self.ends_app, &mut self.asked, once) != Hold::No
+        let open = quit_asks(self.life) && !self.gone.get();
+        hold_quit_core(&mut *self.app, &mut self.clipboard, open, self.shown.get(), &mut self.ends_app, &mut self.asked, once) != Hold::No
     }
     fn terminate(&mut self) {
         if !self.closes() { return; }
@@ -229,9 +231,9 @@ fn a_hidden_keep_running_window_is_asked_by_a_quit() {
     let mut life = Life::Unopened;
     life.show();
     life.hide(crate::platform::reopen::stamp);
-    assert!(quit_asks(life, true), "its ask runs, and shows the window if the app wants it seen");
+    assert!(quit_asks(life), "its ask runs, and shows the window if the app wants it seen");
     life.finish();
-    assert!(!quit_asks(life, true));
+    assert!(!quit_asks(life));
 }
 
 #[test]
@@ -246,4 +248,50 @@ fn an_unguarded_secondary_closes_with_the_last_main_window_as_before() {
     let mut quit = QuitState::Running;
     assert!(cleanup_hosts(&mut hosts, &mut Vec::new(), true, false, false, step_quit(&mut quit)));
     assert_eq!(*log.borrow(), vec!["second:on_close"]);
+}
+
+#[test]
+fn a_keep_running_window_that_closed_after_the_app_end_question_no_longer_holds_the_app() {
+    let (log, mem) = events();
+    let mut main = Win::new("main", true, None, &log, &mem);
+    main.life.finish();
+    let second = Win::new("second", false, Some(Answer::Lower), &log, &mem);
+    let shown = second.shown.clone();
+    let mut hosts: Vec<Option<Box<dyn AnyHost>>> = vec![Some(Box::new(main)), Some(Box::new(second))];
+    let mut quit = QuitState::Running;
+    assert!(!cleanup_hosts(&mut hosts, &mut Vec::new(), true, false, false, step_quit(&mut quit)));
+    // Its guard is down and the window closes: a keep_running window hides, it does not finish.
+    shown.set(false);
+    assert!(cleanup_hosts(&mut hosts, &mut Vec::new(), true, false, false, step_quit(&mut quit)), "no invisible process");
+}
+
+#[test]
+fn a_hidden_keep_running_window_with_its_guard_up_is_asked_and_holds_the_app() {
+    let (log, mem) = events();
+    let mut main = Win::new("main", true, None, &log, &mem);
+    main.life.finish();
+    let second = Win::new("second", false, Some(Answer::Keep), &log, &mem);
+    second.shown.set(false);
+    let mut hosts: Vec<Option<Box<dyn AnyHost>>> = vec![Some(Box::new(main)), Some(Box::new(second))];
+    let mut quit = QuitState::Running;
+    assert!(hold_quit(&mut hosts, false), "a macOS Quit asks it");
+    assert!(!cleanup_hosts(&mut hosts, &mut Vec::new(), true, false, false, step_quit(&mut quit)), "and so does the app end");
+    assert_eq!(*log.borrow(), vec!["second:ask", "second:ask"]);
+}
+
+#[test]
+fn a_window_that_answers_by_closing_itself_ends_the_app_once_it_is_gone() {
+    let (log, mem) = events();
+    let mut main = Win::new("main", true, None, &log, &mem);
+    main.life.finish();
+    let mut second = Win::new("second", false, Some(Answer::LowerAndClose), &log, &mem);
+    // The app end asks; the answer lowered the guard and asked to close.
+    assert!(second.hold_quit(true));
+    assert_eq!(second.app.rt().shell_request, Some(crate::el::Shell::Close));
+    // The turn's end carries the close out and the window finishes.
+    assert!(!second.hold_close(false));
+    second.life.finish();
+    let mut hosts: Vec<Option<Box<dyn AnyHost>>> = vec![Some(Box::new(main)), Some(Box::new(second))];
+    let mut quit = QuitState::Running;
+    assert!(cleanup_hosts(&mut hosts, &mut Vec::new(), true, false, false, step_quit(&mut quit)), "the app ends in that turn");
 }
