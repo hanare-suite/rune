@@ -2,8 +2,27 @@
 //! toggling them, and list indentation.
 
 use super::*;
+use crate::model::MARK_KINDS;
 
 impl TextEdit {
+    /// Construct a [`TextEdit`] from plain text, inline [`MarkRange`]s, and per-line [`Block`]s.
+    /// Caret starts at the end of `text`. Ranges are clamped to char boundaries and canonicalized,
+    /// and `blocks` is padded or truncated to match the number of `\n`-separated lines in `text`.
+    /// Passing any [`Mark::Color`] or [`Mark::Size`] in `marks` enables text colours or sizes on
+    /// the returned field.
+    pub fn from_parts(text: impl Into<String>, marks: Vec<MarkRange>, blocks: Vec<Block>) -> TextEdit {
+        let mut edit = Self::new(text).rich();
+        let opted_in = marks.iter().filter(|m| matches!(m.mark, Mark::Color(_) | Mark::Size(_))).fold(0, |bits, m| bits | 1 << m.mark.kind_order());
+        if opted_in != 0 {
+            edit.allowed_marks = Some(Self::DEFAULT_ALLOWED_MARKS | opted_in);
+        }
+        edit.marks = marks;
+        edit.blocks = blocks;
+        edit.clamp_list_levels();
+        edit.sync_invariants();
+        edit
+    }
+
     /// Synchronize `blocks`, `soft_breaks`, and `marks` with `self.text`.
     #[doc(hidden)]
     pub fn sync_invariants(&mut self) {

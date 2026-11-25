@@ -98,7 +98,6 @@ pub use secure::MULTILINE_SECURE_MASK;
 pub use secure::Masking;
 
 use caret_motion::Column;
-use model::MARK_KINDS;
 use direction_keys::FieldDir;
 use history::{EditKind, EditedTag, Group};
 use replace::{count_newlines, prev_backspace};
@@ -300,30 +299,13 @@ impl TextEdit {
 
     /// The seven inline mark kinds allowed on a [`TextEdit`] by default (`Bold`, `Italic`,
     /// `Underline`, `Strike`, `Code`, `Link`, and `Pill`), excluding [`Mark::Color`] so pasted
-    /// browser or editor ink colours never enter a rich field unless the app opts in.
+    /// browser or editor ink colours never enter a rich field unless the app opts in, and
+    /// [`Mark::Size`], which the app opts into the same way.
     pub(crate) const DEFAULT_ALLOWED_MARKS: u16 =
         (1 << 0) | (1 << 1) | (1 << 2) | (1 << 3) | (1 << 4) | (1 << 5) | (1 << 6);
 
     pub(crate) fn effective_allowed_marks(&self) -> u16 {
         self.allowed_marks.unwrap_or(Self::DEFAULT_ALLOWED_MARKS)
-    }
-
-    /// Construct a [`TextEdit`] from plain text, inline [`MarkRange`]s, and per-line [`Block`]s.
-    /// Caret starts at the end of `text`. Ranges are clamped to char boundaries and canonicalized,
-    /// and `blocks` is padded or truncated to match the number of `\n`-separated lines in `text`.
-    /// Passing any [`Mark::Color`] or [`Mark::Size`] in `marks` enables text colours or sizes on
-    /// the returned field.
-    pub fn from_parts(text: impl Into<String>, marks: Vec<MarkRange>, blocks: Vec<Block>) -> TextEdit {
-        let mut edit = Self::new(text).rich();
-        let opted_in = marks.iter().filter(|m| matches!(m.mark, Mark::Color(_) | Mark::Size(_))).fold(0, |bits, m| bits | 1 << m.mark.kind_order());
-        if opted_in != 0 {
-            edit.allowed_marks = Some(Self::DEFAULT_ALLOWED_MARKS | opted_in);
-        }
-        edit.marks = marks;
-        edit.blocks = blocks;
-        edit.clamp_list_levels();
-        edit.sync_invariants();
-        edit
     }
 
     /// Internal constructor for `html::parse_html` that keeps parsed [`Mark::Color`] marks until
@@ -403,9 +385,10 @@ impl TextEdit {
     /// Kinds match by [`Mark::same_kind`], so any [`Mark::Link`] allows links and any
     /// [`Mark::Color`] allows colours. The field never
     /// holds a disallowed mark: marks it already has, or that `set_marks` adds, are dropped.
-    /// Every kind except [`Mark::Color`] is allowed by default (opt into colour with
-    /// [`allow_color`](Self::allow_color) or by including `Mark::Color(String::new())` here), and
-    /// [`Mark::Pill`] always is: pills are the app's own tokens, not formatting.
+    /// Every kind except [`Mark::Color`] and [`Mark::Size`] is allowed by default (opt into colour
+    /// with [`allow_color`](Self::allow_color) or by including `Mark::Color(String::new())` here,
+    /// and into sizes by including `Mark::Size(MarkSize::pt(1.0))`), and [`Mark::Pill`] always is:
+    /// pills are the app's own tokens, not formatting.
     ///
     /// ```
     /// # use rune_edit::{Mark, TextEdit};
