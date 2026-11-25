@@ -433,9 +433,9 @@ pub(in crate::runtime) fn push_spelling_marker(out: &mut Vec<Instance>, x0: f32,
 }
 
 /// Where a list marker's line starts, in device px: its block's indent and what its paragraph's
-/// own indents add at the first line.
+/// own indents add at the first line, as layout rounds and clamps them.
 fn marker_x(block: f32, attrs: Option<&crate::ParagraphAttrs>, scale: f32) -> f32 {
-    block + attrs.map_or(0.0, |a| ((a.indent + a.first_line_indent) * scale).round())
+    (block + attrs.map_or(0.0, |a| a.indent_px(scale).iter().sum::<f32>())).max(0.0)
 }
 
 #[cfg(test)]

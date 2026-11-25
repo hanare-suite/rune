@@ -86,6 +86,13 @@ pub struct ParagraphAttrs {
 }
 
 impl ParagraphAttrs {
+    /// Its left and first-line indents in device px at `scale`, each rounded on its own: what
+    /// layout starts the lines at, and so where a list marker goes.
+    #[doc(hidden)]
+    pub fn indent_px(&self, scale: f32) -> [f32; 2] {
+        [(self.indent * scale).round(), (self.first_line_indent * scale).round()]
+    }
+
     pub fn style(mut self, style: u16) -> Self {
         self.style = style;
         self
