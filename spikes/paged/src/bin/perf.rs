@@ -1,7 +1,7 @@
 //! The F0 numbers for the paged field, headless: no window, the same runtime and renderer.
 //!
 //! cargo build --profile perf -p paged-spike --features profile --bin paged-perf
-//! target/perf/paged-perf [--samples 240] [--words 25000] [--page 25] [--gpu] [--only open,type,enter,scroll,undo,pages]
+//! target/perf/paged-perf [--samples 240] [--words 25000] [--page 25] [--gpu] [--only open,type,enter,centre,scroll,undo,pages]
 //!
 //! - `open`: from the document model to the first frame laid out and painted, each time on a
 //!   new runtime with a new text system (nothing shaped yet). The first run also loads fonts.
@@ -9,6 +9,9 @@
 //!   commits, with the document's history step. `enter` and `backspace` are Return there and
 //!   the Backspace that takes it back: every paragraph below moves, so every page below
 //!   breaks again.
+//! - `centre`: F1 and F4 (centre and left) on the paragraph in the middle of page 25, formatting
+//!   alone: the text and its marks stay as they were, and the paragraphs keyed again are the one
+//!   changed.
 //! - `scroll`: each frame of a wheel scroll from the top to the bottom in 120 point steps.
 //! - `undo`: heap and footprint before and after 200 typed characters, each its own step in
 //!   the document's history, then 200 undos back to the text it started from.
@@ -210,6 +213,23 @@ fn main() {
             report("enter", &enters);
             report("backspace", &backs);
         }
+    }
+
+    if run("centre") {
+        let mut rt = runtime(words, 0, warm_fonts());
+        settle(&mut rt, &mut d);
+        let at = byte_on_page(&mut rt, &mut d, page);
+        rt.update(|s, _| s.edit.set_caret(at));
+        settle(&mut rt, &mut d);
+        let rows: Vec<_> = (0..samples).map(|i| {
+            let line = rt.state.edit.text[..at].matches('\n').count();
+            let before = rt.state.edit.paragraph_attrs()[line].align;
+            let row = timed(&mut rt, &mut d, |rt| rt.key(KeyEvent { key: Key::Function(if i % 2 == 0 { 1 } else { 4 }), mods: Mods::default() }));
+            assert_ne!(rt.state.edit.paragraph_attrs()[line].align, before, "centre: the paragraph's alignment changed");
+            row
+        }).collect();
+        println!("CENTRE byte={at} page={} of={}", caret_page(&rt), pages(&rt));
+        report("centre", &rows);
     }
 
     if run("scroll") {

@@ -645,6 +645,11 @@ def reuse():
         found[label] = {"caret": where, "paragraphs_keyed_per_keystroke": metric(lines, "type", "keyed"),
                         "layouts_shaped_per_keystroke": metric(lines, "type", "shaped"), "text_ms": metric(lines, "type", "text_ms")}
     ok = all(v["paragraphs_keyed_per_keystroke"]["max"] <= 2 for v in found.values())
+    # Formatting alone: centring one paragraph keys that paragraph, not every one after it.
+    for label, args in (("51 pages", ["--words", "25000", "--page", "25"]), ("200 pages", ["--words", "100000", "--page", "100"])):
+        lines = perf_lines(["--only", "centre", "--samples", "20", *args])
+        found[label]["paragraphs_keyed_per_centring"] = keyed = metric(lines, "centre", "keyed")
+        ok = ok and keyed["max"] <= 1
     check("reuse", ok, found)
 
 
