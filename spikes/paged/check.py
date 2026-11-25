@@ -17,7 +17,7 @@ MARGIN, CONTENT_H, STRIDE, LINE = 71.0, 700.0, 858.0, 14.0
 failed = []
 
 
-def run(name, events, at, snap=None, env=None):
+def run(name, events, at, snap=None, env=None, scale=None):
     """The element tree at mark `at` of `events`, and a screenshot there when `snap` names one."""
     script = os.path.join(SCRIPTS, name + ".json")
     with open(script, "w") as f:
@@ -26,7 +26,7 @@ def run(name, events, at, snap=None, env=None):
     with tempfile.TemporaryDirectory() as tmp:
         tree = os.path.join(tmp, "tree.json")
         png = os.path.join(EVIDENCE, snap) if snap else os.path.join(tmp, "snap.png")
-        cmd = [BIN, "--script", script, "--tree", tree, "--snap", png, "--at", "mark:" + at]
+        cmd = [BIN, "--script", script, "--tree", tree, "--snap", png, "--at", "mark:" + at] + (["--scale", str(scale)] if scale else [])
         out = subprocess.run(cmd, capture_output=True, text=True, env={**os.environ, **(env or {})})
         if out.returncode != 0:
             sys.exit(f"{' '.join(cmd)}\n{out.stdout}{out.stderr}")
@@ -169,6 +169,18 @@ def forced_break():
     check("forced-break", ok, {"heading_caret": h, "end_of_paragraph_before": p, "room_left_on_its_page": round(CONTENT_H - p["y_on_page"] - LINE, 2)})
 
 
+def fractional_scale():
+    # At 1.25, 700 points are 875 px and the 158 points between pages 197.5 px: a layout that rounds the
+    # gap adds 0.5 px a page, and by page 45 its text sits 18 points below the sheet's top margin.
+    env = {"PAGED_CARET": "Kapitel 6:"}
+    events = [key(0.2, "Right"), key(0.4, "Left"), mark(1.2, "heading")]
+    h = caret(run("fractional-scale", events, "heading", env=env, scale=1.25))
+    page = round(h["y"] / STRIDE)
+    off = h["y"] - page * STRIDE
+    ok = page >= 40 and abs(off) <= 0.5
+    check("fractional-scale", ok, {"scale": 1.25, "heading_caret": h, "page_index": page, "points_off_its_sheets_top_margin": round(off, 2)})
+
+
 def ime():
     wheel = {"t": 0.2, "type": "wheel", "x": 380, "y": 500, "dy": -500}
     events = [wheel, {"t": 0.8, "type": "tap", "x": 341, "y": 600}, mark(1.2, "caret"),
@@ -193,6 +205,6 @@ def pages():
 
 os.makedirs(SCRIPTS, exist_ok=True)
 os.makedirs(EVIDENCE, exist_ok=True)
-for c in (pages, arrows, tap, drag, typing, forced_break, ime):
+for c in (pages, arrows, tap, drag, typing, forced_break, fractional_scale, ime):
     c()
 sys.exit(f"FAILED: {', '.join(failed)}" if failed else 0)
