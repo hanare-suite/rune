@@ -526,22 +526,29 @@ def paste_over_atom():
 
 
 def paste_at_atom():
-    """A rich paste at an atom's end and at its start: marks and blocks sit on the pasted lines."""
+    """A rich paste at an atom's end and at its start: marks and blocks sit on the pasted lines, and the
+    atom keeps its line and its id. A paste that ends in a line break leaves it whole too."""
     found, ok = {}, True
-    for where, keys in (("after", [("Right",)]), ("before", [("Right",), ("Left",)])):
+    open_end = ("Xy\nL1\nL2", RICH, ["Xy", "L1", "L2"], ["p", "b", "b"])
+    closed = ("Xy\nL1\n", "<p><b>X</b>y</p><ul><li>L1</li></ul><p></p>", ["Xy", "L1"], ["p", "b"])
+    for where, keys, (plain, html, lines, blocks) in (("after", [("Right",)], open_end), ("before", [("Right",), ("Left",)], open_end),
+                                                      ("before-with-break", [("Right",), ("Left",)], closed)):
         env = {"PAGED_DOC": "atoms", "PAGED_CARET": ATOM}
         name = f"paste-at-atom-{where}"
-        t = marks(name, steps(0.2, *keys, "at", paste("Xy\nL1\nL2", RICH), "pasted"), ["at", "pasted"], env=env,
+        t = marks(name, steps(0.2, *keys, "at", paste(plain, html), "pasted"), ["at", "pasted"], env=env,
                   snaps={"pasted": "paste-at-atom.png"} if where == "after" else None)
         text, f, ps = element(t["pasted"], "editor")["text"], facts(t["pasted"]), paragraphs(t["pasted"])
-        x = len(text[:text.index("Xy\nL1\nL2")].encode())
-        i = next(k for k, p in enumerate(ps) if p["text"] == "Xy")
+        x = len(text[:text.index(plain)].encode())
+        i = next(k for k, p in enumerate(ps) if p["text"] == lines[0])
+        n = len(lines)
         table = next(k for k, p in enumerate(ps) if p["text"] == ATOM)
-        ok = (ok and [p["text"] for p in ps[i:i + 3]] == ["Xy", "L1", "L2"] and [p["block"] for p in ps[i:i + 3]] == ["p", "b", "b"]
-              and all(p["block"] == "p" for k, p in enumerate(ps) if k not in (i + 1, i + 2))
+        had = next(p["id"] for p in paragraphs(t["at"]) if p["text"] == ATOM)
+        ok = (ok and [p["text"] for p in ps[i:i + n]] == lines and [p["block"] for p in ps[i:i + n]] == blocks
+              and all(p["block"] == "p" for k, p in enumerate(ps) if not i < k < i + n)
               and listed(f, "bold") == [f"{x}..{x + 1}"] and ps[table]["atom"] and [p["atom"] for p in ps].count(True) == 2
-              and table == (i - 1 if where == "after" else i + 3) and c_byte(t["pasted"]) == x + len("Xy\nL1\nL2") and sound(t["pasted"]))
-        found[where] = {"paragraphs_after": brief(ps), "bold": listed(f, "bold"), "x_at_byte": x, "reported": f["last"], "document_in_sync": f["sync"]}
+              and ps[table]["id"] == had and not any(p["atom"] for p in ps[i:i + n])
+              and table == (i - 1 if where == "after" else i + n) and c_byte(t["pasted"]) == x + len(plain) and sound(t["pasted"]))
+        found[where] = {"paragraphs_after": brief(ps), "atom_id": had, "bold": listed(f, "bold"), "x_at_byte": x, "reported": f["last"], "document_in_sync": f["sync"]}
     check("paste-at-atom", ok, found)
 
 

@@ -221,3 +221,157 @@ fn an_app_can_change_a_fragment_before_it_pastes_it() {
     assert_eq!(pills, [("old", 2..4), ("new", 8..10)]);
     assert_eq!(e.text, "a @x ba @x b");
 }
+
+// A paste at a line's start inserts the fragment before the line. The line it lands in keeps
+// its block, its attributes (id, style, alignment, indents) and its atom; the lines the
+// fragment brings are new paragraphs with new ids, its own block, style and alignment, and
+// no indents.
+
+/// A line as these tests compare it: text, id, style, alignment, indents, atom and block.
+type Row = (String, u64, u16, ParagraphAlign, (f32, f32), Option<f32>, Block);
+/// The id a row names when it must be a new one.
+const NEW: u64 = u64::MAX;
+
+fn rows(e: &TextEdit) -> Vec<Row> {
+    let blocks = e.blocks();
+    e.text.split('\n').enumerate().map(|(i, t)| {
+        let a = e.paragraph(i);
+        (t.to_string(), a.id, a.style, a.align, (a.indent, a.first_line_indent), a.atom, blocks[i])
+    }).collect()
+}
+
+/// The receiving line's attributes: an id, a style, an alignment and both indents.
+fn kept() -> ParagraphAttrs {
+    ParagraphAttrs::default().id(2).style(3).align(ParagraphAlign::Right).indent(12.0, 4.0)
+}
+
+fn kept_row(text: &str, atom: Option<f32>, block: Block) -> Row {
+    (text.into(), 2, 3, ParagraphAlign::Right, (12.0, 4.0), atom, block)
+}
+
+/// A paragraph the paste brought: a new id, the fragment's style and alignment, no indents.
+fn new_row(text: &str, style: u16, align: ParagraphAlign, atom: Option<f32>, block: Block) -> Row {
+    (text.into(), NEW, style, align, (0.0, 0.0), atom, block)
+}
+
+/// "top", the receiving line `text`, "end", each with an id from 1, ids on from 10. The
+/// receiving line is a bullet, and a locked atom 40 points tall when `atom`.
+fn start_field(text: &str, atom: bool) -> TextEdit {
+    let d = ParagraphAttrs::default();
+    let line = if atom { kept().atom(40.0) } else { kept() };
+    let mut e = TextEdit::from_parts(&format!("top\n{text}\nend"), vec![], vec![Block::Paragraph, if atom { Block::Paragraph } else { Block::Bullet(0) }, Block::Paragraph]);
+    e.set_paragraph_attrs(vec![d.id(1), line, d.id(3)]);
+    e.set_paragraph_ids(10);
+    e.set_history(false);
+    e.take_changes();
+    e
+}
+
+/// A fragment of `text`'s lines: bullets in the style 5 centred, then style 6 justified, the
+/// last line a locked atom 30 points tall when `atom`; as an app builds one.
+fn start_fragment(text: &str, atom: bool) -> TextEdit {
+    let n = text.split('\n').count();
+    let d = ParagraphAttrs::default();
+    let attrs = (0..n).map(|i| match i {
+        _ if atom && i == n - 1 => d.id(77).style(6).align(ParagraphAlign::Justified).atom(30.0),
+        0 => d.id(77).style(5).align(ParagraphAlign::Center),
+        1 => d.id(78).style(6).align(ParagraphAlign::Justified),
+        _ => d.id(79 + i as u64),
+    });
+    let blocks = text.split('\n').enumerate().map(|(i, t)| if t.is_empty() || (atom && i == n - 1) { Block::Paragraph } else { Block::Bullet(0) });
+    let mut src = TextEdit::from_parts(text, vec![], blocks.collect());
+    src.set_history(false);
+    src.set_paragraph_attrs(attrs.collect());
+    src
+}
+
+/// What a paste leaves between "top" and "end", with `NEW` ids matched against the old ones.
+fn pasted_between(mut e: TextEdit, frag: TextEdit) -> Vec<Row> {
+    reported(&mut e, |e| {
+        e.set_caret(4);
+        e.paste_fragment(frag, "");
+    });
+    let all = rows(&e);
+    assert_eq!((all[0].0.as_str(), all[0].1), ("top", 1), "{all:?}");
+    assert_eq!((all[all.len() - 1].0.as_str(), all[all.len() - 1].1), ("end", 3), "{all:?}");
+    let mut seen: Vec<u64> = all.iter().map(|r| r.1).collect();
+    seen.sort_unstable();
+    seen.dedup();
+    assert_eq!(seen.len(), all.len(), "every paragraph has an id of its own: {all:?}");
+    all[1..all.len() - 1].iter().cloned().map(|mut r| {
+        if ![1, 2, 3].contains(&r.1) && r.1 != 0 { r.1 = NEW; }
+        r
+    }).collect()
+}
+
+fn bullet() -> Block { Block::Bullet(0) }
+fn centre(t: &str) -> Row { new_row(t, 5, ParagraphAlign::Center, None, bullet()) }
+fn justified(t: &str) -> Row { new_row(t, 6, ParagraphAlign::Justified, None, bullet()) }
+
+#[test]
+fn a_paste_at_the_start_of_a_line_with_text_pushes_the_line_down_whole() {
+    for (frag, want) in [
+        ("A\n", vec![centre("A"), kept_row("XYZ", None, bullet())]),
+        ("A\nB\n", vec![centre("A"), justified("B"), kept_row("XYZ", None, bullet())]),
+        ("A", vec![kept_row("AXYZ", None, bullet())]),
+        ("A\nB", vec![centre("A"), kept_row("BXYZ", None, bullet())]),
+        ("A\nB\nC", vec![centre("A"), justified("B"), kept_row("CXYZ", None, bullet())]),
+    ] {
+        let got = pasted_between(start_field("XYZ", false), start_fragment(frag, false));
+        assert_eq!(got, want, "pasted {frag:?}");
+    }
+}
+
+#[test]
+fn a_paste_at_an_empty_styled_line_with_an_id_leaves_the_line_its_attributes() {
+    for (frag, want) in [
+        ("A", vec![kept_row("A", None, bullet())]),
+        ("A\n", vec![centre("A"), kept_row("", None, bullet())]),
+        ("A\nB", vec![centre("A"), kept_row("B", None, bullet())]),
+        ("A\nB\n", vec![centre("A"), justified("B"), kept_row("", None, bullet())]),
+    ] {
+        let got = pasted_between(start_field("", false), start_fragment(frag, false));
+        assert_eq!(got, want, "pasted {frag:?}");
+    }
+}
+
+#[test]
+fn a_paste_at_a_locked_atoms_line_never_joins_it_and_leaves_it_whole() {
+    let label = "Tabelle";
+    for (frag, want) in [
+        ("A", vec![centre("A"), kept_row(label, Some(40.0), Block::Paragraph)]),
+        ("A\n", vec![centre("A"), kept_row(label, Some(40.0), Block::Paragraph)]),
+        ("A\nB", vec![centre("A"), justified("B"), kept_row(label, Some(40.0), Block::Paragraph)]),
+        ("A\nB\n", vec![centre("A"), justified("B"), kept_row(label, Some(40.0), Block::Paragraph)]),
+    ] {
+        let got = pasted_between(start_field(label, true), start_fragment(frag, false));
+        assert_eq!(got, want, "pasted {frag:?}");
+    }
+}
+
+#[test]
+fn a_fragment_with_an_atom_pasted_at_an_empty_line_leaves_the_line_after_it() {
+    let atom = new_row("B", 6, ParagraphAlign::Justified, Some(30.0), Block::Paragraph);
+    let got = pasted_between(start_field("", false), start_fragment("A\nB", true));
+    assert_eq!(got, vec![centre("A"), atom.clone(), kept_row("", None, bullet())]);
+    let got = pasted_between(start_field("XYZ", false), start_fragment("A\nB", true));
+    assert_eq!(got, vec![centre("A"), atom, kept_row("XYZ", None, bullet())]);
+}
+
+#[test]
+fn a_fragment_without_paragraph_attributes_brings_paragraphs_with_none_either() {
+    let frag = || TextEdit::from_parts("A\nB", vec![], vec![]);
+    let got = pasted_between(start_field("XYZ", false), frag());
+    assert_eq!(got, vec![new_row("A", 0, ParagraphAlign::Left, None, Block::Paragraph), kept_row("BXYZ", None, bullet())]);
+}
+
+#[test]
+fn a_single_line_pasted_into_an_empty_plain_line_still_gives_it_the_pasted_attributes() {
+    let mut e = TextEdit::from_parts("top\n\nend", vec![], vec![]);
+    e.set_paragraph_attrs(vec![ParagraphAttrs::default(); 3]);
+    e.set_history(false);
+    e.set_caret(4);
+    e.paste_fragment(start_fragment("A", false), "");
+    let got = rows(&e);
+    assert_eq!((got[1].0.as_str(), got[1].2, got[1].3, got[1].6), ("A", 5, ParagraphAlign::Center, bullet()), "{got:?}");
+}
