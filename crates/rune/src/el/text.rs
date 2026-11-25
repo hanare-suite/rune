@@ -415,28 +415,6 @@ impl El {
         }
         self
     }
-    pub(super) fn sync_input_pills(&mut self) {
-        let (Some(inp), Some(t)) = (&self.cold.input, &mut self.text) else { return };
-        if inp.edit.is_plain() {
-            t.cold.pills.clear();
-            return;
-        }
-        t.cold.pills = inp
-            .edit
-            .display_pills()
-            .into_iter()
-            .map(|(start, end, id)| {
-                let st = inp.pill_style.as_ref().map(|f| f(id)).unwrap_or_default();
-                let image = inp.pill_image.as_ref().and_then(|f| f(id));
-                let icon = if image.is_some() {
-                    None
-                } else {
-                    st.icon.or_else(|| inp.pill_icon.as_ref().and_then(|f| f(id)))
-                };
-                crate::text::PillChip { start, end, icon, image, bg: st.bg, fg: st.fg, ring: st.ring, radius: st.radius, bare: None }
-            })
-            .collect();
-    }
     pub(crate) fn sync_input_rich(&mut self) {
         let (Some(inp), Some(t)) = (&self.cold.input, &mut self.text) else { return };
         t.cold.rich_style = Some(inp.rich_style);
@@ -454,10 +432,7 @@ impl El {
             t.cold.blocks.clear();
             t.cold.soft_breaks.clear();
             t.cold.pills.clear();
-            if !t.cold.attrs.is_empty() {
-                t.cold.attrs.clear();
-                t.rekey_flow();
-            }
+            t.set_attrs(Vec::new());
             return;
         }
         let (mut base_spans, mut strikes, rich_links, blocks) =
@@ -511,11 +486,7 @@ impl El {
         t.cold.soft_breaks = inp.edit.soft_breaks().to_vec();
         // Replace links generated from `Mark::Link` while keeping any explicit `.link(...)` calls.
         t.cold.links = rich_links;
-        let attrs = inp.edit.display_attrs();
-        if attrs != t.cold.attrs {
-            t.cold.attrs = attrs;
-            t.rekey_flow();
-        }
+        t.set_attrs(inp.edit.display_attrs());
     }
     /// Wrap text at the element's width.
     #[inline]

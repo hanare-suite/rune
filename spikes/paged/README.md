@@ -49,7 +49,7 @@ In the window the function keys stand in for a ribbon: F1 to F4 align the paragr
 | `atom-ids` | text typed over an empty paragraph before a locked block, or over a block up to the next one, leaves every paragraph its own id |
 | `atom-keys` | Backspace after a locked block and Delete before one select it, and a second press deletes it as one edit and one history step; an empty paragraph beside a block goes at the first press |
 | `history` | the field records nothing; typing, a highlight, Cmd+B and an alignment each report their bytes and make one step of the app's history; Cmd+Z and Shift+Cmd+Z go through the app |
-| `reuse` | a keystroke keys one paragraph at 51 pages and at 200 |
+| `reuse` | a keystroke keys one paragraph at 51 pages and at 200, and centring one paragraph keys only it |
 | `pages-same-frame` | the frame that lays out a new page already shows its count and its sheet |
 
 `perf.py` runs `paged-perf` (keystroke, Return, scroll, open and undo memory on a headless runtime) at 51 pages against the limits F0 set, again at 200 pages with no limit, and times a fresh process to its first pixels, into `evidence/perf.txt`.

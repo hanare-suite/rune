@@ -17,6 +17,7 @@ pub(crate) mod pill_chips;
 pub(crate) mod pretty;
 pub(crate) mod rich;
 pub(crate) mod run;
+pub(crate) mod run_marks;
 mod shape;
 mod shape_style;
 pub(crate) mod span;

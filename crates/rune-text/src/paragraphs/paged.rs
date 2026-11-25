@@ -177,7 +177,8 @@ pub(super) fn reuse_rich(prev: &ParagraphLayout, spec: &TextInput<'_>, style_key
     let suffix = common_end(old, new).min(old.len().min(new.len()) - prefix);
     let delta = new.len() as isize - old.len() as isize;
     // The bytes of the old text an edit touched: `lo..hi`. A span that changed widens them.
-    let (mut lo, mut hi) = (prefix, old.len() - suffix);
+    // Equal texts touched no byte: only a span or an attribute that differs widens the range.
+    let (mut lo, mut hi) = if prefix == old.len() && old.len() == new.len() { (usize::MAX, 0) } else { (prefix, old.len() - suffix) };
     let (so, sn) = (keyed.spans.as_slice(), spec.spans);
     let moved = |at: u32| (at as isize + delta) as u32;
     let p = so.iter().zip(sn).take_while(|(a, b)| a == b).count();
@@ -201,8 +202,9 @@ pub(super) fn reuse_rich(prev: &ParagraphLayout, spec: &TextInput<'_>, style_key
     let same = ps.len().min(new_lines);
     let head_lines = (0..same).take_while(|&k| keyed.lines.get(k).copied() == Some(line_key(spec, k))).count();
     let tail_lines = (0..same).take_while(|&k| keyed.lines.get(ps.len() - 1 - k).copied() == Some(line_key(spec, new_lines - 1 - k))).count();
-    let h = ps.partition_point(|p| p.end < lo).min(head_lines);
-    let t = ps.partition_point(|p| p.start <= hi).max(ps.len() - tail_lines).max(h);
+    // At least one paragraph is keyed again: the caller keys from where the head ends.
+    let h = ps.partition_point(|p| p.end < lo).min(head_lines).min(ps.len().saturating_sub(1));
+    let t = ps.partition_point(|p| p.start <= hi).max(ps.len() - tail_lines).max(h + 1).min(ps.len());
     let at = |i: usize| (i as isize + delta) as usize;
     Some(Reuse {
         head: ps[..h].iter().map(|p| (p.start, p.end, p.flow, p.key, Box::default(), None)).collect(),

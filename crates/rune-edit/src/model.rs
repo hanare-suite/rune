@@ -2,7 +2,7 @@
 
 use std::ops::Range;
 
-use rune_core::color::{Color, oklch, oklcha};
+use rune_core::color::{Color, oklch, oklcha, srgb_decode, srgb_encode};
 
 pub use rune_text::{Baseline, Block, MAX_LIST_LEVEL, PageFlow, ParagraphAlign, ParagraphAttrs, ParagraphStyle};
 
@@ -47,8 +47,13 @@ pub enum Mark {
 pub struct MarkColor([u32; 4]);
 
 impl MarkColor {
+    /// `c` snapped to the 8-bit sRGB grid, alpha included, which is the precision its hex form
+    /// (`Color::hex`, in a saved history and in HTML) keeps. Snapping again changes nothing, so a
+    /// colour read back from hex is the colour that was written.
     pub fn new(c: Color) -> Self {
-        Self([c.r, c.g, c.b, c.a].map(f32::to_bits))
+        let snap = |v: f32| srgb_decode((srgb_encode(v) * 255.0).round().clamp(0.0, 255.0) / 255.0);
+        let a = (c.a * 255.0).round().clamp(0.0, 255.0) / 255.0;
+        Self([snap(c.r), snap(c.g), snap(c.b), a].map(f32::to_bits))
     }
 
     pub fn get(self) -> Color {

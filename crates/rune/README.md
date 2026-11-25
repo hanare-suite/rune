@@ -2207,9 +2207,10 @@ example, and `spikes/paged/check.py` checks every point below headless.
 
 - **Run marks**: `Mark::Size(MarkSize::pt(14.0))`, `Mark::Color("#d93025".into())`,
   `Mark::family("Carlito")`, `Mark::Highlight(MarkColor::new(yellow))` and
-  `Mark::Baseline(Baseline::Sub | Baseline::Super)`. A field keeps these as it keeps
-  `Mark::Color`, once it allows them: `TextEdit::from_parts` allows the ones its marks hold,
-  and `allow_marks` names the rest. A family draws when the app registered it
+  `Mark::Baseline(Baseline::Sub | Baseline::Super)`. A field keeps them once it is a document
+  field, which keeps all five at once: `TextEdit::from_parts` with any of them makes it one,
+  and so does a paragraph-attribute method (`set_paragraph`, `format_paragraphs`, ...). A field
+  that named its kinds with `allow_marks` keeps what it named. A family draws when the app registered it
   (`AppSpec::fonts`); any other name keeps the field's family. A highlight is a flat band as
   tall as its line, with square corners and no padding. Sub- and superscripts are set at 58 % of
   their size and moved a third of their em, as Word sets them. A later mark of one of these

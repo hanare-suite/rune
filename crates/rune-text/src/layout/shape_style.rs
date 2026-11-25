@@ -3,7 +3,8 @@
 use parley::{FontFamilyName, LineHeight, RangedBuilder, StyleProperty, VerticalAlign};
 use parley::fontique::Collection;
 
-use super::span::{Baseline, Ink, Span};
+use super::run_marks::Baseline;
+use super::span::{Ink, Span};
 
 /// The stack each family `spans` name is shaped in: the family, then `rest`. A name the
 /// collection doesn't hold gets none, so its run keeps the text's own family.

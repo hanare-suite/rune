@@ -307,6 +307,10 @@ impl El {
     /// then sets marks and paragraphs). They are in the order they happened, each range in the
     /// text the change before it left. Apply them in order, and read inserted text from the
     /// field's text now as [`EditChange`](crate::EditChange) describes.
+    ///
+    /// A [`secure`](crate::TextEdit::secure) field's edits are not reported, and neither is
+    /// [`TextEdit::replace_text`](crate::TextEdit::replace_text) (see
+    /// [`TextEdit::take_changes`](crate::TextEdit::take_changes)).
     pub fn on_input_edits<S: 'static>(mut self, f: impl Fn(&mut S, &[crate::EditChange], &mut Tx) + 'static) -> Self {
         if let Some(input) = self.cold.get_mut_if_some().and_then(|c| c.input.as_deref_mut()) {
             input.edits = Some(Rc::new(move |s, changes, tx| f(downcast::<S>(s), changes, tx)));

@@ -271,6 +271,15 @@ impl TextSpec {
         self.cold.flow_key != 0
     }
 
+    /// Sets the paragraph attributes the field's text lays out with, and takes the flow's keys
+    /// again when they differ from the ones it had.
+    pub(crate) fn set_attrs(&mut self, attrs: Vec<crate::edit::ParagraphAttrs>) {
+        if attrs != self.cold.attrs {
+            self.cold.attrs = attrs;
+            self.rekey_flow();
+        }
+    }
+
     /// Takes `flow_key` and `styles_key` again from the paragraph styles, the page flow and
     /// the paragraph attributes they hash.
     pub(crate) fn rekey_flow(&mut self) {
