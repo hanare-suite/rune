@@ -8,9 +8,9 @@ The app shows a generated German document of 25,335 words on 51 A4 pages in one 
 
 - `El::page_flow(PageFlow::new(height, gap))` lays the field's lines into pages. A line that doesn't fit what is left of its page moves whole to the next one. The field is always whole pages tall, so `PageFlow::pages(height)` of its laid-out height is the page count, and the app draws the sheets behind it.
 - `Block::Styled(n)` gives a paragraph the field's `n`th `ParagraphStyle` (`El::paragraph_styles`): a text style, the room above and below, and optionally a page break before it.
-- `Mark::Size` and `Mark::Color` style a run.
+- `Mark::Size` styles a run, as upstream's `Mark::Color` does its colour.
 
-A paragraph that crosses a page's end keeps one layout. Its lines after the end are broken again with the gap above them (`text/paragraphs/paged.rs`, `line_break::rebreak_gapped`), so the caret, presses, selection boxes, glyphs, caret follow and the input method's cursor rectangle need no page mapping of their own.
+A paragraph that crosses a page's end keeps one layout. Its lines after the end are broken again with the gap above them (`crates/rune-text/src/paragraphs/paged.rs`, `line_break::rebreak_gapped`), so the caret, presses, selection boxes, glyphs, caret follow and the input method's cursor rectangle need no page mapping of their own.
 
 ## Run it
 

@@ -76,6 +76,8 @@ impl Recording {
             smoothing: None,
             atlas_resets: 0,
             half: super::HalfRounding::default(),
+            fade_stops: [0.0; 2],
+            degraded: false,
         }
     }
 

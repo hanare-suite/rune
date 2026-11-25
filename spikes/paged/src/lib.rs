@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use rune::color::hex;
-use rune::{Block, Color, Cx, El, Key, KeyEvent, Mark, MarkColor, MarkRange, MarkSize, PageFlow, ParagraphStyle, ScrollSpec, TextEdit, TextStyle, Tx, col, el, row, text, text_input};
+use rune::{Block, Color, Cx, El, Key, KeyEvent, Mark, MarkRange, MarkSize, PageFlow, ParagraphStyle, ScrollSpec, TextEdit, TextStyle, Tx, col, el, row, text, text_input};
 
 /// A4 at 72 points an inch, with 2.5 cm margins.
 pub const PAGE: (f32, f32) = (595.0, 842.0);
@@ -137,7 +137,7 @@ pub fn generate(words: usize) -> Doc {
                 let run = |from: usize, len: usize| (starts[from.min(starts.len() - 1)], starts.get(from + len).map_or(t.len(), |&e| e - 1));
                 let mut marks = Vec::new();
                 if body_no % 3 == 0 { let (a, b) = run(2, 3); marks.push((a, b, Mark::Bold)); }
-                if body_no % 4 == 1 { let (a, b) = run(9, 4); marks.push((a, b, Mark::Color(MarkColor::new(hex("#b3261e").unwrap())))); }
+                if body_no % 4 == 1 { let (a, b) = run(9, 4); marks.push((a, b, Mark::Color("#b3261e".into()))); }
                 if body_no % 5 == 2 { let (a, b) = run(14, 2); marks.push((a, b, Mark::Size(MarkSize::pt(15.0)))); }
                 if body_no % 7 == 3 { let (a, b) = run(5, 2); marks.push((a, b, Mark::Italic)); }
                 marks.retain(|m| m.0 < m.1);

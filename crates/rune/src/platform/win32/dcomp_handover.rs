@@ -9,12 +9,14 @@
 //!
 //! `dcomp.dll` loads here, when the GPU is ready, not at launch.
 
+#![allow(unsafe_code)]
+
 use windows::Win32::Graphics::DirectComposition::{IDCompositionDevice, IDCompositionTarget, IDCompositionVisual};
 use windows::core::{GUID, HRESULT, Interface};
 
 pub(crate) struct Handover {
     device: IDCompositionDevice,
-    _target: IDCompositionTarget,
+    target: IDCompositionTarget,
     /// The target's root: no content of its own; the UI's visual and, under it, any clip's layer.
     root: IDCompositionVisual,
     /// The UI's visual, which the wgpu surface goes on.
@@ -37,7 +39,7 @@ impl Handover {
             let visual = device.CreateVisual().map_err(|e| format!("CreateVisual: {e}"))?;
             root.AddVisual(&visual, true, None).map_err(|e| format!("AddVisual: {e}"))?;
             target.SetRoot(&root).map_err(|e| format!("SetRoot: {e}"))?;
-            Ok(Handover { device, _target: target, root, visual })
+            Ok(Handover { device, target, root, visual })
         }
     }
 
@@ -68,7 +70,7 @@ impl Handover {
     /// Takes a visual `add_under` made out of the tree, uncommitted.
     pub(crate) fn remove(&self, visual: &IDCompositionVisual) {
         // SAFETY: a COM call on our root visual.
-        let _ = unsafe { self.root.RemoveVisual(visual) };
+        unsafe { self.root.RemoveVisual(visual) }.ok();
     }
 
     /// Commits, and returns once DWM has taken the commit: a frame presented after this shows
@@ -79,16 +81,35 @@ impl Handover {
         unsafe { self.device.WaitForCommitCompletion() }.map_err(|e| format!("IDCompositionDevice::WaitForCommitCompletion: {e}"))
     }
 
+    /// Detaches the root visual from the window's DirectComposition target and waits for DWM to
+    /// take the commit, revealing the HWND's own redirection surface (used during opt-in
+    /// synchronized drag resize).
+    pub(crate) fn detach_root(&self) -> Result<(), String> {
+        // SAFETY: `SetRoot(None)` is documented to detach the visual tree from `target`.
+        unsafe { self.target.SetRoot(None) }.map_err(|e| format!("SetRoot(None): {e}"))?;
+        self.commit_and_wait()
+    }
+
+    /// Re-attaches the root visual to the window's DirectComposition target and waits for DWM to
+    /// take the commit, restoring normal flip-model DirectComposition presentation.
+    pub(crate) fn attach_root(&self) -> Result<(), String> {
+        // SAFETY: `self.root` is a live visual created on `self.device`.
+        unsafe { self.target.SetRoot(&self.root) }.map_err(|e| format!("SetRoot(root): {e}"))?;
+        self.commit_and_wait()
+    }
+}
+
+fn load_dll(name: &str) -> windows_sys::Win32::Foundation::HMODULE {
+    super::load_system_dll(name)
 }
 
 /// `DCompositionCreateDevice2(NULL, ...)`, from `dcomp.dll` loaded now rather than imported.
 fn create_device() -> Result<IDCompositionDevice, String> {
     type Create = unsafe extern "system" fn(*mut std::ffi::c_void, *const GUID, *mut *mut std::ffi::c_void) -> HRESULT;
-    let name: Vec<u16> = "dcomp.dll\0".encode_utf16().collect();
     // SAFETY: a system DLL by name; the entry point has the signature dcomp.h declares, and the
     // pointer it writes is an owned reference to the interface asked for.
     unsafe {
-        let lib = windows_sys::Win32::System::LibraryLoader::LoadLibraryW(name.as_ptr());
+        let lib = load_dll("dcomp.dll");
         if lib.is_null() { return Err("dcomp.dll did not load".into()); }
         let Some(create) = windows_sys::Win32::System::LibraryLoader::GetProcAddress(lib, c"DCompositionCreateDevice2".as_ptr().cast()) else {
             return Err("dcomp.dll has no DCompositionCreateDevice2".into());
@@ -99,3 +120,7 @@ fn create_device() -> Result<IDCompositionDevice, String> {
         Ok(IDCompositionDevice::from_raw(raw))
     }
 }
+
+#[cfg(test)]
+#[path = "dcomp_handover_tests.rs"]
+mod tests;
