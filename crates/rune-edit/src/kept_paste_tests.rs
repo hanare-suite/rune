@@ -391,3 +391,85 @@ fn a_paste_at_a_lines_end_joins_the_line_and_brings_paragraphs_without_its_inden
     assert_eq!((got[2].0.as_str(), got[2].3, got[2].4, got[2].6), ("B", ParagraphAlign::Justified, (0.0, 0.0), bullet()), "{got:?}");
     assert!(![1, 2, 3].contains(&got[2].1), "{got:?}");
 }
+
+// A plain paste and Return at a line's start follow the same rule: the line keeps its id,
+// attributes, block and atom, and a paragraph the edit brings is new, above it.
+
+fn enter() -> KeyEvent {
+    KeyEvent { key: Key::Enter, mods: Mods::default() }
+}
+
+/// What the edit at the start of the receiving line leaves between "top" and "end".
+fn at_start(mut e: TextEdit, f: impl FnOnce(&mut TextEdit)) -> Vec<Row> {
+    reported(&mut e, |e| {
+        e.set_caret(4);
+        f(e);
+    });
+    let all = rows(&e);
+    let mut seen: Vec<u64> = all.iter().map(|r| r.1).collect();
+    seen.sort_unstable();
+    seen.dedup();
+    assert_eq!(seen.len(), all.len(), "every paragraph has an id of its own: {all:?}");
+    all[1..all.len() - 1].iter().cloned().map(|mut r| {
+        if ![1, 2, 3].contains(&r.1) && r.1 != 0 { r.1 = NEW; }
+        r
+    }).collect()
+}
+
+/// A new paragraph as Return makes it above the line: the line's style, alignment and block.
+fn above(text: &str, atom: bool) -> Row {
+    (text.into(), NEW, 3, ParagraphAlign::Right, (12.0, 4.0), None, if atom { Block::Paragraph } else { bullet() })
+}
+
+fn plain_row(text: &str) -> Row {
+    new_row(text, 0, ParagraphAlign::Left, None, Block::Paragraph)
+}
+
+#[test]
+fn return_at_the_start_of_a_line_adds_a_paragraph_above_and_the_line_keeps_its_id() {
+    let got = at_start(start_field("XYZ", false), |e| { e.key(&enter(), None); });
+    assert_eq!(got, vec![above("", false), kept_row("XYZ", None, bullet())]);
+    let mut e = start_field("", false);
+    e.set_blocks(vec![Block::Paragraph, Block::Paragraph, Block::Paragraph]);
+    let got = at_start(e, |e| { e.key(&enter(), None); });
+    assert_eq!(got, vec![above("", true), kept_row("", None, Block::Paragraph)]);
+    let got = at_start(start_field("Tabelle", true), |e| { e.key(&enter(), None); });
+    assert_eq!(got.len(), 2, "{got:?}");
+    assert_eq!(got[1], kept_row("Tabelle", Some(40.0), Block::Paragraph));
+    assert_eq!((got[0].0.as_str(), got[0].1, got[0].5), ("", NEW, None));
+}
+
+#[test]
+fn a_plain_paste_at_the_start_of_a_line_follows_the_rule_of_a_fragment() {
+    for (text, want) in [
+        ("A\nB", vec![plain_row("A"), kept_row("BXYZ", None, bullet())]),
+        ("A\nB\n", vec![plain_row("A"), plain_row("B"), kept_row("XYZ", None, bullet())]),
+        ("A\n", vec![plain_row("A"), kept_row("XYZ", None, bullet())]),
+    ] {
+        let got = at_start(start_field("XYZ", false), |e| { e.paste(text); });
+        assert_eq!(got, want, "pasted {text:?}");
+    }
+    let got = at_start(start_field("", false), |e| { e.paste("A\nB"); });
+    assert_eq!(got, vec![plain_row("A"), kept_row("B", None, bullet())]);
+    for text in ["A\nB", "A\nB\n"] {
+        let got = at_start(start_field("Tabelle", true), |e| { e.paste(text); });
+        assert_eq!(got.last(), Some(&kept_row("Tabelle", Some(40.0), Block::Paragraph)), "pasted {text:?}: {got:?}");
+        assert_eq!(got.iter().filter(|r| r.5.is_some()).count(), 1, "{got:?}");
+    }
+}
+
+#[test]
+fn undo_and_redo_give_back_the_ids_of_a_paste_and_a_return_at_a_lines_start() {
+    for edit in [|e: &mut TextEdit| { e.key(&enter(), None); }, |e: &mut TextEdit| { e.paste("A\nB"); }] {
+        let mut e = start_field("XYZ", false);
+        e.set_history(true);
+        e.set_caret(4);
+        let (text, attrs) = (e.text.clone(), e.paragraph_attrs().to_vec());
+        edit(&mut e);
+        let (done, done_attrs) = (e.text.clone(), e.paragraph_attrs().to_vec());
+        e.undo();
+        assert_eq!((e.text.clone(), e.paragraph_attrs().to_vec()), (text, attrs));
+        e.redo();
+        assert_eq!((e.text.clone(), e.paragraph_attrs().to_vec()), (done, done_attrs));
+    }
+}
