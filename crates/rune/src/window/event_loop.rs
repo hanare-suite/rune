@@ -277,6 +277,8 @@ impl Windows {
             return;
         }
         let _reset = Reset;
+        // A macOS Quit a guarded window held back: the windows that hold ask.
+        if crate::quit::take_held() { super::app_events::hold_quit(&mut self.hosts, false); }
         let now = crate::time::now();
         for host in self.hosts.iter_mut().flatten() {
             if let Some(due) = host.wake_deadline().filter(|&due| due <= now) {

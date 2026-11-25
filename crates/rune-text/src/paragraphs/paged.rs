@@ -209,7 +209,8 @@ fn place(pager: &Pager<'_>, y: f64, first: bool, own: &Own, height: f32, lines: 
     // A paragraph that starts its page, with the room above it or without: its first line can't
     // move off that page, or the page would stand blank.
     let (opened, start_page) = (forced || first || flowed, page);
-    let mut top = if flowed { y } else { y + own.before };
+    // The paragraph is drawn at whole pixels (`top.round()`), so it is fitted there too.
+    let mut top = if flowed { y } else { (y + own.before).round() };
     let mut bottom = p.bottom_of(page);
     if top + f64::from(height) <= bottom {
         return Spot { top, gaps: Vec::new() };
@@ -248,7 +249,7 @@ fn place(pager: &Pager<'_>, y: f64, first: bool, own: &Own, height: f32, lines: 
             }
         }
         if j == 0 {
-            top = next - f64::from(lines[0].0);
+            top = (next - f64::from(lines[0].0)).round();
         } else {
             let gap = next - line_top(j, top, shift);
             gaps.push((j as u32, gap as f32));
