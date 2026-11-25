@@ -43,6 +43,8 @@ fn run_with(script: &str, Opts { guarded, defers, keep_running, reclose, desktop
     std::fs::create_dir_all(&dir).unwrap();
     let (script_path, tree_path, png) = (dir.join("script.json"), dir.join("tree.json"), dir.join("out.png"));
     std::fs::write(&script_path, script).unwrap();
+    // The backdrop a `--desktop` run draws its windows over: one pixel.
+    std::fs::write(&png, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x44, 0x41, 0x54, 0x78, 0xda, 0x63, 0x64, 0x60, 0xf8, 0x5f, 0x0f, 0x00, 0x02, 0x87, 0x01, 0x80, 0xeb, 0x47, 0xba, 0x92, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82]).unwrap();
     let spec = AppSpec {
         on_key: Some(on_key),
         ..AppSpec::new("close-guard", (200.0, 100.0), State::default, view)
@@ -131,7 +133,9 @@ fn a_keep_running_window_closes_again_after_a_reopen() {
 fn an_ask_that_asks_to_close_again_asks_once_per_close() {
     if !rune::render::Gpu::test_adapter_available() { return; }
     for desktop in [false, true] {
-        for script in [r#"[{"t": 0.1, "type": "type", "text": "c"}]"#, r#"[{"t": 0.1, "close": true}]"#] {
+        // A `--desktop` run has no close button to press (`{"close": true}` dies there by design).
+        let scripts = [r#"[{"t": 0.1, "type": "type", "text": "c"}]"#, r#"[{"t": 0.1, "close": true}]"#];
+        for script in &scripts[..if desktop { 1 } else { 2 }] {
             let (closed, log) = run_reclose(script, desktop);
             assert!(!closed, "desktop {desktop} {script}");
             let asks = log.matches("ask").count();

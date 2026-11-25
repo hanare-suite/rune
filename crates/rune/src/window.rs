@@ -568,7 +568,7 @@ impl ApplicationHandler<WakeEvent> for Windows {
             let _handling = crate::quit::handling();
             // The last window's close ends a fast-exiting app: the window can go at once.
             #[cfg(not(target_arch = "wasm32"))]
-            if matches!(event, WindowEvent::CloseRequested) && crate::quit::fast_exit_hook().is_some()
+            if matches!(event, WindowEvent::CloseRequested) && crate::quit::fast_exit_hook().is_some() && !crate::quit::any_guarded()
                 && !this.hosts.iter().flatten().any(|h| !h.owns(id) && !h.finished() && h.keeps_loop())
                 && let Some(host) = this.hosts.iter_mut().flatten().find(|h| h.owns(id) && h.keeps_loop())
             {

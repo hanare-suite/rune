@@ -831,7 +831,13 @@ app.run();
   session are not held back. Without the hook nothing changes. It sits beside
   `App::on_close_request` below, which answers the user's own close requests alone and lets the
   closes the app asks for and a Quit through: on a user's close request that runs first, and a
-  `CloseResponse::Defer` stands on its own, while a `Close` goes on to ask `guarded`.
+  `CloseResponse::Defer` stands on its own, while a `Close` goes on to ask `guarded`. An `ask`
+  that asks to close the window while the guard still holds is asked once, and that close is
+  dropped. When the close of the last main window would end the app, a guarded window asks first
+  and the app stays; a cancel (the guard stays up, or goes down without the window closing) drops
+  that end, as a cancelled Quit is, and the app ends when its last window closes, asking again if
+  it is guarded. A hidden `keep_running` window whose guard says true counts as guarded for a
+  Quit and for the app's end: its `ask` runs, and showing the window is the app's job.
 - Handlers ask the shell with `Tx::close_window()`, `Tx::minimize()` and `Tx::quit()` (quit wins,
   and either wins over minimize). On Windows and Linux, resizable borderless windows minimize when
   `WindowButtons::MINIMIZE` is enabled; minimize still does nothing for a hidden window, a panel,

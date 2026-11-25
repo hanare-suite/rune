@@ -287,8 +287,8 @@ pub(crate) fn install(send: impl Fn(bool) -> bool + 'static, held: impl Fn() + '
     let _ = (send, held);
 }
 
-/// macOS: how many windows hold back their close (`App::on_close_guard`) as of their last
-/// handler. AppKit asks about a quit between handlers, with no way to the windows.
+/// How many windows hold back their close (`App::on_close_guard`) as of their last handler.
+/// AppKit asks about a quit between handlers, with no way to the windows.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 static GUARDED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
@@ -297,11 +297,13 @@ static GUARDED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize:
 static HELD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// A window now holds back its close (`true`) or no longer does.
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) fn guarded_by(on: bool) {
     use std::sync::atomic::Ordering::Relaxed;
     if on { GUARDED.fetch_add(1, Relaxed); } else { GUARDED.fetch_sub(1, Relaxed); }
 }
+
+/// Whether any window holds back its close now.
+pub(crate) fn any_guarded() -> bool { GUARDED.load(std::sync::atomic::Ordering::Relaxed) > 0 }
 
 /// Whether a Quit was held back since the last call: the windows that hold ask now.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]

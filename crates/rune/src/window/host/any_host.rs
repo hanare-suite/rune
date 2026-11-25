@@ -222,7 +222,6 @@ impl Host {
         let entered = self.app.enter_turn();
         if entered { self.turn = Turn::Within; }
         let result = f(self);
-        #[cfg(target_os = "macos")]
         self.note_guard();
         if entered {
             self.app.leave_turn();

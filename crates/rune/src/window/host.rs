@@ -96,8 +96,7 @@ pub(in crate::window) struct Host {
     pub(in crate::window) settle_due: bool,
     /// A quit held for the guard has its question up (`hold_quit_core`).
     pub(in crate::window) quit_asked: bool,
-    /// macOS: the guard held back closes at the last handler (`Host::note_guard`).
-    #[cfg(target_os = "macos")]
+    /// The guard held back closes at the last handler (`Host::note_guard`).
     pub(in crate::window) guarded: bool,
     /// Whether a turn is inside `App::turn_scope` now.
     pub(in crate::window) turn: any_host::Turn,
@@ -506,7 +505,6 @@ impl Host {
             ends_app: false,
             settle_due: false,
             quit_asked: false,
-            #[cfg(target_os = "macos")]
             guarded: false,
             turn: any_host::Turn::Between,
             _incoming: incoming,

@@ -82,8 +82,6 @@ pub(super) struct HeadlessLoop<'a> {
     /// The window closed (`{"close": true}`, `Tx::close_window`): the headless run has no window to
     /// take away, so it only shows in the tree, as `"closed": true`.
     pub(super) closed: bool,
-    /// `App::keep_running`: the window can close again after a reopen, as one that ends the app cannot.
-    pub(super) keep_running: bool,
     pub(super) cpu_ms: Vec<f64>,
     pub(super) anim_ms: Vec<f64>,
     pub(super) rest_ms: Vec<f64>,
@@ -97,7 +95,7 @@ impl HeadlessLoop<'_> {
     /// else `Tx::close_window` (the guard, then `on_close`). The window is closed only when no
     /// hook held it back.
     pub(super) fn close(&mut self, app: &mut dyn HeadlessApp, user: bool) {
-        if self.closed && !self.keep_running { return; }
+        if self.closed { return; }
         self.closed = if user { app.run_close_request() == crate::CloseResponse::Close } else { app.close_window() };
     }
 
