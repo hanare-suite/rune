@@ -186,10 +186,6 @@ pub(crate) enum WakeEvent {
     /// with `true` the session ends now and the windows close.
     #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
     Quit(bool),
-    /// macOS: a Quit was held back because a window is guarded (`App::on_close_guard`); the
-    /// guarded windows ask.
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-    QuitHeld,
     /// An assistive client asked something of a surface's accessibility tree (`crate::a11y`):
     /// the host answers at the end of the turn this wakes.
     #[cfg_attr(not(feature = "accessibility"), allow(dead_code))]
@@ -245,10 +241,7 @@ pub(crate) trait AnyHost {
     fn vanish(&mut self) {}
     /// The close about to come ends the app (`Host::close`).
     fn closing_ends_app(&mut self) {}
-    /// Whether the window holds back its close now (`App::on_close_guard`).
-    fn close_guarded(&mut self) -> bool { false }
-    /// A macOS Quit was held back: a guarded window asks (`App::on_close_guard`).
-    fn close_request(&mut self, _event_loop: &ActiveEventLoop) {}
+    fn hold_quit(&mut self, _once: bool) -> bool { false }
     /// Ends a tracking pop-up menu and answers waiting ones `None`, before the host drops or
     /// the loop exits.
     fn cancel_menus(&mut self) {}
@@ -526,9 +519,7 @@ impl ApplicationHandler<WakeEvent> for Windows {
                 let proxy = this.proxy.clone();
                 crate::open_url::instance::on_relaunch(move || proxy.send_event(WakeEvent::Reopen).is_ok());
             }
-            let proxy = this.proxy.clone();
-            let held = proxy.clone();
-            crate::quit::install(move |ending| proxy.send_event(WakeEvent::Quit(ending)).is_ok(), move || { let _ = held.send_event(WakeEvent::QuitHeld); });
+            crate::quit::install({ let proxy = this.proxy.clone(); move |ending| proxy.send_event(WakeEvent::Quit(ending)).is_ok() }, { let proxy = this.proxy.clone(); move || { let _ = proxy.send_event(WakeEvent::Turn); } });
             crate::open_url::incoming::settle();
             // A window opened at launch took it; a GPU kept for a later one would sit idle until then.
             crate::render::discard_prewarm();
@@ -550,11 +541,6 @@ impl ApplicationHandler<WakeEvent> for Windows {
                 // A session query (`ending: false`) can still be cancelled: the windows stay up.
                 WakeEvent::Quit(ending) => {
                     this.quit(event_loop, *ending, *ending);
-                    this.cleanup(event_loop);
-                    return;
-                }
-                WakeEvent::QuitHeld => {
-                    for host in this.hosts.iter_mut().flatten() { host.close_request(event_loop); }
                     this.cleanup(event_loop);
                     return;
                 }
@@ -638,8 +624,6 @@ impl ApplicationHandler<WakeEvent> for Windows {
             // putting off behind another window's.
             let now = crate::time::now();
             for host in this.hosts.iter_mut().flatten() { host.turn_ends(event_loop, now); }
-            #[cfg(target_os = "macos")]
-            crate::quit::set_guarded(this.hosts.iter_mut().flatten().any(|h| h.close_guarded()));
             let effects = wayland_wake::about_to_wait(&mut this.wayland_wake, &this.hosts);
             this.apply_wayland_wake(event_loop, effects);
             // Layer surfaces have no redraw events: keep turning while one animates (its vsync

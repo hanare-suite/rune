@@ -71,6 +71,7 @@ struct HeadlessConfig {
     titlebar: Option<crate::Titlebar>,
     fit_height: bool,
     app_options: crate::WindowOptions,
+    keep_running: bool,
     min_size: Option<(f32, f32)>,
     on_ready: Option<crate::app::OnWindow>,
     on_frame_encoded: Option<crate::frame::encoded::OnFrameEncoded>,
@@ -165,6 +166,7 @@ fn try_headless_configured<S: 'static>(mut app: crate::app::App<S>, args: Args, 
     let (chrome, titlebar, fit_height) = (app.chrome, app.titlebar, app.fit_content_height);
     let app_options = app.window_options.clone();
     let comp = app.compositor.take();
+    let keep_running = app.keep_running;
     let (on_close_request, on_close, on_reopen, on_open_url, on_open_files) = (
         app.on_close_request, app.on_close, app.on_reopen, app.on_open_url, app.on_open_files,
     );
@@ -181,7 +183,7 @@ fn try_headless_configured<S: 'static>(mut app: crate::app::App<S>, args: Args, 
     }
     rt.configure(runtime);
     let config = HeadlessConfig {
-        launched, state_ms, args, transparent, chrome, titlebar, fit_height, app_options,
+        launched, state_ms, args, transparent, chrome, titlebar, fit_height, app_options, keep_running,
         min_size: spec.min_size, on_ready, on_frame_encoded,
         shared_core: shared.core.clone(), shortcuts_core: shared.shortcuts.core.clone(), shortcuts, menus,
     };
@@ -192,7 +194,7 @@ fn try_headless_configured<S: 'static>(mut app: crate::app::App<S>, args: Args, 
 fn run_headless(prep: HeadlessPrep, config: HeadlessConfig, app: &mut dyn HeadlessApp) -> Result<(), String> {
     let HeadlessPrep { source, script, timeline, scale, size, dark, mut writer } = prep;
     let HeadlessConfig {
-        launched, state_ms, args, transparent, chrome, titlebar, fit_height, app_options,
+        launched, state_ms, args, transparent, chrome, titlebar, fit_height, app_options, keep_running,
         min_size, on_ready, on_frame_encoded, shared_core, shortcuts_core, shortcuts, mut menus,
     } = config;
     // A `--realtime` run stands in for a window, so it starts the app's live work as one does.
@@ -342,6 +344,7 @@ fn run_headless(prep: HeadlessPrep, config: HeadlessConfig, app: &mut dyn Headle
         cpu_boot: &cpu_boot,
         loop_check: super::loop_check::Tally::default(),
         closed: false,
+        keep_running,
         cpu_ms: Vec::new(),
         anim_ms: Vec::new(),
         rest_ms: Vec::new(),
@@ -384,7 +387,7 @@ fn run_headless(prep: HeadlessPrep, config: HeadlessConfig, app: &mut dyn Headle
                 }
                 Kind::Mark(_) => {}
                 // The one window always shows here.
-                Kind::Reopen => app.run_reopen(),
+                Kind::Reopen => { app.run_reopen(); state.closed = false; }
                 // The close button asks as a user's close request does.
                 Kind::Close | Kind::CloseRequest => state.close(app, true),
                 Kind::OpenUrl(url) => app.run_open_url(url),
