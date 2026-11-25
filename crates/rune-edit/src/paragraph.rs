@@ -319,12 +319,26 @@ impl TextEdit {
     /// lines after it. The merged line keeps `la`'s attributes (`lb`'s with `take_b`), each
     /// added line takes a copy with a new id, and an atom stays only on a line `kept` names.
     /// Text on a line that was an atom's is a new paragraph, with a new id.
+    /// `front` says the edit inserted at the start of line `la`: the added lines come first, new
+    /// paragraphs (copies of the line's style when it is `Some(true)`), and the line keeps its attributes.
     /// An atom `kept.tail` names is the last line the edit leaves and keeps its own attributes
     /// there, so the merged line never takes them too: no id ends up on two paragraphs.
-    pub(super) fn splice_attrs(&mut self, la: usize, lb: usize, added: usize, take_b: bool, kept: Kept) {
+    pub(super) fn splice_attrs(&mut self, la: usize, lb: usize, added: usize, take_b: bool, kept: Kept, front: Option<bool>) {
         if self.attrs.is_empty() { return; }
         let get = |attrs: &[ParagraphAttrs], i: usize| attrs.get(i).copied().unwrap_or_default();
         let (first, last) = (get(&self.attrs, la), get(&self.attrs, lb));
+        if let Some(copy) = front {
+            // An insertion at the line's start: the added lines come first, the line itself last.
+            let mut lines = Vec::with_capacity(added + 1);
+            for _ in 0..added {
+                let id = self.fresh_id();
+                lines.push(if copy { split_attrs(first, id) } else { ParagraphAttrs::default().id(id) });
+            }
+            lines.push(first);
+            let end = (lb + 1).min(self.attrs.len());
+            self.attrs.splice(la.min(end)..end, lines);
+            return;
+        }
         let survivor = if kept.head {
             first
         } else if kept.tail {

@@ -135,7 +135,14 @@ impl TextEdit {
         let whole = s.is_empty() && line_a < line_b && a == line_a_range.start && b == line_b_range.start;
         let take_b = !(kept.tail && added_lines > 0)
             && (atom_gone || whole || (line_a < line_b && line_a_range.is_empty() && a == line_a_range.start && b == line_b_range.start));
-        self.splice_attrs(line_a, line_b, added_lines, take_b, kept);
+        // An insertion at the start of a line goes before it: the line keeps its id and attributes
+        // and the paragraphs the text brings are new ones above it. Return gives them the line's
+        // style and alignment; other text brings paragraphs of the defaults.
+        let merged_block_here = self.blocks.get(line_a).copied().unwrap_or(Block::Paragraph);
+        let front = (a == b && a == line_a_range.start && added_lines > 0 && !mark_new_lines_soft && !kept.head && !kept.tail
+            && self.paragraph(line_a).atom.is_none() && new_line_block.is_none_or(|blk| blk == merged_block_here))
+            .then(|| s == "\n");
+        self.splice_attrs(line_a, line_b, added_lines, take_b, kept, front);
         // Determine the surviving block for `line_a` when `a..b` merges `line_a..=line_b`.
         let merged_block = if take_b || (kept.tail && added_lines == 0) {
             self.blocks.get(line_b).copied().unwrap_or(Block::Paragraph)
@@ -167,6 +174,14 @@ impl TextEdit {
         if added_lines > 0 {
             let insert_pos = (line_a + 1).min(self.blocks.len());
             self.blocks.splice(insert_pos..insert_pos, std::iter::repeat_n(next_line_blk, added_lines));
+        }
+        if front.is_some() {
+            if let Some(slot) = self.blocks.get_mut(line_a) {
+                *slot = next_line_blk;
+            }
+            if let Some(slot) = self.blocks.get_mut(line_a + added_lines) {
+                *slot = merged_block;
+            }
         }
 
         // Update `soft_breaks`.
