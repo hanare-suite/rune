@@ -105,20 +105,21 @@ impl Block {
         }
     }
 
-    /// Whether `self` and `other` share the same block kind (ignoring list nesting level).
+    /// Whether `self` and `other` share the same block kind (ignoring list nesting level). Two
+    /// [`Block::Styled`] share one only when they name the same style.
     pub fn same_kind(self, other: Block) -> bool {
-        matches!(
-            (self, other),
+        match (self, other) {
+            (Block::Styled(a), Block::Styled(b)) => a == b,
             (Block::Paragraph, Block::Paragraph)
-                | (Block::Bullet(_), Block::Bullet(_))
-                | (Block::Numbered(_), Block::Numbered(_))
-                | (Block::Quote, Block::Quote)
-                | (Block::Code, Block::Code)
-                | (Block::Styled(_), Block::Styled(_))
-        )
+            | (Block::Bullet(_), Block::Bullet(_))
+            | (Block::Numbered(_), Block::Numbered(_))
+            | (Block::Quote, Block::Quote)
+            | (Block::Code, Block::Code) => true,
+            _ => false,
+        }
     }
 
-    /// This block's kind as one bit, for `TextEdit::allow_blocks`.
+    /// This block's kind as one bit, for `TextEdit::allow_blocks`: every [`Block::Styled`] is one.
     #[doc(hidden)]
     pub fn kind_bit(self) -> u8 {
         1 << match self {
