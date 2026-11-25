@@ -645,11 +645,18 @@ impl TextEdit {
                     *slot = frag.blocks[0];
                 }
             }
-            // The line a trailing break leaves the caret on keeps the block it had.
+            // The last line is not the fragment's when it ends in a break: it is what is left
+            // of the line the paste split, and keeps that line's block unless the paste was at
+            // its end, where it is a new empty paragraph.
             let ends_break = frag.text.ends_with('\n');
             for k in 1..frag_lines - usize::from(ends_break) {
                 if let Some(slot) = self.blocks.get_mut(line_idx + k) {
                     *slot = frag.blocks[k];
+                }
+            }
+            if ends_break && !at_line_end && !own_line {
+                if let Some(slot) = self.blocks.get_mut(line_idx + frag_lines - 1) {
+                    *slot = orig_block;
                 }
             }
         }

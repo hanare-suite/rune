@@ -135,11 +135,12 @@ impl TextEdit {
         let whole = s.is_empty() && line_a < line_b && a == line_a_range.start && b == line_b_range.start;
         let take_b = !(kept.tail && added_lines > 0)
             && (atom_gone || whole || (line_a < line_b && line_a_range.is_empty() && a == line_a_range.start && b == line_b_range.start));
-        // An insertion at the start of a line goes before it: the line keeps its id and attributes
+        // An insertion at the start of a line, over a selection that starts there or none, goes
+        // before what is left of it: the line keeps its id and attributes
         // and the paragraphs the text brings are new ones above it. Return gives them the line's
         // style and alignment; other text brings paragraphs of the defaults.
         let merged_block_here = self.blocks.get(line_a).copied().unwrap_or(Block::Paragraph);
-        let front = (a == b && a == line_a_range.start && added_lines > 0 && !mark_new_lines_soft && !kept.head && !kept.tail
+        let front = (a == line_a_range.start && added_lines > 0 && !mark_new_lines_soft && !kept.head && !kept.tail
             && self.paragraph(line_a).atom.is_none() && new_line_block.is_none_or(|blk| blk == merged_block_here))
             .then(|| s == "\n");
         self.splice_attrs(line_a, line_b, added_lines, take_b, kept, front);

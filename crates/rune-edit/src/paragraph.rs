@@ -334,7 +334,7 @@ impl TextEdit {
                 let id = self.fresh_id();
                 lines.push(if copy { split_attrs(first, id) } else { ParagraphAttrs::default().id(id) });
             }
-            lines.push(first);
+            lines.push(if take_b { last } else { first });
             let end = (lb + 1).min(self.attrs.len());
             self.attrs.splice(la.min(end)..end, lines);
             return;
