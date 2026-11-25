@@ -147,7 +147,6 @@ struct TypedDesktopApp<S: 'static> {
     comp: Option<Box<dyn Compositor<S>>>,
     on_close_request: Option<fn(&mut S, &mut crate::Tx) -> crate::CloseResponse>,
     on_close: Option<fn(&mut S, &mut crate::Tx)>,
-    close_guard: Option<crate::app::CloseGuard<S>>,
     on_reopen: Option<fn(&mut S, bool, &mut crate::Tx) -> bool>,
 }
 
@@ -165,7 +164,7 @@ impl<S: 'static> DesktopApp for TypedDesktopApp<S> {
         Some(resp)
     }
     fn hold_close(&mut self) -> bool {
-        self.close_guard.is_some_and(|guard| guard.holds(&mut self.rt))
+        self.shared.close_guard.get().is_some_and(|guard| guard.holds(&mut self.rt))
     }
     fn run_on_close(&mut self) {
         if let Some(f) = self.on_close { self.rt.update(f); }
@@ -285,7 +284,6 @@ impl Window {
         let (open, keep_running, fit_height, on_close_request, on_close, on_reopen) = (
             app.open, app.keep_running, app.fit_content_height, app.on_close_request, app.on_close, app.on_reopen,
         );
-        let close_guard = app.close_guard;
         let native = std::mem::take(&mut app.macos_window);
         let (chrome, titlebar) = (app.chrome, app.titlebar);
         let (playground, attach_playground) = (app.playground.take(), app.attach_playground);
@@ -301,7 +299,7 @@ impl Window {
         }
         rt.configure(runtime);
         let (shared_core, shortcuts_core) = (shared.core.clone(), shared.shortcuts.core.clone());
-        let typed = Box::new(TypedDesktopApp { rt, shared, comp, on_close_request, on_close, close_guard, on_reopen });
+        let typed = Box::new(TypedDesktopApp { rt, shared, comp, on_close_request, on_close, on_reopen });
         Self::from_app(typed, WindowInit {
             key,
             shared_core,

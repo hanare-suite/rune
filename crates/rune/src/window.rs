@@ -248,7 +248,7 @@ pub(crate) trait AnyHost {
     /// Whether the window holds back its close now (`App::on_close_guard`).
     fn close_guarded(&mut self) -> bool { false }
     /// A macOS Quit was held back: a guarded window asks (`App::on_close_guard`).
-    fn close_request(&mut self) {}
+    fn close_request(&mut self, _event_loop: &ActiveEventLoop) {}
     /// Ends a tracking pop-up menu and answers waiting ones `None`, before the host drops or
     /// the loop exits.
     fn cancel_menus(&mut self) {}
@@ -554,7 +554,7 @@ impl ApplicationHandler<WakeEvent> for Windows {
                     return;
                 }
                 WakeEvent::QuitHeld => {
-                    for host in this.hosts.iter_mut().flatten() { host.close_request(); }
+                    for host in this.hosts.iter_mut().flatten() { host.close_request(event_loop); }
                     this.cleanup(event_loop);
                     return;
                 }

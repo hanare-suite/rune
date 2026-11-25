@@ -90,6 +90,15 @@ pub(super) struct HeadlessLoop<'a> {
 }
 
 impl HeadlessLoop<'_> {
+    /// A close as the native window takes it, once: `user` for a user's close request (the close
+    /// button, `{"close_request": true}`: `on_close_request`, then the guard, then `on_close`),
+    /// else `Tx::close_window` (the guard, then `on_close`). The window is closed only when no
+    /// hook held it back.
+    pub(super) fn close(&mut self, app: &mut dyn HeadlessApp, user: bool) {
+        if self.closed { return; }
+        self.closed = if user { app.run_close_request() == crate::CloseResponse::Close } else { app.close_window() };
+    }
+
     #[inline]
     fn reblend_offscreen(&mut self, rt: &mut RuntimeCore) {
         let rt_srgb = rt.srgb_blend();
@@ -177,7 +186,7 @@ impl<F: FnMut(FrameShot, Vec<u8>)> FrameHost for HeadlessFrame<'_, '_, F> {
         let mut animating = self.app.frame(step);
         if self.app.rt().shell_request == Some(crate::el::Shell::Close) {
             self.app.rt_mut().shell_request = None;
-            s.closed |= self.app.press_close();
+            s.close(&mut *self.app, false);
         }
         if let Some(asked) = asked {
             s.loop_check.add(self.real_t, self.script_had_events, asked, self.app.rt_mut().loop_checked());

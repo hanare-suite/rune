@@ -84,27 +84,6 @@ impl<S> Clone for TurnScope<S> {
 #[cfg(not(target_arch = "wasm32"))]
 impl<S> Copy for TurnScope<S> {}
 
-/// `App::on_close_guard`.
-pub(crate) struct CloseGuard<S> {
-    pub(crate) guarded: fn(&S) -> bool,
-    pub(crate) ask: fn(&mut S, &mut Tx),
-}
-
-impl<S> Clone for CloseGuard<S> {
-    fn clone(&self) -> Self { *self }
-}
-
-impl<S> Copy for CloseGuard<S> {}
-
-impl<S> CloseGuard<S> {
-    /// Runs `ask` when the window is guarded. True when it held the close.
-    pub(crate) fn holds(self, rt: &mut crate::Runtime<S>) -> bool {
-        let held = (self.guarded)(&rt.state);
-        if held { rt.update(self.ask); }
-        held
-    }
-}
-
 /// Normalizes an opt-in frame-rate cap (Hz): positive finite values clamp to at least `1.0` Hz,
 /// while zero, negative, NaN and infinite values normalize to `0.0` (uncapped display rate).
 #[inline]
@@ -145,7 +124,6 @@ pub struct App<S: 'static> {
     pub(crate) keep_running: bool,
     pub(crate) on_close_request: Option<fn(&mut S, &mut Tx) -> CloseResponse>,
     pub(crate) on_close: Option<fn(&mut S, &mut Tx)>,
-    pub(crate) close_guard: Option<CloseGuard<S>>,
     pub(crate) on_quit: Option<fn(&mut S, &mut Tx)>,
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) turn_scope: Option<TurnScope<S>>,
@@ -223,7 +201,6 @@ impl<S: 'static> App<S> {
             keep_running: false,
             on_close_request: None,
             on_close: None,
-            close_guard: None,
             on_quit: None,
             #[cfg(not(target_arch = "wasm32"))]
             turn_scope: None,
@@ -885,26 +862,6 @@ impl<S: 'static> App<S> {
     /// Its `Tx::quit` quits.
     pub fn on_close(mut self, f: fn(&mut S, &mut Tx)) -> Self {
         self.on_close = Some(f);
-        self
-    }
-
-    /// Lets the window hold back every close and a macOS Quit, for unsaved changes. Before a
-    /// close (the close button, ⌘W, `Tx::close_window`, `AppHandle::close`) and before a macOS
-    /// Quit (⌘Q, the menu, the Dock, logout) Rune asks `guarded`. While it says true the window
-    /// stays and `ask` runs instead, where the app puts its question up. To close after the
-    /// answer, make `guarded` say false and call `Tx::close_window`. A quit that was held back is
-    /// not taken up again: closing the window ends an app that does not keep running.
-    /// `Tx::quit`, `AppHandle::quit` and the end of a Windows session are not held back.
-    /// `guarded` runs often (after every turn of the event loop on macOS), so it only reads the
-    /// state.
-    ///
-    /// [`App::on_close_request`] covers the user's own close requests alone (and answers with a
-    /// [`CloseResponse`]); this guard also holds the closes the app asks for and a macOS Quit,
-    /// which `on_close_request` lets through. On a user's close request the app's
-    /// `on_close_request` runs first, and a `Defer` stands on its own; a `Close` goes on to ask
-    /// `guarded`.
-    pub fn on_close_guard(mut self, guarded: fn(&S) -> bool, ask: fn(&mut S, &mut Tx)) -> Self {
-        self.close_guard = Some(CloseGuard { guarded, ask });
         self
     }
 

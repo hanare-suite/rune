@@ -5,7 +5,7 @@ use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 
 use winit::window::Window;
 
-use crate::app::{CloseGuard, Shared, TurnScope, WindowRequests};
+use crate::app::{Shared, TurnScope, WindowRequests};
 use crate::compose::{Compositor, Frame};
 use crate::el::Tx;
 use crate::frame::clock::FrameClock;
@@ -37,6 +37,8 @@ pub(crate) trait WindowApp {
     fn enter_turn(&mut self) -> bool;
     fn leave_turn(&mut self);
     fn run_on_close_request(&mut self) -> Option<crate::CloseResponse>;
+    /// Whether the app set `App::on_close_guard`.
+    fn has_close_guard(&self) -> bool;
     /// Whether `App::on_close_guard` says now that a close is held back. False without the hook.
     fn close_guarded(&self) -> bool;
     /// Asks `App::on_close_guard`: while it holds the close, runs its `ask`. True when it held.
@@ -214,17 +216,18 @@ pub(in crate::window) fn test_app_with_close_request<S: 'static>(
 pub(in crate::window) fn test_app_with_close_guard<S: 'static>(
     rt: Runtime<S>,
     on_close_request: Option<fn(&mut S, &mut Tx) -> crate::CloseResponse>,
-    close_guard: Option<CloseGuard<S>>,
+    close_guard: Option<crate::close_guard::CloseGuard<S>>,
     on_close: Option<fn(&mut S, &mut Tx)>,
     on_quit: Option<fn(&mut S, &mut Tx)>,
 ) -> Box<dyn WindowApp> {
+    let shared = Arc::new(Shared::default());
+    if let Some(guard) = close_guard { shared.close_guard.set(guard); }
     Box::new(TypedWindowApp {
         rt,
-        shared: Arc::new(Shared::default()),
+        shared,
         comp: None,
         on_frame_drawn: None,
         on_close_request,
-        close_guard,
         on_close,
         on_rest: None,
         on_quit,
@@ -243,8 +246,6 @@ pub(crate) struct TypedWindowApp<S: 'static> {
     pub(super) comp: Option<Box<dyn Compositor<S>>>,
     pub(super) on_frame_drawn: Option<OnFrameDrawn<S>>,
     pub(super) on_close_request: Option<fn(&mut S, &mut Tx) -> crate::CloseResponse>,
-    /// `App::on_close_guard`.
-    pub(super) close_guard: Option<CloseGuard<S>>,
     pub(super) on_close: Option<fn(&mut S, &mut Tx)>,
     pub(super) on_rest: Option<fn(&mut S, &mut Tx) -> bool>,
     pub(super) on_quit: Option<fn(&mut S, &mut Tx)>,
@@ -262,14 +263,14 @@ impl<S: 'static> TypedWindowApp<S> {
         let (on_close_request, on_close, on_rest, on_reopen, on_quit, turn_scope) = (
             app.on_close_request, app.on_close, app.on_rest, app.on_reopen, app.on_quit, app.turn_scope,
         );
-        let (on_geometry, close_guard) = (app.on_window_geometry, app.close_guard);
+        let on_geometry = app.on_window_geometry;
         let comp = app.compositor.take();
         let (layout_seed, keep_layout) = (app.layout_seed.take(), app.keep_layout.take());
         let (spec, state, shared, runtime) = app.into_parts(None);
         let mut rt = crate::tooling::runtime_for(&spec, state, spec.size, crate::runtime::Env::default(), waker);
         rt.configure(runtime);
         Self {
-            rt, shared, comp, on_frame_drawn: None, on_close_request, close_guard, on_close, on_rest, on_quit, on_reopen, on_geometry, turn_scope,
+            rt, shared, comp, on_frame_drawn: None, on_close_request, on_close, on_rest, on_quit, on_reopen, on_geometry, turn_scope,
             keep_layout, kept_layout: layout_seed,
         }
     }
@@ -325,24 +326,14 @@ impl<S: 'static> WindowApp for TypedWindowApp<S> {
         Some(response)
     }
 
+    fn has_close_guard(&self) -> bool { self.shared.close_guard.get().is_some() }
+
     fn close_guarded(&self) -> bool {
-        let Some(guard) = self.close_guard else { return false };
-        #[cfg(feature = "hot")]
-        return crate::hot::patched_or_original!("close_guard::guarded", guard.guarded, &self.rt.state);
-        #[cfg(not(feature = "hot"))]
-        (guard.guarded)(&self.rt.state)
+        self.shared.close_guard.get().is_some_and(|guard| guard.is_guarded(&self.rt.state))
     }
 
     fn hold_close(&mut self) -> bool {
-        let Some(guard) = self.close_guard else { return false };
-        let held = self.close_guarded();
-        if held {
-            #[cfg(feature = "hot")]
-            self.rt.update(|s, tx| crate::hot::patched_or_original!("close_guard::ask", guard.ask, s, tx));
-            #[cfg(not(feature = "hot"))]
-            self.rt.update(guard.ask);
-        }
-        held
+        self.shared.close_guard.get().is_some_and(|guard| guard.holds(&mut self.rt))
     }
 
     fn run_on_close(&mut self) {
