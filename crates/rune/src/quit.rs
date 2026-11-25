@@ -276,7 +276,7 @@ pub fn quitting() -> bool {
 
 /// Hooks the system's quit requests into the loop: `send` delivers a quit (`true` when the
 /// session ends now and the windows must close) to `Windows`. Once per process, on the UI thread.
-/// `held` tells `Windows` that a macOS Quit was held back for a guarded window.
+/// `held` wakes `Windows` when a macOS Quit was held back for a guarded window (`take_held`).
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn install(send: impl Fn(bool) -> bool + 'static, held: impl Fn() + 'static) {
     #[cfg(target_os = "windows")]
@@ -287,13 +287,25 @@ pub(crate) fn install(send: impl Fn(bool) -> bool + 'static, held: impl Fn() + '
     let _ = (send, held);
 }
 
-/// macOS: whether a window holds back its close (`App::on_close_guard`), as of the end of
-/// the loop's last turn. AppKit asks about a quit between turns, with no way to the windows.
+/// macOS: how many windows hold back their close (`App::on_close_guard`) as of their last
+/// handler. AppKit asks about a quit between handlers, with no way to the windows.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-static GUARDED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static GUARDED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
+/// A macOS Quit was held back and not yet put to the windows (`take_held`).
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-pub(crate) fn set_guarded(on: bool) { GUARDED.store(on, std::sync::atomic::Ordering::Relaxed); }
+static HELD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// A window now holds back its close (`true`) or no longer does.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) fn guarded_by(on: bool) {
+    use std::sync::atomic::Ordering::Relaxed;
+    if on { GUARDED.fetch_add(1, Relaxed); } else { GUARDED.fetch_sub(1, Relaxed); }
+}
+
+/// Whether a Quit was held back since the last call: the windows that hold ask now.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) fn take_held() -> bool { HELD.swap(false, std::sync::atomic::Ordering::Relaxed) }
 
 /// Whether the event loop is inside one of its handlers, on the UI thread: a session message
 /// that arrives then (from a modal loop the handler runs) can't run the windows' hooks.

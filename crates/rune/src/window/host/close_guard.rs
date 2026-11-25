@@ -32,7 +32,9 @@ pub(in crate::window) fn settle_plan(ended: bool, window: Option<bool>) -> Settl
     }
 }
 
-/// The host-free core of `Host::holds_close`.
+/// The host-free core of `Host::holds_close`: asks the guard of a window that closes, unless the
+/// loop is exiting. True when it holds. An `ask` that leaves the guard up and asks to close the
+/// window all the same would only ask again, so that close is dropped.
 pub(in crate::window) fn hold_close_core(
     app: &mut dyn WindowApp,
     clipboard: &mut crate::clipboard::Client,
@@ -42,50 +44,88 @@ pub(in crate::window) fn hold_close_core(
 ) -> bool {
     if exiting || !closes || !app.hold_close() { return false; }
     *ends_app = false;
+    if app.close_guarded() && app.rt().shell_request == Some(crate::el::Shell::Close) {
+        app.rt_mut().shell_request = None;
+    }
     clipboard.flush_core(app.rt_mut());
     true
 }
 
-/// The host-free core of a quit asking a guarded window.
+/// The host-free core of a quit asking a guarded window. With `once`, the question a window
+/// asked stays up and is not asked again until its guard has gone down (the app's end held for
+/// a window); without it every quit asks (a macOS Quit).
 pub(in crate::window) fn hold_quit_core(
-    _app: &mut dyn WindowApp,
-    _clipboard: &mut crate::clipboard::Client,
-    _closes: bool,
-    _ends_app: &mut bool,
-    _asked: &mut bool,
-    _once: bool,
+    app: &mut dyn WindowApp,
+    clipboard: &mut crate::clipboard::Client,
+    closes: bool,
+    ends_app: &mut bool,
+    asked: &mut bool,
+    once: bool,
 ) -> Hold {
-    Hold::No
+    if !closes || !app.close_guarded() {
+        *asked = false;
+        return Hold::No;
+    }
+    if once && *asked { return Hold::Held; }
+    *asked = true;
+    if hold_close_core(app, clipboard, closes, false, ends_app) { Hold::Asked } else { Hold::No }
 }
 
 impl Host {
     /// A guarded window stays open and asks (`App::on_close_guard`), unless the loop is exiting.
     /// True when it held the close.
     pub(in crate::window) fn holds_close(&mut self, event_loop: &ActiveEventLoop) -> bool {
-        if event_loop.exiting() || !self.closes() || !self.app.hold_close() { return false; }
-        self.ends_app = false;
-        self.clipboard.flush_core(self.app.rt_mut());
+        let closes = self.closes();
+        if !hold_close_core(&mut *self.app, &mut self.clipboard, closes, event_loop.exiting(), &mut self.ends_app) {
+            return false;
+        }
         self.settle_open(event_loop);
         true
+    }
+
+    /// A quit asks the window (`App::on_close_guard`); its follow-up comes with the turn's end.
+    pub(in crate::window) fn holds_quit(&mut self, once: bool) -> bool {
+        let closes = self.closes();
+        match hold_quit_core(&mut *self.app, &mut self.clipboard, closes, &mut self.ends_app, &mut self.quit_asked, once) {
+            Hold::No => false,
+            Hold::Held => true,
+            Hold::Asked => { self.settle_due = true; true }
+        }
     }
 
     /// What a window that stays open after a close was asked of it still has to do: carry out the
     /// requests its hook made (`Host::shell`), then paint them, or in a covered or minimized
     /// window give them a covered frame, or with no window shown schedule their wakes.
     pub(in crate::window) fn settle_open(&mut self, event_loop: &ActiveEventLoop) {
+        self.settle_due = false;
         self.shell(event_loop);
-        if self.life.finished() || event_loop.exiting() {
-            return;
-        }
-        if let Some(w) = self.shown_win() {
-            if !self.life.covered() && !w.minimized() {
-                w.request_redraw();
-            } else {
+        let window = self.shown_win().map(|w| !self.life.covered() && !w.minimized());
+        match settle_plan(self.life.finished() || event_loop.exiting(), window) {
+            Settle::Stop => {}
+            Settle::Paint => if let Some(w) = self.shown_win() { w.request_redraw(); },
+            Settle::Covered => {
                 self.covered_frame();
                 self.shell(event_loop);
             }
-        } else {
-            self.app.rt_mut().schedule_pending_wakes();
+            Settle::Wakes => self.app.rt_mut().schedule_pending_wakes(),
         }
+    }
+
+    /// macOS: tells `Quit` whether this window holds back a quit, after every handler, so a state
+    /// change and a Quit in one pass meet the same answer.
+    #[cfg(target_os = "macos")]
+    pub(in crate::window) fn note_guard(&mut self) {
+        let now = self.closes() && self.app.close_guarded();
+        if now != self.guarded {
+            self.guarded = now;
+            crate::quit::guarded_by(now);
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl Drop for Host {
+    fn drop(&mut self) {
+        if self.guarded { crate::quit::guarded_by(false); }
     }
 }
