@@ -434,3 +434,7 @@ mod path_agreement_edge_tests;
 #[cfg(test)]
 #[path = "path_agreement_report_tests.rs"]
 mod path_agreement_report_tests;
+
+#[cfg(test)]
+#[path = "soft_line_tests.rs"]
+mod soft_line_tests;
