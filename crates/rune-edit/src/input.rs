@@ -19,7 +19,7 @@ impl TextEdit {
         let before = self.snapshot();
         let (a, b) = self.range();
         // Return over a selected break changes nothing, as typing the break does not.
-        if !soft && a < b && &self.text[a..b] == "\n" {
+        if a < b && &self.text[a..b] == "\n" && self.soft_breaks.binary_search(&(self.line_of_byte(b) as u32)).is_ok() == soft {
             self.anchor = b;
             self.focus = b;
             self.cancel_composition();
@@ -176,7 +176,9 @@ impl TextEdit {
                     let (a, b) = self.range();
                     let line_idx = self.line_of_byte(a);
                     let blk = self.blocks.get(line_idx).copied().unwrap_or(Block::Paragraph);
+                    // (An empty soft line is no empty list item, quote or code line: a break there is a break.)
                     let line_range = self.line_range(line_idx);
+                    let blank = line_range.is_empty() && self.soft_breaks.binary_search(&(line_idx as u32)).is_err();
                     if m.shift && self.rich {
                         // Shift+Return: soft line break keeping the current paragraph's block.
                         self.insert_newline(blk, true);
@@ -187,7 +189,7 @@ impl TextEdit {
                             Block::Code => {
                                 // Return on a blank last line leaves the block, as on an empty
                                 // list item; anywhere else it inserts a newline.
-                                if a == b && line_range.is_empty() && self.blocks.get(line_idx + 1) != Some(&Block::Code) {
+                                if a == b && blank && self.blocks.get(line_idx + 1) != Some(&Block::Code) {
                                     self.set_block(Block::Paragraph);
                                 } else {
                                     self.insert_newline(Block::Code, false);
@@ -195,14 +197,14 @@ impl TextEdit {
                             }
                             Block::Bullet(_) | Block::Numbered(_) => {
                                 // Return in an empty list item ends the list; otherwise continues it.
-                                if a == b && line_range.is_empty() {
+                                if a == b && blank {
                                     self.set_block(Block::Paragraph);
                                 } else {
                                     self.insert_newline(blk, false);
                                 }
                             }
                             Block::Quote => {
-                                if a == b && line_range.is_empty() {
+                                if a == b && blank {
                                     self.set_block(Block::Paragraph);
                                 } else {
                                     self.insert_newline(Block::Quote, false);
@@ -634,6 +636,7 @@ impl TextEdit {
         }
         self.break_history_group();
         let before = self.snapshot();
+        let (log_at, state_was) = (self.changes.len(), self.state_key());
         let (a, b) = self.range();
 
         if self.is_single_line() {
@@ -673,7 +676,7 @@ impl TextEdit {
         // one line, the line the paste lands in.
         let (la, lb) = (self.line_of_byte(a), self.line_of_byte(b));
         let (ra, rb) = (self.line_range(la), self.line_range(lb));
-        let recv_start = a == ra.start;
+        let recv_start = a == ra.start && self.soft_breaks.binary_search(&(la as u32)).is_err();
         // A paragraph the selection takes from its start into a later line, whose text the paste
         // does not join: a fragment atom first in the paste takes its place.
         let consumed_first = la < lb && recv_start;
@@ -768,6 +771,7 @@ impl TextEdit {
             }
         }
 
+        self.receiving_paragraph_heads_soft_lines(&frag, line_idx, frag_lines, !is_new(fenced.lead + frag_lines - 1));
         // Add `frag.marks` shifted by `ins_at`.
         for m in &frag.marks {
             self.marks.push(MarkRange {
@@ -784,6 +788,8 @@ impl TextEdit {
         if styled || frag_lines > 1 || frag.blocks.first().is_some_and(|&b| b != Block::Paragraph) {
             self.note_paragraphs(first..first + new.len().max(frag_lines));
         }
+        // A paste that left everything as it was reports nothing.
+        if self.state_key() == state_was { self.changes.truncate(log_at); }
         self.record_change(before, EditKind::Other);
         EditOutcome::default()
     }

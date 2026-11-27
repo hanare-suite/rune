@@ -360,6 +360,8 @@ impl TextEdit {
     }
 
     pub(super) fn record_change(&mut self, before: Option<Snapshot>, kind: EditKind) {
+        // Whatever the edit did to a paragraph, its soft lines are still its own.
+        self.mirror_soft_lines();
         let Some(before) = before.filter(|_| self.recording()) else {
             return;
         };

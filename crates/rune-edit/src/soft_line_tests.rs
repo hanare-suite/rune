@@ -164,8 +164,14 @@ fn every_edit_over_every_selection_of_documents_with_soft_lines_keeps_the_invari
                             let pl = text[a..b].to_string();
                             if *op == "html-own" { x.paste_html(&h, &pl); } else { let fr = x.html_fragment(&h); x.paste_fragment(fr, &pl); }
                             let sel_atom = (0..starts.len()).any(|i| atoms.contains(&i) && { let s = starts[i]; let e = text[s..].find('\n').map_or(text.len(), |n| s + n); s < b && e > a || (s >= a && e <= b) });
-                            if !(sel_atom && *op == "html-own") {
-                                if noid(&x) != noid(&f) { flags.push("OWN-CHANGED".into()); } else if st(&x) != st(&f) { flags.push("OWN-IDS".into()); }
+                            // Code decides by position, and HTML cannot say a code line's alignment: a copy pasted over code, or
+                            // into the line before or after it, is not itself (the edge probe leaves code out the same way).
+                            let (la, lb) = (text[..a].matches('\n').count(), text[..b].matches('\n').count());
+                            let lossy_code = (la.saturating_sub(1)..=(lb + 1).min(blocks.len() - 1)).any(|l| blocks[l] == c);
+                            if !(sel_atom && *op == "html-own") && !lossy_code {
+                                // (A paragraph's identity is its head's id: a soft line's id is its own and no one's.)
+                                let hard_ids = |e: &TextEdit| (0..e.text.split('\n').count()).filter(|i| !e.soft_breaks().contains(&(*i as u32))).map(|i| e.paragraph(i).id).collect::<Vec<_>>();
+                                if noid(&x) != noid(&f) { flags.push("OWN-CHANGED".into()); } else if hard_ids(&x) != hard_ids(&f) { flags.push("OWN-IDS".into()); }
                             }
                             flags.push(format!("[{h}]"));
                         }
@@ -280,13 +286,20 @@ fn a_cut_paragraph_with_a_soft_line_and_an_indent_pastes_back_whole() {
 #[test]
 fn a_paste_over_the_selection_compares_its_soft_lines() {
     let p = Block::Paragraph;
-    let hard = doc("ab\ncd\nef", vec![p, p, p], &[], &[], vec![], true);
+    let plain_doc = |soft: &[u32]| {
+        let mut e = TextEdit::from_parts("ab\ncd\nef", vec![], vec![p, p, p]);
+        e.set_paragraph_attrs(vec![id(1), id(2), id(3)]);
+        e.set_soft_breaks(soft.to_vec());
+        e.take_changes();
+        e
+    };
+    let hard = plain_doc(&[]);
     let mut x = hard.clone();
     x.set_selection(3, 8);
     x.paste_html("<p>cd<br>ef</p>", "cd\nef");
     assert_eq!(x.soft_breaks(), &[2], "{}", show(&x));
     assert!(!x.take_changes().is_empty(), "the softness changed: {}", show(&x));
-    let soft = doc("ab\ncd\nef", vec![p, p, p], &[], &[2], vec![], true);
+    let soft = plain_doc(&[2]);
     let mut y = soft.clone();
     y.set_selection(3, 8);
     y.paste_html("<p>cd</p><p>ef</p>", "cd\nef");

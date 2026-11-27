@@ -2259,6 +2259,15 @@ example, and `spikes/paged/check.py` checks every point below headless.
     its block. A pasted atom is an atom on a line of its own, with an id of its own and its
     block, in a code block too (the code line splits around it, and the fragment's text goes in
     as plain text). A paste that holds what the selection holds changes nothing, on every path.
+  - A soft line is part of its paragraph, and the paragraph is its head: the hard line its soft lines follow. A soft
+    line always has its head's block, style, alignment and indents (so under a code head it is code, and under any other
+    it is not), whatever edit joined or moved it: a Quote with soft lines that Backspace joins into a Paragraph leaves
+    them Paragraph lines. A soft line's start is the middle of its paragraph, never a paragraph's start: the rules above
+    for line starts and for whole paragraphs look at hard lines' starts only, and a paragraph's id is its head's. A
+    merged line is as soft as the first line it merges. A fragment's soft line that lands on a kept line makes the
+    receiving paragraph the head of that group: its first line has the receiving line's id, attributes and block, and
+    the soft lines mirror it with ids of their own, as typing the text with `Shift+Return` gives. An empty soft line is
+    no empty list item: `Return` there is a break.
   - Position decides, and code wins: a line a paste creates or joins in a code block (on an empty code
     line, at a line's start or end, inside a run) is code, plain text with the whitespace of the plain
     fallback, no marks and no style; a line of the same paste that ends up in a paragraph keeps the

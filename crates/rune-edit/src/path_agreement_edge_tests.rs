@@ -15,6 +15,7 @@ fn fragment_of(e: &TextEdit, a: usize, b: usize) -> TextEdit {
     let marks: Vec<MarkRange> = e.marks().iter().filter(|m| m.start < b && a < m.end).map(|m| MarkRange::new(m.start.max(a) - a..m.end.min(b) - a, m.mark.clone())).collect();
     let mut f = TextEdit::from_parts(&e.text[a..b], marks, (la..=lb).map(|i| e.blocks()[i]).collect());
     f.set_paragraph_attrs((la..=lb).map(|i| { let mut x = e.paragraph(i); x.id = 500 + i as u64; x }).collect());
+    f.set_soft_breaks((la + 1..=lb).filter(|&i| e.soft_breaks().contains(&(i as u32))).map(|i| (i - la) as u32).collect());
     f
 }
 

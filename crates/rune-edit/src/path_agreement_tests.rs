@@ -160,10 +160,11 @@ pub(super) fn joins_code_obs(e: &TextEdit, a: usize, b: usize, ft: &str) -> bool
     let code = |l: usize| e.blocks()[l] == Block::Code && e.paragraph(l).atom.is_none();
     let nl = ft.matches('\n').count();
     let (kept_head, kept_tail) = (e.paragraph(la).atom.is_some() && a == ol[la].1, e.paragraph(lb).atom.is_some() && b == ol[lb].0);
-    let whole = la < lb && a == ol[la].0 && (b == ol[lb].0 || (b == e.text.len() && b == ol[lb].1) || e.paragraph(la).atom.is_some());
+    let hard = |l: usize| !e.soft_breaks().contains(&(l as u32));
+    let whole = la < lb && a == ol[la].0 && hard(la) && ((b == ol[lb].0 && hard(lb)) || (b == e.text.len() && b == ol[lb].1) || e.paragraph(la).atom.is_some());
     // (An atom left whole after the paste keeps its own line: the line before it stays the first.)
     let kept = if whole && !kept_tail { lb } else { la };
-    let (front, tail) = (a == ol[la].0 && nl > 0 && !kept_head && !kept_tail, la < lb && a > ol[la].0 && nl > 0);
+    let (front, tail) = (a == ol[la].0 && hard(la) && nl > 0 && !kept_head && !kept_tail, la < lb && (a > ol[la].0 || !hard(la)) && nl > 0);
     let behind_atom = la < lb && e.paragraph(la).atom.is_some() && a == ol[la].1;
     let last_line = if tail || behind_atom { lb } else { kept };
     let rest = (nl == 0 || front || tail || b < ol[lb].1) && !(kept_tail && nl > 0);
@@ -178,7 +179,8 @@ pub(super) fn makes_code_lines(e: &TextEdit, a: usize, b: usize, ft: &str) -> bo
     let ol = line_ranges(&e.text);
     let (la, lb) = (e.line_of_byte(a), e.line_of_byte(b));
     let kept_tail = e.paragraph(lb).atom.is_some() && b == ol[lb].0 && ft.contains('\n');
-    let whole = la < lb && a == ol[la].0 && (b == ol[lb].0 || (b == e.text.len() && b == ol[lb].1) || e.paragraph(la).atom.is_some());
+    let hard = |l: usize| !e.soft_breaks().contains(&(l as u32));
+    let whole = la < lb && a == ol[la].0 && hard(la) && ((b == ol[lb].0 && hard(lb)) || (b == e.text.len() && b == ol[lb].1) || e.paragraph(la).atom.is_some());
     let kept = if whole && !kept_tail { lb } else { la };
     e.blocks()[kept] == Block::Code
 }
@@ -264,10 +266,12 @@ fn a_pasted_fragment_follows_the_rules_over_every_selection() {
                 let flines: Vec<&str> = ft.split('\n').collect();
                 let last = flines.len() - 1;
                 let (la, lb) = (olines.iter().position(|r| r.0 <= a && a <= r.1).unwrap(), olines.iter().position(|r| r.0 <= b && b <= r.1).unwrap());
+                // A soft line's start is the middle of its paragraph: only hard lines' starts are paragraph starts.
+                let (ha, hb) = (!e.soft_breaks().contains(&(la as u32)), !e.soft_breaks().contains(&(lb as u32)));
                 let (ra, rb) = (olines[la], olines[lb]);
-                let mut wo = oattrs[if la < lb && a == ra.0 && (b == rb.0 || (b == n && b == rb.1) || oattrs[la].atom.is_some()) { lb } else { la }]; wo.id = 0;
-                let recv_block = oblocks[if la < lb && a == ra.0 && (b == rb.0 || (b == n && b == rb.1) || oattrs[la].atom.is_some()) { lb } else { la }];
-                let plain_single = flines.len() == 1 && a == ra.0 && b == rb.1 && wo == ParagraphAttrs::default() && recv_block == Block::Paragraph;
+                let mut wo = oattrs[if la < lb && (a == ra.0 && ha) && ((b == rb.0 && hb) || (b == n && b == rb.1) || oattrs[la].atom.is_some()) { lb } else { la }]; wo.id = 0;
+                let recv_block = oblocks[if la < lb && (a == ra.0 && ha) && ((b == rb.0 && hb) || (b == n && b == rb.1) || oattrs[la].atom.is_some()) { lb } else { la }];
+                let plain_single = flines.len() == 1 && (a == ra.0 && ha) && b == rb.1 && wo == ParagraphAttrs::default() && recv_block == Block::Paragraph;
                 for k in 0..flines.len() {
                     let (t, at, bl) = lines[l0 + k];
                     let from = fa[k];
@@ -302,32 +306,32 @@ fn a_pasted_fragment_follows_the_rules_over_every_selection() {
                 let added = mid.matches('\n').count();
                 let atom_touch = oattrs[la].atom.is_some() || oattrs[lb].atom.is_some();
                 let end_line = la + added;
-                let takes_block = a == ra.0 && b == rb.1 && recv_block == Block::Paragraph && flines.len() > 1 && !ft.ends_with('\n');
+                let takes_block = (a == ra.0 && ha) && b == rb.1 && recv_block == Block::Paragraph && flines.len() > 1 && !ft.ends_with('\n');
                 let blk = |orig: Block, got: Block| if takes_block { got == orig || got == fb[last] } else { got == orig };
-                if a == b && a == ra.0 && !plain_single {
+                if a == b && (a == ra.0 && ha) && !plain_single {
                     // line start: the receiving line keeps id, attrs, block, atom
                     let (t, at, bl) = lines[end_line];
                     if at != oattrs[la] || !blk(oblocks[la], bl) || !t.ends_with(&e.text[ra.0..ra.1]) { fail("rule-line-start", format!("line {la} was {:?} {:?}", oattrs[la], oblocks[la])); }
                 }
-                if a > ra.0 && added == 0 && !atom_touch {
+                if (a > ra.0 || !ha) && added == 0 && !atom_touch {
                     let (_, at, bl) = lines[la];
                     if at != oattrs[la] || bl != oblocks[la] { fail("rule-join", format!("line {la}")); }
                 }
-                if la < lb && a == ra.0 && (b == rb.0 || (b == n && b == rb.1 && oattrs[lb].atom.is_none())) && !plain_single {
+                if la < lb && (a == ra.0 && ha) && ((b == rb.0 && hb) || (b == n && b == rb.1 && oattrs[lb].atom.is_none())) && !plain_single {
                     let (t, at, bl) = lines[end_line];
                     // (A paragraph taken to the end of the text stays as the hard line its soft lines belong to; a soft line
                     // the edit starts on keeps the block of the paragraph above.)
                     let own = if b == n && b != rb.0 { (la..=lb).rev().find(|&l| !e.soft_breaks().contains(&(l as u32))).unwrap_or(la) } else { lb };
                     let want_block = if added == 0 && e.soft_breaks().contains(&(la as u32)) { oblocks[la] } else { oblocks[own] };
-                    if at != oattrs[own] || !blk(want_block, bl) || (b == rb.0 && !t.ends_with(&e.text[rb.0..rb.1])) { fail("rule-whole", format!("line {lb} was {:?} {:?}", oattrs[own], oblocks[own])); }
+                    if at != oattrs[own] || !blk(want_block, bl) || ((b == rb.0 && hb) && !t.ends_with(&e.text[rb.0..rb.1])) { fail("rule-whole", format!("line {lb} was {:?} {:?}", oattrs[own], oblocks[own])); }
                 }
-                if la < lb && a > ra.0 && b > rb.0 && added > 0 && !atom_touch {
+                if la < lb && (a > ra.0 || !ha) && (b > rb.0 || !hb) && added > 0 && !atom_touch {
                     let (_, at, bl) = lines[la];
                     if at != oattrs[la] || bl != oblocks[la] { fail("rule-midmid-first", String::new()); }
                     let (_, at, bl) = lines[end_line];
                     if at != oattrs[lb] || bl != oblocks[lb] { fail("rule-midmid-last", format!("want {:?} {:?}", oattrs[lb], oblocks[lb])); }
                 }
-                if la == lb && a > ra.0 && b < ra.1 && added > 0 && !atom_touch {
+                if la == lb && (a > ra.0 || !ha) && b < ra.1 && added > 0 && !atom_touch {
                     let (_, at, bl) = lines[la];
                     if at != oattrs[la] || bl != oblocks[la] { fail("rule-split-first", String::new()); }
                     let (_, at, bl) = lines[end_line];
@@ -346,6 +350,9 @@ fn a_pasted_fragment_follows_the_rules_over_every_selection() {
                         // A fragment's atom is an atom of its own where typed text is text.
                         if infrag && now[i].5 == Some(20.0) { continue; }
                         if infrag && plain_single { continue; }
+                        // A soft line is its head's: where the paths make different heads of what comes before it (an atom
+                        // ends a paragraph's soft lines), it mirrors another one. Its text is what must agree.
+                        if !infrag && now[i].0 == tr[i].0 && (x.soft_breaks().contains(&(i as u32)) || t.soft_breaks().contains(&(i as u32))) { continue; }
                         if takes_block && i == l0 + last { let mut n2 = now[i].clone(); n2.6 = tr[i].6; if n2 == tr[i] { continue; } }
                         if now[i] != tr[i] { fail("agree", format!("line {i}; typed gives {}", show(&tr))); break; }
                     }
@@ -648,38 +655,40 @@ fn a_pasted_fragment_follows_the_rules_in_code_and_around_every_document() {
                 // untouched lines outside the selection keep everything
                 for i in 0..la { if now[i] != rows(&e, &orig)[i] && !(i + 1 == la && false) { fail("line-before-changed", format!("line {i}")); } }
                 let on = rows(&e, &orig);
-                for i in lb + 1..on.len() { let j = now.len() - (on.len() - i); if now[j] != on[i] { fail("line-after-changed", format!("line {i}")); } }
+                for i in lb + 1..on.len() { let j = now.len() - (on.len() - i); if now[j] != on[i] && !(e.soft_breaks().contains(&(i as u32)) && now[j].0 == on[i].0) { fail("line-after-changed", format!("line {i}")); } }
                 // rules independent of engine
                 let (ra, rb) = (olines[la], olines[lb]);
+                // A soft line's start is the middle of its paragraph: only hard lines' starts are paragraph starts.
+                let (ha, hb) = (!e.soft_breaks().contains(&(la as u32)), !e.soft_breaks().contains(&(lb as u32)));
                 let added = mid.matches('\n').count();
                 let end_line = la + added;
                 let mut wo = oattrs[landing]; wo.id = 0;
-                let plain_single = flines.len() == 1 && a == ra.0 && b == rb.1 && wo == ParagraphAttrs::default() && oblocks[landing] == Block::Paragraph;
-                let takes_block = a == ra.0 && b == rb.1 && oblocks[landing] == Block::Paragraph && flines.len() > 1 && !ft.ends_with('\n');
+                let plain_single = flines.len() == 1 && (a == ra.0 && ha) && b == rb.1 && wo == ParagraphAttrs::default() && oblocks[landing] == Block::Paragraph;
+                let takes_block = (a == ra.0 && ha) && b == rb.1 && oblocks[landing] == Block::Paragraph && flines.len() > 1 && !ft.ends_with('\n');
                 let blk = |orig: Block, got: Block| if takes_block { got == orig || got == fb[last] } else { got == orig };
-                if a == b && a == ra.0 && !plain_single {
+                if a == b && (a == ra.0 && ha) && !plain_single {
                     let (t, at, bl) = lines[end_line];
                     if at != oattrs[la] || !blk(oblocks[la], bl) || !t.ends_with(&e.text[ra.0..ra.1]) { fail("rule-line-start", format!("line {la} was {:?} {:?}", oattrs[la], oblocks[la])); }
                 }
-                if a > ra.0 && added == 0 && !atom_touch {
+                if (a > ra.0 || !ha) && added == 0 && !atom_touch {
                     let (_, at, bl) = lines[la];
                     if at != oattrs[la] || bl != oblocks[la] { fail("rule-join", format!("line {la}")); }
                 }
-                if la < lb && a == ra.0 && (b == rb.0 || (b == n && b == rb.1 && oattrs[lb].atom.is_none())) && !plain_single {
+                if la < lb && (a == ra.0 && ha) && ((b == rb.0 && hb) || (b == n && b == rb.1 && oattrs[lb].atom.is_none())) && !plain_single {
                     let (t, at, bl) = lines[end_line];
                     // (A paragraph taken to the end of the text stays as the hard line its soft lines belong to; a soft line
                     // the edit starts on keeps the block of the paragraph above.)
                     let own = if b == n && b != rb.0 { (la..=lb).rev().find(|&l| !e.soft_breaks().contains(&(l as u32))).unwrap_or(la) } else { lb };
                     let want_block = if added == 0 && e.soft_breaks().contains(&(la as u32)) { oblocks[la] } else { oblocks[own] };
-                    if at != oattrs[own] || !blk(want_block, bl) || (b == rb.0 && !t.ends_with(&e.text[rb.0..rb.1])) { fail("rule-whole", format!("line {lb} was {:?} {:?}", oattrs[own], oblocks[own])); }
+                    if at != oattrs[own] || !blk(want_block, bl) || ((b == rb.0 && hb) && !t.ends_with(&e.text[rb.0..rb.1])) { fail("rule-whole", format!("line {lb} was {:?} {:?}", oattrs[own], oblocks[own])); }
                 }
-                if la < lb && a > ra.0 && b > rb.0 && added > 0 && !atom_touch {
+                if la < lb && (a > ra.0 || !ha) && (b > rb.0 || !hb) && added > 0 && !atom_touch {
                     let (_, at, bl) = lines[la];
                     if at != oattrs[la] || bl != oblocks[la] { fail("rule-midmid-first", String::new()); }
                     let (_, at, bl) = lines[end_line];
                     if at != oattrs[lb] || bl != oblocks[lb] { fail("rule-midmid-last", format!("want {:?} {:?}", oattrs[lb], oblocks[lb])); }
                 }
-                if la == lb && a > ra.0 && b < ra.1 && added > 0 && !atom_touch {
+                if la == lb && (a > ra.0 || !ha) && b < ra.1 && added > 0 && !atom_touch {
                     let (_, at, bl) = lines[la];
                     if at != oattrs[la] || bl != oblocks[la] { fail("rule-split-first", String::new()); }
                     let (_, at, bl) = lines[end_line];
@@ -730,7 +739,8 @@ fn shift_return_over_a_selection_deletes_it_and_puts_a_soft_line_in_the_paragrap
             d.set_selection(a, b);
             d.key(&KeyEvent { key: Key::Backspace, mods: Mods::default() }, None);
             d.key(&shift, None);
-            let snap = |y: &TextEdit| (y.text.clone(), y.paragraph_attrs().iter().map(|a| a.id.min(99)).collect::<Vec<_>>(), y.blocks().to_vec(), y.soft_breaks().to_vec());
+            // (A soft line's id is its own and no paragraph's: only the hard lines' ids are compared.)
+            let snap = |y: &TextEdit| (y.text.clone(), y.paragraph_attrs().iter().enumerate().map(|(i, a)| if y.soft_breaks().contains(&(i as u32)) { 0 } else { a.id.min(99) }).collect::<Vec<_>>(), y.blocks().to_vec(), y.soft_breaks().to_vec());
             let msg = format!("{doc} {a}..{b} {:?}", &e.text[a..b]);
             if let Err(w) = check(&before, &s, &ch) { fails.push(format!("{msg}: report {w}")); }
             if !soft_ok(&s) { fails.push(format!("{msg}: an atom is a soft line or has one: {:?}", s.soft_breaks())); }

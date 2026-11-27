@@ -77,6 +77,11 @@ impl PartialEq for ChangeLog {
     }
 }
 
+impl ChangeLog {
+    pub(super) fn len(&self) -> usize { self.changes.len() }
+    pub(super) fn truncate(&mut self, len: usize) { self.changes.truncate(len); }
+}
+
 impl TextEdit {
     /// The changes edits made since the last call, oldest first: what was typed, deleted and
     /// pasted, and changes of marks and paragraph attributes alone. An app that keeps its own

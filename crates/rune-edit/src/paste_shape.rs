@@ -10,7 +10,8 @@ impl TextEdit {
         let (a, b) = self.range();
         let (la, lb) = (self.line_of_byte(a), self.line_of_byte(b));
         let (ra, rb) = (self.line_range(la), self.line_range(lb));
-        if la < lb && a == ra.start && (b == rb.start || (b == self.text.len() && b == rb.end) || self.paragraph(la).atom.is_some()) { lb } else { la }
+        let soft = |l: usize| self.soft_breaks.binary_search(&(l as u32)).is_ok();
+        if la < lb && a == ra.start && !soft(la) && ((b == rb.start && !soft(lb)) || (b == self.text.len() && b == rb.end) || self.paragraph(la).atom.is_some()) { lb } else { la }
     }
 
     /// A copy of what an edit's lines depend on, without the history, the change log or the typing state: text,
@@ -42,7 +43,7 @@ impl TextEdit {
         let (a, b) = self.range();
         let split = plain.rfind('\n').map(|i| i + 1);
         match split {
-            Some(k) if self.attributed() && a == self.line_range(self.line_of_byte(a)).start && self.text[a..b] != *plain => {
+            Some(k) if self.attributed() && a == self.line_range(self.line_of_byte(a)).start && self.soft_breaks.binary_search(&(self.line_of_byte(a) as u32)).is_err() && self.text[a..b] != *plain => {
                 let inherited = self.inherited_marks_at(a);
                 let tail = &plain[k..];
                 self.undo_group(|e| {
@@ -143,6 +144,34 @@ impl TextEdit {
         Some(out)
     }
 
+    /// A soft line of the fragment that lands on a kept line: the receiving paragraph is the head of that group of
+    /// lines. Its first line takes the receiving line's id, attributes and block, and the soft lines (the kept one
+    /// with an id of its own) mirror it, as typing the text with `Shift+Return` gives.
+    pub(super) fn receiving_paragraph_heads_soft_lines(&mut self, frag: &TextEdit, line_idx: usize, frag_lines: usize, last_kept: bool) {
+        if frag_lines < 2 || !last_kept { return; }
+        let last_line = line_idx + frag_lines - 1;
+        let mut head_k = frag_lines - 1;
+        while head_k > 0 && frag.soft_breaks.contains(&(head_k as u32)) && self.soft_breaks.contains(&((line_idx + head_k) as u32)) { head_k -= 1; }
+        let head_line = line_idx + head_k;
+        if head_line < last_line {
+            if self.attributed() {
+                let recv = self.paragraph(last_line);
+                let id = self.fresh_id();
+                let slot = self.attrs_mut();
+                slot[head_line] = recv;
+                slot[last_line] = recv.id(id);
+            }
+            self.blocks[head_line] = self.blocks[last_line];
+        }
+    }
+
+    /// Everything an edit can change in the document, to tell whether it changed anything.
+    pub(super) fn state_key(&self) -> (String, Vec<(usize, usize, String)>, Vec<Block>, Vec<ParagraphAttrs>, Vec<u32>) {
+        let mut marks: Vec<(usize, usize, String)> = self.marks.iter().map(|m| (m.start, m.end, format!("{:?}", m.mark))).collect();
+        marks.sort();
+        (self.text.clone(), marks, self.blocks.clone(), self.attrs.clone(), self.soft_breaks.clone())
+    }
+
     /// Whether `frag` is the selection: its text and marks, and for each line it covers whole its
     /// block and its attributes, ids aside.
     pub(super) fn holds_selection(&self, frag: &TextEdit) -> bool {
@@ -154,6 +183,7 @@ impl TextEdit {
         if bytes(&self.marks, a, b) != bytes(&frag.marks, 0, frag.text.len()) { return false; }
         let (la, lb) = (self.line_of_byte(a), self.line_of_byte(b));
         if frag.blocks.len() != lb - la + 1 { return false; }
+        if (1..=lb - la).any(|k| self.soft_breaks.contains(&((la + k) as u32)) != frag.soft_breaks.contains(&(k as u32))) { return false; }
         let (ra, rb) = (self.line_range(la), self.line_range(lb));
         (0..=lb - la).all(|k| {
             let whole = (k > 0 || a == ra.start) && (k < lb - la || b == rb.end);

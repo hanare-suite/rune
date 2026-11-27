@@ -115,7 +115,10 @@ impl TextEdit {
         // goes in their place: a paragraph's id, attributes and block live in its line break,
         // and the one that stays is the last one's, which the text left joins.
         // (The end of the text counts as the last paragraph's break.)
-        let whole = line_a < line_b && a == line_a_range.start && (b == line_b_range.start || (b == self.text.len() && b == line_b_range.end));
+        // A soft line's start is the middle of its paragraph, never a paragraph's start: only hard lines' starts count.
+        let soft = |line: usize| self.soft_breaks.binary_search(&(line as u32)).is_ok();
+        let (hard_a, hard_b) = (!soft(line_a), !soft(line_b));
+        let whole = line_a < line_b && hard_a && a == line_a_range.start && ((b == line_b_range.start && hard_b) || (b == self.text.len() && b == line_b_range.end));
         let take_b = !(kept.tail && added_lines > 0) && (atom_gone || whole);
         // A paragraph taken to the end of the text, whose last line is soft: the paragraph that stays is
         // the one the soft lines belong to, the hard line above them, not the soft line itself.
@@ -130,13 +133,13 @@ impl TextEdit {
         // The label of an atom taken whole, without its break, leaves its paragraph as text.
         let label_gone = line_a == line_b && a == line_a_range.start && b == line_a_range.end && self.paragraph(line_a).atom.is_some();
         let block_a = self.blocks.get(line_a).copied().unwrap_or(Block::Paragraph);
-        let front = (a == line_a_range.start && added_lines > 0 && !mark_new_lines_soft && !kept.head && !kept.tail
+        let front = (a == line_a_range.start && hard_a && added_lines > 0 && !mark_new_lines_soft && !kept.head && !kept.tail
             && (self.paragraph(line_a).atom.is_none() || atom_gone || label_gone) && new_line_block.is_none_or(|blk| blk == block_a))
             .then(|| new_line_block.is_some());
         // Text with a line break over a selection that starts in the middle of a line and ends in a
         // later one: the last line the edit leaves ends with the later paragraph's break, so it is
         // that paragraph, with its id, attributes and block; the first line keeps its own.
-        let tail_whole = front.is_none() && !take_b && !kept.head && !kept.tail && added_lines > 0 && line_a < line_b && a != line_a_range.start
+        let tail_whole = front.is_none() && !take_b && !kept.head && !kept.tail && added_lines > 0 && line_a < line_b && !(a == line_a_range.start && hard_a)
             && self.paragraph(line_b).atom.is_none();
         let block_b = self.blocks.get(line_b).copied().unwrap_or(Block::Paragraph);
         let edge = match front {
@@ -346,7 +349,8 @@ impl TextEdit {
         self.anchor = a + ins_len - back;
         self.focus = self.anchor;
         self.cancel_composition();
-        self.sync_invariants();
+        // (A paste that wants its lines decorates them first, and mirrors when it is done.)
+        self.sync_inner(!want);
         self.mark_edited();
         new_lines
     }
@@ -373,7 +377,10 @@ impl TextEdit {
         let (a, b, back) = (fenced.a, fenced.b, fenced.back);
         let s = fenced.text.as_deref().unwrap_or(s);
         if kind == EditKind::Other { self.break_history_group(); }
+        // (Breaks typed or pasted over soft ones are hard ones: not the same text.)
+        let softer = s.contains('\n') && !self.soft_breaks.is_empty() && { let (la, lb) = (self.line_of_byte(a), self.line_of_byte(b)); self.soft_breaks.iter().any(|&l| (l as usize) > la && (l as usize) <= lb) };
         if &self.text[a..b] == s
+            && !softer
             && self.typing == Typing::Inherited
             && !self.marks.iter().any(|m| m.mark.is_pill() && m.start < b && a < m.end)
         {

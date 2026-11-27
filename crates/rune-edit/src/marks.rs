@@ -26,6 +26,12 @@ impl TextEdit {
     /// Synchronize `blocks`, `soft_breaks`, and `marks` with `self.text`.
     #[doc(hidden)]
     pub fn sync_invariants(&mut self) {
+        self.sync_inner(true);
+    }
+
+    /// [`sync_invariants`](Self::sync_invariants), with or without the soft lines mirroring their heads: an edit
+    /// that is not done yet (a paste that has its atoms to put in) mirrors when it is.
+    pub(super) fn sync_inner(&mut self, mirror: bool) {
         self.anchor = Self::clamp_char_boundary(&self.text, self.anchor);
         self.focus = Self::clamp_char_boundary(&self.text, self.focus);
         if self.secure {
@@ -67,6 +73,7 @@ impl TextEdit {
         for line in dropped {
             self.note_paragraphs(line..line + 1);
         }
+        if mirror { self.mirror_soft_lines(); }
         self.normalize_marks();
         self.snap_to_pills();
         let anchor_line = self.line_of_byte(self.anchor);
@@ -75,6 +82,37 @@ impl TextEdit {
         } else if let Typing::Armed { marks, .. } = &mut self.typing {
             let bits = self.allowed_marks.unwrap_or(Self::DEFAULT_ALLOWED_MARKS);
             marks.retain(|m| bits & 1 << m.kind_order() != 0);
+        }
+    }
+
+    /// A soft line is part of its paragraph: it has its head's (the hard line it follows) block, style, alignment
+    /// and indents, so under a code head it is code, and under any other it is not, whatever edit joined or moved it.
+    /// Cheap: it looks at the soft lines only.
+    pub(super) fn mirror_soft_lines(&mut self) {
+        let mut mirrored: Vec<usize> = Vec::new();
+        for k in 0..self.soft_breaks.len() {
+            let i = self.soft_breaks[k] as usize;
+            if i == 0 || i >= self.blocks.len() { continue; }
+            // (A soft line beside an atom is about to go: sync drops it, and it keeps what it was.)
+            if self.attrs.get(i - 1).is_some_and(|a| a.atom.is_some()) || self.attrs.get(i).is_some_and(|a| a.atom.is_some()) { continue; }
+            let mut changed = false;
+            if self.blocks[i] != self.blocks[i - 1] {
+                self.blocks[i] = self.blocks[i - 1];
+                changed = true;
+            }
+            if i < self.attrs.len() {
+                let head = self.attrs[i - 1];
+                let own = &mut self.attrs[i];
+                let (was, now) = ((own.style, own.align, own.indent.to_bits(), own.first_line_indent.to_bits()), (head.style, head.align, head.indent.to_bits(), head.first_line_indent.to_bits()));
+                if was != now {
+                    (own.style, own.align, own.indent, own.first_line_indent) = (head.style, head.align, head.indent, head.first_line_indent);
+                    changed = true;
+                }
+            }
+            if changed { mirrored.push(i); }
+        }
+        for line in mirrored {
+            self.note_paragraphs(line..line + 1);
         }
     }
 
