@@ -307,17 +307,30 @@ impl<'a> TextFlow<'a> {
     pub(crate) fn blank_start(self, p: &Piece<'_>, size: f32) -> f32 {
         let TextFlow::Paragraphs(pl) = self else { return p.pad[0] };
         let indent = if p.index == 0 { pl.text_indent_px } else { 0.0 };
-        if p.flow == Flow::Rtl && p.shape.align != Alignment::Center {
-            return (pl.max_width.unwrap_or(pl.width) - p.pad[1] - indent - size).max(p.pad[0]);
-        }
-        // Where line breaking starts its first line, and how much room it leaves it.
+        // Where line breaking starts its first line, the right padding it keeps, and how much
+        // room that leaves.
         let left = (p.pad[0] + p.shape.indent[0] + p.shape.indent[1]).max(0.0);
         let right = if p.pad[1] > 0.0 { left } else { p.pad[1] };
-        let room = pl.max_width.map_or(0.0, |w| ((w - left - right).max(1.0) - indent).max(1.0));
-        left + indent + match p.shape.align {
-            Alignment::Center => room * 0.5,
-            Alignment::End | Alignment::Right => (room - size).max(0.0),
-            _ => 0.0,
+        let rtl = p.flow == Flow::Rtl;
+        // The side the text of its alignment stands on: its reading direction's start or end,
+        // or the side an alignment names.
+        let to_right = match p.shape.align {
+            Alignment::Center => {
+                let room = pl.max_width.map_or(0.0, |w| ((w - left - right).max(1.0) - indent).max(1.0));
+                return left + indent + room * 0.5;
+            }
+            Alignment::Right => true,
+            Alignment::Left => false,
+            Alignment::End => !rtl,
+            Alignment::Start | Alignment::Justify => rtl,
+        };
+        if rtl && to_right {
+            (pl.max_width.unwrap_or(pl.width) - right - indent - size).max(left)
+        } else if to_right {
+            let room = pl.max_width.map_or(0.0, |w| ((w - left - right).max(1.0) - indent).max(1.0));
+            left + indent + (room - size).max(0.0)
+        } else {
+            left + indent
         }
     }
 
@@ -502,7 +515,7 @@ impl<'a> TextFlow<'a> {
                         (m.block_min_coord.min(m.content_block_min_coord), m.block_max_coord.max(m.content_block_max_coord), m.baseline, x, x + m.advance, ws)
                     }
                     None => {
-                        let x = self.blank_start(&p, 0.0);
+                        let x = self.blank_start(&p, if p.flow == Flow::Rtl { 0.0 } else { pl.newline });
                         (0.0, p.height, pl.blank_box[0], x, x, pl.newline as f64)
                     }
                 };
@@ -750,7 +763,8 @@ impl TextSystem {
         let rich = !plain && spec.pills.is_empty() && spec.span_boxes.is_empty() && spec.inline_boxes.is_empty() && spec.text_indent == 0.0;
         let reused = match prev {
             Some(p) if plain => reuse_keys(p, content, style_key, start_flow, &mut self.last_diff),
-            Some(p) if rich => paged::reuse_rich(p, spec, style_key, start_flow),
+            // Only a field with paragraph attributes or pages keys by its spans and blocks.
+            Some(p) if rich && spec.flow.is_some() => paged::reuse_rich(p, spec, style_key, start_flow),
             _ => None,
         };
         let (mut found, tail, entering) = reused.map_or((Vec::new(), Vec::new(), start_flow), |r| (r.head, r.tail, r.entering));

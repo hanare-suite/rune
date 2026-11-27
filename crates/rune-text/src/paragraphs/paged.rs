@@ -312,12 +312,16 @@ pub(super) fn reuse_rich(prev: &ParagraphLayout, spec: &TextInput<'_>, style_key
         (lo, hi) = (lo.min(s.start as usize), hi.max(s.end as usize));
     }
     for s in &sn[p..sn.len() - q] {
-        (lo, hi) = (lo.min(old_at(s.start)), hi.max(old_at(s.end)));
+        // The span's new numbers and the old text's at the same place: an app that keeps a span
+        // through an edit that shifts the text covers other paragraphs than it did.
+        (lo, hi) = (lo.min(s.start as usize).min(old_at(s.start)), hi.max(s.end as usize).max(old_at(s.end)));
     }
     if delta != 0 {
         // A span that stayed where it was is another span to a paragraph that moved, and one
         // that moved is another to a paragraph that stayed.
-        hi = so[..p].iter().fold(hi, |hi, s| hi.max(s.end as usize));
+        // A span the app kept at its old numbers covers other text now: the bytes at its numbers
+        // in the new text are the old text's at `old_at` of them.
+        (lo, hi) = so[..p].iter().fold((lo, hi), |(lo, hi), s| (lo.min(s.start as usize).min(old_at(s.start)), hi.max(s.end as usize).max(old_at(s.end))));
         lo = so[so.len() - q..].iter().fold(lo, |lo, s| lo.min(s.start as usize));
     }
     let ps = &prev.paragraphs;
