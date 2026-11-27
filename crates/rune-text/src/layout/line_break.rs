@@ -27,7 +27,7 @@ pub(crate) fn rebreak_at_y(layout: &mut Layout<Ink>, blocks: &[crate::Block], te
     let indent = indent_px(text_indent, scale);
     layout.set_text_indent(indent, parley::IndentOptions::default());
     if blocks.iter().any(|&b| b != crate::Block::Paragraph) || layout.inline_boxes().next().is_some() {
-        break_lines_with_blocks_at(layout, blocks, indent, font_size, scale, max_width, Vec::new(), y_frac);
+        break_lines_with_blocks_at(layout, blocks, indent, font_size, scale, max_width, Vec::new(), y_frac, &[]);
     } else if y_frac == 0.0 {
         layout.break_all_lines(max_width);
     } else {
@@ -35,6 +35,18 @@ pub(crate) fn rebreak_at_y(layout: &mut Layout<Ink>, blocks: &[crate::Block], te
         breaker.state_mut().set_line_y(y_frac);
         breaker.break_remaining(max_width.unwrap_or(f32::MAX));
     }
+    layout.align(align, parley::AlignmentOptions::default());
+}
+
+/// [`rebreak`] with room left above some lines: each of `gaps` is a line (counted from the
+/// layout's first) and the device px its top moves down by, the lines after it with it. A paged
+/// field's paragraph that crosses a page's end is broken this way, so its caret, hit tests,
+/// selection boxes and glyphs all land on the page its lines are on.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn rebreak_gapped(layout: &mut Layout<Ink>, blocks: &[crate::Block], text_indent: f32, font_size: f32, scale: f32, max_width: Option<f32>, align: Alignment, gaps: &[(u32, f32)]) {
+    let indent = indent_px(text_indent, scale);
+    layout.set_text_indent(indent, parley::IndentOptions::default());
+    break_lines_with_blocks_at(layout, blocks, indent, font_size, scale, max_width, Vec::new(), 0.0, gaps);
     layout.align(align, parley::AlignmentOptions::default());
 }
 
@@ -61,7 +73,7 @@ pub(crate) fn break_new(layout: &mut Layout<Ink>, text: &str, blocks: &[crate::B
     if let (true, Some(width)) = (pretty, max_width) {
         let caps = super::pretty::caps(layout, text, font_size, scale, width);
         if !caps.is_empty() {
-            break_lines_capped(layout, &[], indent, font_size, scale, max_width, &caps, &mut Vec::new(), 0.0);
+            break_lines_capped(layout, &[], indent, font_size, scale, max_width, &caps, &mut Vec::new(), 0.0, &[]);
         }
     }
 }
@@ -79,7 +91,7 @@ pub(crate) fn break_lines_with_blocks(
     max_width: Option<f32>,
     caps: Vec<((usize, usize), f32)>,
 ) {
-    break_lines_with_blocks_at(layout, blocks, first_indent, font_size, scale, max_width, caps, 0.0);
+    break_lines_with_blocks_at(layout, blocks, first_indent, font_size, scale, max_width, caps, 0.0, &[]);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -92,6 +104,7 @@ fn break_lines_with_blocks_at(
     max_width: Option<f32>,
     mut caps: Vec<((usize, usize), f32)>,
     y_frac: f64,
+    gaps: &[(u32, f32)],
 ) {
     let pills = layout.inline_boxes().filter(|b| b.id & PILL_BOX != 0).count() / 2;
     let span_boxes = layout.inline_boxes().filter(|b| b.id & SPAN_BOX != 0).count();
@@ -100,7 +113,7 @@ fn break_lines_with_blocks_at(
     // can adjust the first misplaced pill or span-box spacer in every paragraph at once.
     let mut lines_meta = Vec::new();
     for _ in 0..=2 * (pills + span_boxes) {
-        break_lines_capped(layout, blocks, first_indent, font_size, scale, max_width, &caps, &mut lines_meta, y_frac);
+        break_lines_capped(layout, blocks, first_indent, font_size, scale, max_width, &caps, &mut lines_meta, y_frac, gaps);
         if max_width.is_none() || (pills == 0 && span_boxes == 0) || !collect_misplaced_pills(layout, &lines_meta, &mut caps) {
             return;
         }
@@ -121,8 +134,10 @@ fn break_lines_capped(
     caps: &[((usize, usize), f32)],
     out: &mut Vec<((usize, usize), f32)>,
     y_frac: f64,
+    gaps: &[(u32, f32)],
 ) {
     out.clear();
+    let mut line_no = 0u32;
     let layout_max = max_width.unwrap_or(f32::MAX);
     let mut breaker = layout.break_lines();
     if y_frac != 0.0 {
@@ -147,8 +162,13 @@ fn break_lines_capped(
         // Parley wants no line wider than the layout: a widened line widens it while it breaks.
         breaker.state_mut().set_layout_max_advance(layout_max.max(capped));
         breaker.state_mut().set_line_max_advance(capped);
+        if let Some(&(_, gap)) = gaps.iter().find(|g| g.0 == line_no) {
+            let y = breaker.state().line_y();
+            breaker.state_mut().set_line_y(y + f64::from(gap));
+        }
         match breaker.break_next() {
             Some(parley::YieldData::LineBreak(data)) => {
+                line_no += 1;
                 // Keep the line's alignment box at `line_max` when a cap tightened/widened breaking.
                 if cap.is_some() && max_width.is_some() {
                     breaker.set_prior_line_width(line_max);

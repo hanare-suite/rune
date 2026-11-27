@@ -322,6 +322,7 @@ fn measure_inline_matches_layout_to_the_bit() {
     for max_w in [None, Some(220.0), Some(110.0), Some(0.0)] {
         let measured = crate::lend(&mut ts, || measure_inline(body, &[], &pairs, style, max_w));
         let input = TextInput {
+            flow: None,
             content: body,
             spans: &[],
             blocks: &[],

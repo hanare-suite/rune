@@ -54,6 +54,8 @@ pub use atlas::glyph_emit::GLIDE_PHASES;
 pub use atlas::mask_cache;
 pub use block::Block;
 pub use block::MAX_LIST_LEVEL;
+pub use block::PageFlow;
+pub use block::ParagraphStyle;
 pub use direction::Direction;
 #[doc(hidden)]
 pub use direction::Flow;
@@ -151,6 +153,8 @@ pub use layout::pill_chips::pill_chips_with_images;
 #[doc(hidden)]
 pub use layout::pretty::pretty_wrap;
 pub use layout::pretty::set_pretty_wrap;
+#[doc(hidden)]
+pub use layout::rich::Flowed;
 pub use layout::rich::RichLayoutOptions;
 #[doc(hidden)]
 pub use layout::rich::TextInput;

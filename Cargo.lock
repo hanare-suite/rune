@@ -3121,6 +3121,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "paged-spike"
+version = "0.0.1"
+dependencies = [
+ "procwatch",
+ "rune",
+ "wgpu",
+]
+
+[[package]]
 name = "parking"
 version = "2.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

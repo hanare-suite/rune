@@ -19,6 +19,7 @@ fn layout_with_boxes(
     dir: TextDir,
 ) -> Rc<Layout<Ink>> {
     let input = TextInput {
+        flow: None,
         content,
         spans: &[],
         blocks: &[],

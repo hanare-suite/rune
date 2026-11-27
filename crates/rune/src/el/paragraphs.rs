@@ -4,6 +4,38 @@ use super::*;
 use rune_text::paragraph_ranges as paragraphs;
 
 impl El {
+    /// On a [`text_input`]: the styles its [`Block::Styled`](crate::Block::Styled) paragraphs
+    /// take, by index. Each gives its paragraph's text style and the room above and below it;
+    /// one with [`ParagraphStyle::page_break_before`](crate::ParagraphStyle::page_break_before)
+    /// starts its paragraph on a new page of a field with [`El::page_flow`].
+    ///
+    /// A field that truncates, caps its lines with `max_lines`, holds inline boxes or is
+    /// redacted lays out as one piece and ignores them (a debug build asserts).
+    pub fn paragraph_styles(mut self, styles: impl Into<Rc<[crate::ParagraphStyle]>>) -> El {
+        let Some(t) = self.text.as_mut() else { return self };
+        t.cold.paragraph_styles = Some(styles.into());
+        t.rekey_flow();
+        self
+    }
+
+    /// On a [`text_input`]: lays its lines into pages `flow.height` points tall with
+    /// `flow.gap` points between them. A line that doesn't fit what is left of its page moves
+    /// whole to the next one, and the caret, presses, selection boxes, glyphs, caret follow
+    /// and the input method's cursor rectangle all follow it there. The field is always whole
+    /// pages tall: [`PageFlow::pages`](crate::PageFlow::pages) of its laid-out height
+    /// ([`Cx::layout_size`](crate::Cx::layout_size)) is its page count, and
+    /// [`PageFlow::page_top`](crate::PageFlow::page_top) where each starts, for the app to draw
+    /// the pages behind it.
+    ///
+    /// A field that truncates, caps its lines with `max_lines`, holds inline boxes or is
+    /// redacted lays out as one piece and ignores the flow (a debug build asserts).
+    pub fn page_flow(mut self, flow: crate::PageFlow) -> El {
+        let Some(t) = self.text.as_mut() else { return self };
+        t.cold.page_flow = Some(flow);
+        t.rekey_flow();
+        self
+    }
+
     /// Lays out each newline-ended line as its own `Layout`, reusing
     /// unchanged lines across commits (shaping only changed lines; per-commit keying still hashes
     /// each line when spans are present, and long plain/colour-only ASCII interiors in a

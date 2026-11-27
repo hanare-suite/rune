@@ -1,0 +1,36 @@
+{
+ "events": [
+  {
+   "t": 0.2,
+   "type": "wheel",
+   "x": 380,
+   "y": 500,
+   "dy": -500
+  },
+  {
+   "t": 0.8,
+   "type": "tap",
+   "x": 341,
+   "y": 600
+  },
+  {
+   "t": 1.2,
+   "type": "mark",
+   "name": "caret"
+  },
+  {
+   "t": 1.4,
+   "type": "ime",
+   "preedit": "にほんご",
+   "cursor": [
+    12,
+    12
+   ]
+  },
+  {
+   "t": 2.0,
+   "type": "mark",
+   "name": "composing"
+  }
+ ]
+}

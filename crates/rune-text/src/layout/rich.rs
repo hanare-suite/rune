@@ -22,6 +22,18 @@ pub struct TextInput<'a> {
     pub by_line: bool,
     pub by_paragraph: bool,
     pub dir: TextDir,
+    /// The paragraph styles and page flow of a document field, which lays out by paragraph.
+    pub flow: Option<Flowed<'a>>,
+}
+
+/// A field's paragraph styles (`El::paragraph_styles`) and pages (`El::page_flow`).
+#[doc(hidden)]
+#[derive(Clone, Copy)]
+pub struct Flowed<'a> {
+    pub styles: &'a [ParagraphStyle],
+    pub page: Option<PageFlow>,
+    /// A hash of the two, part of the text's shape key.
+    pub key: u64,
 }
 
 impl TextInput<'_> {
@@ -62,7 +74,7 @@ impl TextInput<'_> {
         let key = crate::shape_key(self.content, self.spans, self.style, scale, self.wrap_anywhere, self.pills);
         let key = crate::mix_span_boxes(key, self.span_boxes);
         let key = crate::mix_inline_boxes(key, self.inline_boxes);
-        crate::directed(key, self.base())
+        crate::directed(key, self.base()) ^ self.flow.map_or(0, |f| f.key)
     }
 }
 

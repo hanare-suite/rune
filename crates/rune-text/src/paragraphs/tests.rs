@@ -4,6 +4,7 @@ use rune_core::color::Color;
 
 fn input<'a>(content: &'a str, blocks: &'a [Block], style: TextStyle, dir: TextDir) -> TextInput<'a> {
     TextInput {
+        flow: None,
         content,
         spans: &[],
         blocks,
@@ -137,6 +138,7 @@ fn rich_input<'a>(
     dir: TextDir,
 ) -> TextInput<'a> {
     TextInput {
+        flow: None,
         content,
         spans,
         blocks: &[],
@@ -408,4 +410,41 @@ fn layout_text_and_fill_paragraphs_ignore_prev_from_older_shaped_epoch() {
         lazy_ts.fill_paragraphs(lazy_pl, std::time::Duration::MAX, (0.0, f32::INFINITY), f32::INFINITY).is_none(),
         "fill_paragraphs must ignore a ParagraphLayout from an older shaped_epoch",
     );
+}
+
+#[test]
+fn filled_paragraphs_keep_their_shaped_height_through_an_edit_elsewhere() {
+    // At a width this narrow the estimate of a waiting line (one line) is far from what shapes.
+    let content: String = (0..300).map(|i| format!("line {i:03} plain ascii text here\n")).collect();
+    let style = TextStyle::new(13.0, 400.0).mono();
+    let (scale, max_w) = (2.0, Some(6.0));
+    let mut ts = mono_text_system();
+    let tl = ts.layout_text(&rich_input(&content, &[], style, true, TextDir::Auto), false, scale, max_w, Alignment::Start, None);
+    let estimated = as_paragraphs(&tl).height;
+    let (filled, moved) = ts.fill_paragraphs(as_paragraphs(&tl), std::time::Duration::MAX, (0.0, f32::INFINITY), f32::INFINITY).expect("waiting paragraphs fill");
+    assert!(moved && filled.height > 2.0 * estimated, "the estimate is far from the shaped height");
+
+    // The last line changes, and nothing else does: the other lines keep their shaped heights.
+    let edited = content.replacen("line 299", "line 29x", 1);
+    let prev = TextLayout::Paragraphs(filled.clone());
+    let after = ts.layout_text(&rich_input(&edited, &[], style, true, TextDir::Auto), false, scale, max_w, Alignment::Start, Some(&prev));
+    assert_eq!(as_paragraphs(&after).height, filled.height, "an edit elsewhere leaves every other line's height as shaped");
+}
+
+#[test]
+fn room_below_a_paragraph_that_runs_past_its_pages_end_starts_the_next_paragraph_at_the_next_pages_top() {
+    // Pages 100 px tall with no gap between them; each paragraph is one 10 px line with 3 px
+    // above and 25 px below, so the third one's room below carries y from 89 to 114.
+    let style = TextStyle::new(8.0, 400.0).lh(10.0).mono();
+    let styles = [ParagraphStyle::new(style).space(3.0, 25.0)];
+    let blocks = [Block::Styled(0); 4];
+    let mut spec = rich_input("a\nb\nc\nd", &[], style, false, TextDir::Auto);
+    spec.blocks = &blocks;
+    spec.flow = Some(Flowed { styles: &styles, page: Some(PageFlow::new(100.0, 0.0)), key: 1 });
+    let mut ts = mono_text_system();
+    let tl = ts.layout_text(&spec, true, 1.0, Some(300.0), Alignment::Start, None);
+    let p = &as_paragraphs(&tl).paragraphs;
+    assert_eq!(p.len(), 4);
+    assert!(p[2].y + p[2].height < 100.0 && p[3].y >= 100.0, "the third ends on page 1: {} + {}", p[2].y, p[2].height);
+    assert_eq!(p[3].y, 100.0, "the fourth starts at page 2's top, both rooms dropped");
 }

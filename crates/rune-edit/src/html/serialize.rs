@@ -118,7 +118,7 @@ pub(crate) fn serialize_html(edit: &TextEdit, range: Range<usize>) -> String {
                 }
                 out.push_str("</blockquote>");
             }
-            Block::Paragraph => {
+            Block::Paragraph | Block::Styled(_) => {
                 out.push_str("<p");
                 out.push_str(dirs[idx]);
                 out.push('>');
@@ -230,6 +230,7 @@ fn serialize_marks(edit: &TextEdit, range: Range<usize>, out: &mut String) {
             Mark::Strike => 5,
             Mark::Code => 6,
             Mark::Pill(_) => 7,
+            Mark::Size(_) => 8,
         });
         for m in &active {
             match m {
@@ -248,7 +249,7 @@ fn serialize_marks(edit: &TextEdit, range: Range<usize>, out: &mut String) {
                     escape_html(url, out);
                     out.push_str("\">");
                 }
-                Mark::Pill(_) => {}
+                Mark::Pill(_) | Mark::Size(_) => {}
             }
         }
         escape_html(&edit.text[a..b], out);
@@ -261,7 +262,7 @@ fn serialize_marks(edit: &TextEdit, range: Range<usize>, out: &mut String) {
                 Mark::Code => out.push_str("</code>"),
                 Mark::Color(_) => out.push_str("</span>"),
                 Mark::Link(_) => out.push_str("</a>"),
-                Mark::Pill(_) => {}
+                Mark::Pill(_) | Mark::Size(_) => {}
             }
         }
     }

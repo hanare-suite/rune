@@ -2,8 +2,27 @@
 //! toggling them, and list indentation.
 
 use super::*;
+use crate::model::MARK_KINDS;
 
 impl TextEdit {
+    /// Construct a [`TextEdit`] from plain text, inline [`MarkRange`]s, and per-line [`Block`]s.
+    /// Caret starts at the end of `text`. Ranges are clamped to char boundaries and canonicalized,
+    /// and `blocks` is padded or truncated to match the number of `\n`-separated lines in `text`.
+    /// Passing any [`Mark::Color`] or [`Mark::Size`] in `marks` enables text colours or sizes on
+    /// the returned field.
+    pub fn from_parts(text: impl Into<String>, marks: Vec<MarkRange>, blocks: Vec<Block>) -> TextEdit {
+        let mut edit = Self::new(text).rich();
+        let opted_in = marks.iter().filter(|m| matches!(m.mark, Mark::Color(_) | Mark::Size(_))).fold(0, |bits, m| bits | 1 << m.mark.kind_order());
+        if opted_in != 0 {
+            edit.allowed_marks = Some(Self::DEFAULT_ALLOWED_MARKS | opted_in);
+        }
+        edit.marks = marks;
+        edit.blocks = blocks;
+        edit.clamp_list_levels();
+        edit.sync_invariants();
+        edit
+    }
+
     /// Synchronize `blocks`, `soft_breaks`, and `marks` with `self.text`.
     #[doc(hidden)]
     pub fn sync_invariants(&mut self) {
@@ -95,8 +114,8 @@ impl TextEdit {
         }
 
         // Merge overlapping or adjacent ranges of the same mark kind.
-        // For `Mark::Link` and `Mark::Color`, later entries win over earlier overlapping ones.
-        let mut by_kind: [Vec<MarkRange>; 8] = Default::default();
+        // For `Mark::Link`, `Mark::Color` and `Mark::Size`, later entries win over earlier overlapping ones.
+        let mut by_kind: [Vec<MarkRange>; MARK_KINDS] = Default::default();
         for mut m in self.marks.drain(..) {
             if m.start < m.end {
                 if let Mark::Color(ref mut raw) = m.mark {
@@ -123,9 +142,9 @@ impl TextEdit {
                         merged.push(m);
                     }
                 }
-            } else if kind_idx == 5 || kind_idx == 7 {
-                // `Mark::Link` / `Mark::Color`: resolve overlaps so later entries overwrite earlier
-                // ones, then merge adjacent equal values.
+            } else if list[0].mark.is_valued() {
+                // `Mark::Link` / `Mark::Color` / `Mark::Size`: resolve overlaps so later entries
+                // overwrite earlier ones, then merge adjacent equal values.
                 let mut bounds: Vec<(usize, usize)> = list.iter().map(|m| (m.start, m.end)).collect();
                 bounds.sort_unstable();
                 let overlapping = bounds.windows(2).any(|w| w[1].0 < w[0].1);

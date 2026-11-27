@@ -1,0 +1,146 @@
+{
+ "events": [
+  {
+   "t": 0.2,
+   "type": "tap",
+   "x": 300,
+   "y": 785
+  },
+  {
+   "t": 0.5,
+   "type": "key",
+   "name": "Right",
+   "cmd": true
+  },
+  {
+   "t": 0.7,
+   "type": "key",
+   "name": "Enter"
+  },
+  {
+   "t": 0.9,
+   "type": "key",
+   "name": "Left"
+  },
+  {
+   "t": 1.3,
+   "type": "mark",
+   "name": "before"
+  },
+  {
+   "t": 1.5,
+   "type": "type",
+   "text": " Hafen Brücke Morgen"
+  },
+  {
+   "t": 2.6,
+   "type": "mark",
+   "name": "typed"
+  },
+  {
+   "t": 2.8,
+   "type": "key",
+   "name": "Backspace"
+  },
+  {
+   "t": 2.8499999999999996,
+   "type": "key",
+   "name": "Backspace"
+  },
+  {
+   "t": 2.9,
+   "type": "key",
+   "name": "Backspace"
+  },
+  {
+   "t": 2.9499999999999997,
+   "type": "key",
+   "name": "Backspace"
+  },
+  {
+   "t": 3.0,
+   "type": "key",
+   "name": "Backspace"
+  },
+  {
+   "t": 3.05,
+   "type": "key",
+   "name": "Backspace"
+  },
+  {
+   "t": 3.0999999999999996,
+   "type": "key",
+   "name": "Backspace"
+  },
+  {
+   "t": 3.15,
+   "type": "key",
+   "name": "Backspace"
+  },
+  {
+   "t": 3.1999999999999997,
+   "type": "key",
+   "name": "Backspace"
+  },
+  {
+   "t": 3.25,
+   "type": "key",
+   "name": "Backspace"
+  },
+  {
+   "t": 3.3,
+   "type": "key",
+   "name": "Backspace"
+  },
+  {
+   "t": 3.3499999999999996,
+   "type": "key",
+   "name": "Backspace"
+  },
+  {
+   "t": 3.4,
+   "type": "key",
+   "name": "Backspace"
+  },
+  {
+   "t": 3.4499999999999997,
+   "type": "key",
+   "name": "Backspace"
+  },
+  {
+   "t": 3.5,
+   "type": "key",
+   "name": "Backspace"
+  },
+  {
+   "t": 3.55,
+   "type": "key",
+   "name": "Backspace"
+  },
+  {
+   "t": 3.5999999999999996,
+   "type": "key",
+   "name": "Backspace"
+  },
+  {
+   "t": 3.65,
+   "type": "key",
+   "name": "Backspace"
+  },
+  {
+   "t": 3.6999999999999997,
+   "type": "key",
+   "name": "Backspace"
+  },
+  {
+   "t": 3.75,
+   "type": "key",
+   "name": "Backspace"
+  },
+  {
+   "t": 4.6,
+   "type": "mark",
+   "name": "erased"
+  }
+ ]
+}

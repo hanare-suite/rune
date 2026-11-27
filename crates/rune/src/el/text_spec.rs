@@ -172,6 +172,12 @@ pub(crate) struct TextCold {
     /// Visual palette for rich block and inline decorations; the default's when unset.
     pub(crate) rich_style: Option<crate::edit::RichStyle>,
     pub(crate) secure_revealed: bool,
+    /// [`El::paragraph_styles`](crate::El::paragraph_styles): what each [`Block::Styled`](crate::Block::Styled) names.
+    pub(crate) paragraph_styles: Option<std::rc::Rc<[crate::edit::ParagraphStyle]>>,
+    /// [`El::page_flow`](crate::El::page_flow).
+    pub(crate) page_flow: Option<crate::edit::PageFlow>,
+    /// A hash of the two above, 0 with neither: part of the text's shape key.
+    pub(crate) flow_key: u64,
 }
 
 impl Empty for TextCold {
@@ -208,6 +214,9 @@ impl Empty for TextCold {
         pill_colors: None,
         rich_style: None,
         secure_revealed: false,
+        paragraph_styles: None,
+        page_flow: None,
+        flow_key: 0,
     };
 }
 
@@ -246,6 +255,27 @@ impl TextSpec {
         }
     }
 
+    /// Whether its paragraphs take styles of their own or flow into pages: always laid out by
+    /// paragraph.
+    pub(crate) fn flowed(&self) -> bool {
+        self.cold.flow_key != 0
+    }
+
+    /// Takes `flow_key` again from the paragraph styles and page flow it hashes.
+    pub(crate) fn rekey_flow(&mut self) {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        self.cold.paragraph_styles.as_deref().hash(&mut h);
+        self.cold.page_flow.map(|p| [p.height.to_bits(), p.gap.to_bits()]).hash(&mut h);
+        self.cold.flow_key = h.finish() | 1;
+        self.shape = None;
+    }
+
+    /// Its paragraph styles and page flow, as `rune-text` lays them out.
+    pub(crate) fn flow(&self) -> Option<crate::text::Flowed<'_>> {
+        self.flowed().then(|| crate::text::Flowed { styles: self.cold.paragraph_styles.as_deref().unwrap_or(&[]), page: self.cold.page_flow, key: self.cold.flow_key })
+    }
+
     #[inline(always)]
     pub(crate) const fn greedy(&self) -> bool { self.flags.has(TextFlags::GREEDY) }
 
@@ -267,6 +297,7 @@ impl TextSpec {
             by_line: self.by_line,
             by_paragraph: self.by_paragraph(input),
             dir: self.dir,
+            flow: self.flow(),
         }
     }
 
@@ -348,7 +379,7 @@ impl TextSpec {
         let key = crate::text::shape_key(&self.content, &self.spans, self.style, scale, self.wrap_anywhere, &self.cold.pills);
         let key = crate::text::mix_span_boxes(key, &self.cold.span_boxes);
         let key = crate::text::mix_inline_boxes(key, &self.cold.inline_boxes);
-        crate::text::directed(key, self.base())
+        crate::text::directed(key, self.base()) ^ self.cold.flow_key
     }
 
     /// The paragraph direction it lays out in as one layout.
@@ -369,11 +400,16 @@ impl TextSpec {
     /// edit shapes only the paragraphs it changed: a wrapped, uncut field's text of more than
     /// one paragraph, or of any when each paragraph takes its own direction. Others stay one
     /// layout (a static text splits into one text per paragraph instead).
+    ///
+    /// Paragraph styles and page flow take effect only here: a field without it (one that
+    /// truncates, caps its lines, holds inline boxes or is redacted) ignores them.
     pub(crate) fn by_paragraph(&self, input: bool) -> bool {
-        (input || self.by_line) && self.wrap && !self.redacted && !self.truncate && !self.truncate_fade
+        let by_paragraph = (input || self.by_line) && self.wrap && !self.redacted && !self.truncate && !self.truncate_fade
             && self.max_lines == 0 && self.cold.live.is_none() && self.cold.advance_in.is_none()
             && self.cold.inline_boxes.is_empty()
-            && (self.by_line || matches!(self.dir, TextDir::Plaintext(_)) || self.content.contains('\n'))
+            && (self.by_line || matches!(self.dir, TextDir::Plaintext(_)) || self.content.contains('\n') || self.flowed());
+        debug_assert!(by_paragraph || !self.flowed(), "El::paragraph_styles and El::page_flow need a wrapped text_input without max_lines, truncate, inline boxes or redaction: they would be ignored");
+        by_paragraph
     }
 
     /// Zeroizes the shown string (spare capacity included) and shows `content` instead.

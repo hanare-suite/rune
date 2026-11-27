@@ -1,0 +1,19 @@
+{
+ "events": [
+  {
+   "t": 0.2,
+   "type": "key",
+   "name": "Right"
+  },
+  {
+   "t": 0.4,
+   "type": "key",
+   "name": "Left"
+  },
+  {
+   "t": 1.2,
+   "type": "mark",
+   "name": "heading"
+  }
+ ]
+}

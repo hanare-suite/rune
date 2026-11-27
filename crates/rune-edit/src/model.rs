@@ -4,7 +4,7 @@ use std::ops::Range;
 
 use rune_core::color::{Color, oklch, oklcha};
 
-pub use rune_text::{Block, MAX_LIST_LEVEL};
+pub use rune_text::{Block, MAX_LIST_LEVEL, PageFlow, ParagraphStyle};
 
 /// An inline formatting mark stored alongside [`TextEdit::text`](super::TextEdit::text). More
 /// marks may come, so a `match` needs a `_` arm.
@@ -29,6 +29,24 @@ pub enum Mark {
     /// [`TextEdit::set_color`](super::TextEdit::set_color), and query it with
     /// [`TextEdit::active_color`](super::TextEdit::active_color).
     Color(String),
+    /// The run's font size in points, over the field's or its paragraph style's. A field keeps
+    /// it as it keeps [`Mark::Color`]: only once it is allowed (a [`TextEdit::from_parts`](super::TextEdit::from_parts)
+    /// with one, or [`TextEdit::allow_marks`](super::TextEdit::allow_marks) naming one).
+    Size(MarkSize),
+}
+
+/// A font size in points that compares and hashes by its bits, so a [`Mark`] can carry it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct MarkSize(u32);
+
+impl MarkSize {
+    pub fn pt(points: f32) -> Self {
+        Self(points.max(1.0).to_bits())
+    }
+
+    pub fn get(self) -> f32 {
+        f32::from_bits(self.0)
+    }
 }
 
 impl Mark {
@@ -43,7 +61,8 @@ impl Mark {
             | (Mark::Code, Mark::Code)
             | (Mark::Link(_), Mark::Link(_))
             | (Mark::Pill(_), Mark::Pill(_))
-            | (Mark::Color(_), Mark::Color(_)) => true,
+            | (Mark::Color(_), Mark::Color(_))
+            | (Mark::Size(_), Mark::Size(_)) => true,
             _ => false,
         }
     }
@@ -78,6 +97,12 @@ impl Mark {
         }
     }
 
+    /// Whether one range of the kind carries one value, so a later mark replaces an earlier one
+    /// where they overlap rather than joining it.
+    pub(crate) fn is_valued(&self) -> bool {
+        matches!(self, Mark::Link(_) | Mark::Color(_) | Mark::Size(_))
+    }
+
     pub(crate) fn is_pill(&self) -> bool {
         matches!(self, Mark::Pill(_))
     }
@@ -92,9 +117,13 @@ impl Mark {
             Mark::Link(_) => 5,
             Mark::Pill(_) => 6,
             Mark::Color(_) => 7,
+            Mark::Size(_) => 8,
         }
     }
 }
+
+/// How many kinds [`Mark::kind_order`] numbers.
+pub(crate) const MARK_KINDS: usize = 9;
 
 /// A non-empty byte range `[start, end)` in [`TextEdit::text`](super::TextEdit::text) carrying an
 /// inline [`Mark`].

@@ -62,6 +62,7 @@ members = [
     "examples/motion-bento/chaos",
     "examples/site-scenes",
     "examples/luau-panel",
+    "spikes/paged",
 ]
 # Default cargo check/test targets: the core framework, libraries and theme.
 # Excludes examples/*, www/app, rune-luau (C++ Luau build via cc/mlua), rune-notify/rune-mac

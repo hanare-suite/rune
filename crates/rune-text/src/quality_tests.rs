@@ -548,6 +548,7 @@ fn text_flow_line_span_covers_single_wrapped_multiline_and_blank_lines() {
 
     let doc = "intro\n```\nlet a = 1;\n\nlet b = 2;\n```\noutro";
     let input = TextInput {
+        flow: None,
         content: doc,
         spans: &[],
         blocks: &[],

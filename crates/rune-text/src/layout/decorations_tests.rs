@@ -835,6 +835,7 @@ fn strike_and_highlight_match_reference_for_unsorted_overlaps_bidi_and_paragraph
     let p_spans = vec![Span::new(big_start, big_start + 3).size(28.0)];
     let laid = ts.layout_text(
         &TextInput {
+            flow: None,
             content: multi,
             spans: &p_spans,
             blocks: &[],

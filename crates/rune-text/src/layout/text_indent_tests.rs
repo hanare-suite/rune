@@ -13,6 +13,7 @@ fn body() -> TextStyle {
 
 fn spec<'a>(content: &'a str, text_indent: f32, dir: TextDir, pretty: bool, by_paragraph: bool) -> TextInput<'a> {
     TextInput {
+        flow: None,
         content,
         spans: &[],
         blocks: &[],
