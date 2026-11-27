@@ -629,7 +629,7 @@ const BREAK: [Path; 5] = [
     ("paste", |e| { e.paste("A\n"); }),
     ("paste_html unmarked", |e| { e.paste_html("<p>A</p><p></p>", "A\n"); }),
     ("paste_html marked", |e| { e.paste_html("<p><b>A</b></p><p></p>", "A\n"); }),
-    ("paste_fragment", |e| { e.paste_fragment(start_fragment("A\n", false), ""); }),
+    ("paste_fragment", |e| { e.paste_fragment(TextEdit::from_parts("A\n", vec![], vec![]), ""); }),
 ];
 
 /// The paths that put `A`, a line break and `B` over a selection.
@@ -638,7 +638,7 @@ const OPEN: [Path; 5] = [
     ("paste", |e| { e.paste("A\nB"); }),
     ("paste_html unmarked", |e| { e.paste_html("<p>A</p><p>B</p>", "A\nB"); }),
     ("paste_html marked", |e| { e.paste_html("<p><b>A</b></p><p>B</p>", "A\nB"); }),
-    ("paste_fragment", |e| { e.paste_fragment(start_fragment("A\nB", false), ""); }),
+    ("paste_fragment", |e| { e.paste_fragment(TextEdit::from_parts("A\nB", vec![], vec![]), ""); }),
 ];
 
 fn return_key(e: &mut TextEdit) {
@@ -765,4 +765,22 @@ fn a_single_line_pasted_into_an_empty_line_with_only_an_id_gives_it_the_pasted_a
     e.set_history(false);
     let got = pasted_between(e, start_fragment("A", false));
     assert_eq!(got, vec![("A".into(), 2, 5, ParagraphAlign::Center, (0.0, 0.0), None, bullet())]);
+}
+
+#[test]
+fn every_path_agrees_over_every_shape_of_selection() {
+    let docs: [(&str, fn() -> TextEdit, Vec<(usize, usize)>); 2] = [
+        ("atom", atom_between, vec![(4, 12), (4, 14), (0, 12), (0, 14), (2, 12)]),
+        ("list", list_before_plain, vec![(4, 8), (4, 10), (5, 8), (5, 10), (0, 8), (0, 10), (2, 8)]),
+    ];
+    for (doc, make, shapes) in docs {
+        for sel in shapes {
+            for (kind, paths) in [("break", BREAK), ("open", OPEN)] {
+                let first = leaves(make(), sel, paths[0].0, paths[0].1);
+                for (name, edit) in &paths[1..] {
+                    assert_eq!(leaves(make(), sel, name, *edit), first, "{doc} {kind}: {name} against {} over {sel:?}", paths[0].0);
+                }
+            }
+        }
+    }
 }

@@ -14,6 +14,14 @@ pub struct HtmlStyle {
     pub class: Option<&'static str>,
 }
 
+/// Where an edit that adds lines lies against the lines it touches.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Edge {
+    Inside,
+    Front { copy: bool },
+    Tail,
+}
+
 /// What a paragraph split off `a` takes: everything but its page break, its atom and its id.
 fn split_attrs(mut a: ParagraphAttrs, id: u64) -> ParagraphAttrs {
     (a.page_break_before, a.atom, a.id) = (false, None, id);
@@ -319,22 +327,25 @@ impl TextEdit {
     /// lines after it. The merged line keeps `la`'s attributes (`lb`'s with `take_b`), each
     /// added line takes a copy with a new id, and an atom stays only on a line `kept` names.
     /// Text on a line that was an atom's is a new paragraph, with a new id.
-    /// `front` says the edit inserted at the start of line `la`: the added lines come first, new
-    /// paragraphs (copies of the line's style when it is `Some(true)`), and the line keeps its attributes.
+    /// `edge`: `Front` says the edit inserted at the start of line `la`: the added lines come first, new
+    /// paragraphs (copies of the line's style for Return), and the line keeps its attributes. `Tail`
+    /// says the edit ended at the start of line `lb`, which stays as it was after the added lines.
     /// An atom `kept.tail` names is the last line the edit leaves and keeps its own attributes
     /// there, so the merged line never takes them too: no id ends up on two paragraphs.
-    pub(super) fn splice_attrs(&mut self, la: usize, lb: usize, added: usize, take_b: bool, kept: Kept, front: Option<bool>) {
+    pub(super) fn splice_attrs(&mut self, la: usize, lb: usize, added: usize, take_b: bool, kept: Kept, edge: Edge) {
         if self.attrs.is_empty() { return; }
         let get = |attrs: &[ParagraphAttrs], i: usize| attrs.get(i).copied().unwrap_or_default();
         let (first, last) = (get(&self.attrs, la), get(&self.attrs, lb));
-        if let Some(copy) = front {
+        if let Edge::Front { copy } = edge {
             // An insertion at the line's start: the added lines come first, the line itself last.
+            let line = if take_b { last } else { first };
             let mut lines = Vec::with_capacity(added + 1);
             for _ in 0..added {
                 let id = self.fresh_id();
-                lines.push(if copy { split_attrs(first, id) } else { ParagraphAttrs::default().id(id) });
+                lines.push(if copy { split_attrs(line, id) } else { ParagraphAttrs::default().id(id) });
             }
-            lines.push(if take_b { last } else { first });
+            // An atom the edit took gives its line to text, under a new id.
+            lines.push(self.as_text(line));
             let end = (lb + 1).min(self.attrs.len());
             self.attrs.splice(la.min(end)..end, lines);
             return;
@@ -361,7 +372,7 @@ impl TextEdit {
         });
         for k in 1..=added {
             let tail = k == added;
-            let own = if tail && kept.tail {
+            let own = if tail && (kept.tail || edge == Edge::Tail) {
                 last
             } else if tail && kept.head && lb > la {
                 self.as_text(last)

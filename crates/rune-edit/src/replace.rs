@@ -1,5 +1,6 @@
 //! Core text and attribute replacement engine, grapheme stepping, and input sanitization.
 
+use super::paragraph::Edge;
 use super::*;
 
 /// The previous grapheme boundary, so a caret or backspace takes a ZWJ emoji, flag or skin
@@ -136,14 +137,22 @@ impl TextEdit {
         let whole = line_a < line_b && a == line_a_range.start && b == line_b_range.start;
         let take_b = !(kept.tail && added_lines > 0) && (atom_gone || whole);
         // An insertion at the start of a line, over a selection that starts there or none, goes
-        // before what is left of it: the line keeps its id and attributes
-        // and the paragraphs the text brings are new ones above it. Return gives them the line's
-        // style and alignment; other text brings paragraphs of the defaults.
-        let merged_block_here = self.blocks.get(line_a).copied().unwrap_or(Block::Paragraph);
+        // before what is left of it (an atom's line the selection takes counts as gone): the
+        // line keeps its id and attributes and the paragraphs the text brings are new ones above
+        // it. Return gives them the line's style and alignment; other text, the defaults.
+        let block_a = self.blocks.get(line_a).copied().unwrap_or(Block::Paragraph);
         let front = (a == line_a_range.start && added_lines > 0 && !mark_new_lines_soft && !kept.head && !kept.tail
-            && self.paragraph(line_a).atom.is_none() && new_line_block.is_none_or(|blk| blk == merged_block_here))
-            .then(|| s == "\n");
-        self.splice_attrs(line_a, line_b, added_lines, take_b, kept, front);
+            && (self.paragraph(line_a).atom.is_none() || atom_gone) && new_line_block.is_none_or(|blk| blk == block_a))
+            .then(|| new_line_block.is_some());
+        // Text that ends at the start of a later line leaves that line whole: its break stays.
+        let tail_whole = front.is_none() && !take_b && !kept.head && !kept.tail && added_lines > 0 && line_a < line_b && b == line_b_range.start;
+        let block_b = self.blocks.get(line_b).copied().unwrap_or(Block::Paragraph);
+        let edge = match front {
+            Some(copy) => Edge::Front { copy },
+            None if tail_whole => Edge::Tail,
+            None => Edge::Inside,
+        };
+        self.splice_attrs(line_a, line_b, added_lines, take_b, kept, edge);
         // Determine the surviving block for `line_a` when `a..b` merges `line_a..=line_b`.
         let merged_block = if take_b || (kept.tail && added_lines == 0) {
             self.blocks.get(line_b).copied().unwrap_or(Block::Paragraph)
@@ -176,8 +185,13 @@ impl TextEdit {
             let insert_pos = (line_a + 1).min(self.blocks.len());
             self.blocks.splice(insert_pos..insert_pos, std::iter::repeat_n(next_line_blk, added_lines));
         }
-        // Text with a line break in the middle of a line leaves the tail in the line's block.
-        if added_lines > 0 && front.is_none() && new_line_block.is_none() && !kept.tail && b < line_b_range.end {
+        // Text with a line break in the middle of a line leaves the tail in the line's block; one
+        // that ends at the start of a later line leaves that line's own.
+        if tail_whole {
+            if let Some(slot) = self.blocks.get_mut(line_a + added_lines) {
+                *slot = block_b;
+            }
+        } else if added_lines > 0 && front.is_none() && new_line_block.is_none() && !kept.tail && b < line_b_range.end {
             if let Some(slot) = self.blocks.get_mut(line_a + added_lines) {
                 *slot = merged_block;
             }

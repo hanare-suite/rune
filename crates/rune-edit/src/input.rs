@@ -567,6 +567,13 @@ impl TextEdit {
             return EditOutcome::default();
         }
 
+        // A selection that ends at the start of a later line leaves that line whole behind the
+        // paste, as typed text does: what the deletion joins is its text, not its paragraph.
+        let tail_keep = (a < b).then(|| {
+            let (la, lb) = (self.line_of_byte(a), self.line_of_byte(b));
+            (la < lb && a != self.line_range(la).start && b == self.line_range(lb).start && self.paragraph(lb).atom.is_none())
+                .then(|| (self.paragraph(lb), self.blocks.get(lb).copied().unwrap_or(Block::Paragraph)))
+        }).flatten();
         // First delete `a..b` if non-empty. Selected atoms leave their line to the pasted text,
         // as they do to typed text: only a deletion on its own takes their line break too.
         if a < b {
@@ -584,7 +591,9 @@ impl TextEdit {
         let recv_range = self.line_range(recv_line);
         let recv = (self.paragraph(recv_line), self.blocks.get(recv_line).copied().unwrap_or(Block::Paragraph));
         let recv_start = at == recv_range.start;
-        let plain_single = frag.blocks.len() == 1 && recv_range.is_empty() && recv.0 == ParagraphAttrs::default() && recv.1 == Block::Paragraph;
+        let mut without_id = recv.0;
+        without_id.id = 0;
+        let plain_single = frag.blocks.len() == 1 && recv_range.is_empty() && without_id == ParagraphAttrs::default() && recv.1 == Block::Paragraph;
         // An atom the fragment starts or ends with stays on a line of its own: behind a line
         // break unless the line starts here, and before one unless it ends here. Beside an
         // atom of the field the fence below does the same.
@@ -693,6 +702,16 @@ impl TextEdit {
                     }
                     styled |= *slot != was;
                 }
+            }
+        }
+
+        if let Some((attrs, block)) = tail_keep.filter(|_| added > 0 && !own_line && fenced.lead == 0 && !before_line) {
+            if self.attributed() {
+                self.attrs_mut()[kept_line] = attrs;
+                styled = true;
+            }
+            if let Some(slot) = self.blocks.get_mut(kept_line) {
+                *slot = block;
             }
         }
 

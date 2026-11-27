@@ -28,10 +28,15 @@ static ALIASES: std::sync::RwLock<Vec<(&'static str, &'static str)>> = std::sync
 /// later reaches text laid out after it.
 pub fn alias_family(name: &str, family: &str) {
     let mut aliases = ALIASES.write().unwrap_or_else(|e| e.into_inner());
+    // A string is leaked only when no entry holds it already.
+    let family = match aliases.iter().map(|(_, f)| *f).find(|f| *f == family) {
+        Some(held) => held,
+        None => Box::leak(family.to_owned().into_boxed_str()),
+    };
     if let Some(slot) = aliases.iter_mut().find(|(n, _)| n.eq_ignore_ascii_case(name)) {
-        slot.1 = Box::leak(family.to_owned().into_boxed_str());
+        slot.1 = family;
     } else {
-        aliases.push((Box::leak(name.to_owned().into_boxed_str()), Box::leak(family.to_owned().into_boxed_str())));
+        aliases.push((Box::leak(name.to_owned().into_boxed_str()), family));
     }
 }
 
