@@ -183,17 +183,16 @@ impl TextEdit {
     }
 
     /// Marks those lines of a paste that are an atom of the fragment as new paragraphs (with `force_new` set for the end and
-    /// the start), and gives the lines the id to take: returns them and the new id.
-    pub(super) fn force_new_atom_lines(&mut self, frag: &TextEdit, new: &mut [bool], lead: usize, nothing_left: bool, soft_start: bool) -> (Vec<usize>, u64) {
-        let id = if nothing_left || soft_start { self.fresh_id() } else { 0 };
+    /// the start), and gives the lines the id to take: returns them, each with an id of its own.
+    pub(super) fn force_new_atom_lines(&mut self, frag: &TextEdit, new: &mut [bool], lead: usize, nothing_left: bool, soft_start: bool) -> Vec<(usize, u64)> {
         let mut forced = Vec::new();
         for (cond, k) in [(nothing_left, frag.blocks.len() - 1), (soft_start, 0)] {
-            if cond && frag.attrs.get(k).is_some_and(|a| a.atom.is_some()) && lead + k < new.len() {
+            if cond && frag.attrs.get(k).is_some_and(|a| a.atom.is_some()) && lead + k < new.len() && !forced.iter().any(|f: &(usize, u64)| f.0 == lead + k) {
                 new[lead + k] = true;
-                forced.push(lead + k);
+                forced.push((lead + k, self.fresh_id()));
             }
         }
-        (forced, id)
+        forced
     }
 
     /// A soft line of the fragment that lands on the line that keeps what was there: where the head of that group of lines
@@ -232,7 +231,7 @@ impl TextEdit {
     /// block and its attributes, ids aside.
     pub(super) fn holds_selection(&self, frag: &TextEdit) -> bool {
         let (a, b) = self.range();
-        if a == b || frag.text != self.text[a..b] { return false; }
+        if self.replace_always || a == b || frag.text != self.text[a..b] { return false; }
         // (A mark that spans a line break holds the break's byte or not, as the copy says: the breaks are left out.)
         let bytes = |marks: &[MarkRange], text: &str, from: usize, to: usize| -> std::collections::BTreeSet<(usize, String)> {
             marks.iter().flat_map(|m| (m.start.max(from)..m.end.min(to)).filter(|&i| text.as_bytes()[i] != b'\n').map(move |i| (i - from, format!("{:?}", m.mark)))).collect()

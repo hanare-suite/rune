@@ -202,7 +202,7 @@ impl TextEdit {
             if was_off && had_attrs {
                 self.give_ids_to_lines_without();
             }
-            if was_off && (!self.history.undo.is_empty() || !self.history.redo.is_empty()) {
+            if was_off && (!self.history.undo.is_empty() || !self.history.redo.is_empty() || self.group.is_open()) {
                 self.clear_history();
             }
         }
@@ -227,17 +227,21 @@ impl TextEdit {
             return;
         }
         self.sync_invariants();
+        self.attrs_mut(); // (any field: it is attributed from here, and a plain one still gets the atom on a line of its own)
         // One code path with a pasted atom: a one-atom fragment (a new paragraph: default attributes, the Paragraph block) goes
         // through `paste_fragment`, so the same rules apply over every selection. The label goes in with no style.
         let mut frag = TextEdit::from_parts(label, Vec::new(), vec![Block::Paragraph]);
         frag.set_paragraph_attrs(vec![ParagraphAttrs::default().atom(height)]);
         self.undo_group(|e| {
             e.typing = Typing::Inherited;
+            let rich = std::mem::replace(&mut e.rich, true);
+            e.replace_always = true;
             e.paste_fragment(frag, "");
+            (e.rich, e.replace_always) = (rich, false);
             e.typing = Typing::Inherited;
             // The caret ends at the atom's end, not behind the break a paste leaves after it.
             let line = e.line_of_byte(e.focus);
-            if line > 0 && e.paragraph(line).atom.is_none() && e.paragraph(line - 1).atom.is_some() && e.focus == e.line_range(line).start {
+            if line > 0 && e.paragraph(line - 1).atom.is_some() && e.focus == e.line_range(line).start {
                 let end = e.line_range(line - 1).end;
                 (e.anchor, e.focus) = (end, end);
             }

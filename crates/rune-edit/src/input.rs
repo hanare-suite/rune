@@ -727,7 +727,7 @@ impl TextEdit {
         let (ins_at, first) = (fa + fenced.lead, self.line_of_byte(fa));
         let mut new = self.apply_fenced_lines((fa, fb), text, &[], None, false, fenced.back, true);
         let (line_idx, frag_lines) = (first + fenced.lead, frag.blocks.len());
-        let (forced, forced_id) = self.force_new_atom_lines(&frag, &mut new, fenced.lead, nothing_left, soft_start);
+        let forced = self.force_new_atom_lines(&frag, &mut new, fenced.lead, nothing_left, soft_start);
         let is_new = |j: usize| new.get(j).copied().unwrap_or(false);
         let mut styled = false;
         for k in 0..frag_lines {
@@ -744,7 +744,7 @@ impl TextEdit {
             if self.attributed() {
                 if let Some(slot) = self.attrs_mut().get_mut(line) {
                     let was = *slot;
-                    if consumes { *slot = ParagraphAttrs::default().id(slot.id); } else if forced.contains(&j) { *slot = ParagraphAttrs::default().id(forced_id); }
+                    if consumes { *slot = ParagraphAttrs::default().id(slot.id); } else if let Some(&(_, fid)) = forced.iter().find(|f| f.0 == j) { *slot = ParagraphAttrs::default().id(fid); }
                     (slot.style, slot.align) = (from.style, from.align);
                     if from.atom.is_some() {
                         slot.atom = from.atom;
