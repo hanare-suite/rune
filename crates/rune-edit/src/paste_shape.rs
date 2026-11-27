@@ -1,6 +1,5 @@
 //! What a paste over the selection joins, lands in, and holds: the shape the fragment paste goes by.
 
-use super::paragraph::{Edge, new_lines};
 use super::*;
 
 impl TextEdit {
@@ -11,24 +10,25 @@ impl TextEdit {
         let (a, b) = self.range();
         let (la, lb) = (self.line_of_byte(a), self.line_of_byte(b));
         let (ra, rb) = (self.line_range(la), self.line_range(lb));
-        if la < lb && a == ra.start && (b == rb.start || self.paragraph(la).atom.is_some()) { lb } else { la }
+        if la < lb && a == ra.start && (b == rb.start || (b == self.text.len() && b == rb.end) || self.paragraph(la).atom.is_some()) { lb } else { la }
     }
 
-    /// Which lines of `frag` land on a line of code, as the paste puts them: one that joins a line joins
-    /// the line before or after it (its first the line the text goes into, its last the one that
-    /// follows), and one that is new is code where the line it splits from is, as typed text is.
-    /// An atom's label is never code.
+    /// Which lines of `frag` land on a line of code, as the paste puts them: the paste is done to a copy and the
+    /// lines it makes of the fragment's are read there, a line of code that is no atom's. So this cannot
+    /// differ from what the paste does.
     pub(super) fn code_lines(&self, frag: &TextEdit) -> Vec<bool> {
+        let n = frag.text.split('\n').count();
+        if !self.blocks.contains(&Block::Code) {
+            return vec![false; n];
+        }
         let (a, b) = self.range();
         let f = self.fence(a, b, &frag.text);
-        let p = self.edit_plan((f.a, f.b), f.text.as_deref().unwrap_or(&frag.text), None, false);
-        let new = new_lines(p.added_lines, p.kept, p.edge, p.line_a == p.line_b);
-        let code = |l: usize| self.blocks.get(l) == Some(&Block::Code) && self.paragraph(l).atom.is_none();
-        let kept = if p.take_b { p.line_b } else { p.line_a };
-        let last_line = if p.edge == Edge::Tail || (p.kept.head && p.line_a < p.line_b) { p.line_b } else { kept };
-        let n = frag.text.split('\n').count();
+        let first = self.line_of_byte(f.a);
+        let mut dry = self.clone();
+        dry.apply_fenced_lines((f.a, f.b), f.text.as_deref().unwrap_or(&frag.text), &[], None, false, f.back, false);
         (0..n).map(|k| {
-            if new.get(f.lead + k).copied().unwrap_or(false) { code(kept) } else if k + 1 == n && n > 1 { code(last_line) } else { code(kept) }
+            let line = first + f.lead + k;
+            dry.blocks.get(line) == Some(&Block::Code) && dry.paragraph(line).atom.is_none()
         }).collect()
     }
 

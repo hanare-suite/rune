@@ -114,7 +114,8 @@ impl TextEdit {
         // And paragraphs taken whole, from a line's start to the start of another's, whatever
         // goes in their place: a paragraph's id, attributes and block live in its line break,
         // and the one that stays is the last one's, which the text left joins.
-        let whole = line_a < line_b && a == line_a_range.start && b == line_b_range.start;
+        // (The end of the text counts as the last paragraph's break.)
+        let whole = line_a < line_b && a == line_a_range.start && (b == line_b_range.start || (b == self.text.len() && b == line_b_range.end));
         let take_b = !(kept.tail && added_lines > 0) && (atom_gone || whole);
         // An insertion at the start of a line, over a selection that starts there or none, goes
         // before what is left of it (an atom's line the selection takes counts as gone): the

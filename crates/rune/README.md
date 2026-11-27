@@ -2241,7 +2241,8 @@ example, and `spikes/paged/check.py` checks every point below headless.
   - A join is a deletion or replacement that starts in the middle of a line, or covers exactly
     a line break, and inserts none: it keeps the first paragraph's attributes and id, and an
     empty first paragraph gives way to the second.
-  - Whole paragraphs, from a line's start up to a later line's start, are decided by the
+  - Whole paragraphs, from a line's start up to a later line's start (the end of the text counts as the
+    last paragraph's break, so a cut to the end of the document leaves that paragraph's empty line, with its id), are decided by the
     paragraph whose break stays: the text left joins it, under its id, attributes and block.
   - Text with a line break over a selection that starts in the middle of a line and ends in a
     later one leaves the first line its own, and its last line is the later paragraph, with

@@ -160,7 +160,7 @@ pub(super) fn joins_code_obs(e: &TextEdit, a: usize, b: usize, ft: &str) -> bool
     let code = |l: usize| e.blocks()[l] == Block::Code && e.paragraph(l).atom.is_none();
     let nl = ft.matches('\n').count();
     let (kept_head, kept_tail) = (e.paragraph(la).atom.is_some() && a == ol[la].1, e.paragraph(lb).atom.is_some() && b == ol[lb].0);
-    let whole = la < lb && a == ol[la].0 && (b == ol[lb].0 || e.paragraph(la).atom.is_some());
+    let whole = la < lb && a == ol[la].0 && (b == ol[lb].0 || (b == e.text.len() && b == ol[lb].1) || e.paragraph(la).atom.is_some());
     // (An atom left whole after the paste keeps its own line: the line before it stays the first.)
     let kept = if whole && !kept_tail { lb } else { la };
     let (front, tail) = (a == ol[la].0 && nl > 0 && !kept_head && !kept_tail, la < lb && a > ol[la].0 && nl > 0);
@@ -178,7 +178,7 @@ pub(super) fn makes_code_lines(e: &TextEdit, a: usize, b: usize, ft: &str) -> bo
     let ol = line_ranges(&e.text);
     let (la, lb) = (e.line_of_byte(a), e.line_of_byte(b));
     let kept_tail = e.paragraph(lb).atom.is_some() && b == ol[lb].0 && ft.contains('\n');
-    let whole = la < lb && a == ol[la].0 && (b == ol[lb].0 || e.paragraph(la).atom.is_some());
+    let whole = la < lb && a == ol[la].0 && (b == ol[lb].0 || (b == e.text.len() && b == ol[lb].1) || e.paragraph(la).atom.is_some());
     let kept = if whole && !kept_tail { lb } else { la };
     e.blocks()[kept] == Block::Code
 }
@@ -265,8 +265,8 @@ fn a_pasted_fragment_follows_the_rules_over_every_selection() {
                 let last = flines.len() - 1;
                 let (la, lb) = (olines.iter().position(|r| r.0 <= a && a <= r.1).unwrap(), olines.iter().position(|r| r.0 <= b && b <= r.1).unwrap());
                 let (ra, rb) = (olines[la], olines[lb]);
-                let mut wo = oattrs[if la < lb && a == ra.0 && (b == rb.0 || oattrs[la].atom.is_some()) { lb } else { la }]; wo.id = 0;
-                let recv_block = oblocks[if la < lb && a == ra.0 && (b == rb.0 || oattrs[la].atom.is_some()) { lb } else { la }];
+                let mut wo = oattrs[if la < lb && a == ra.0 && (b == rb.0 || (b == n && b == rb.1) || oattrs[la].atom.is_some()) { lb } else { la }]; wo.id = 0;
+                let recv_block = oblocks[if la < lb && a == ra.0 && (b == rb.0 || (b == n && b == rb.1) || oattrs[la].atom.is_some()) { lb } else { la }];
                 let plain_single = flines.len() == 1 && a == ra.0 && b == rb.1 && wo == ParagraphAttrs::default() && recv_block == Block::Paragraph;
                 for k in 0..flines.len() {
                     let (t, at, bl) = lines[l0 + k];
@@ -313,9 +313,9 @@ fn a_pasted_fragment_follows_the_rules_over_every_selection() {
                     let (_, at, bl) = lines[la];
                     if at != oattrs[la] || bl != oblocks[la] { fail("rule-join", format!("line {la}")); }
                 }
-                if la < lb && a == ra.0 && b == rb.0 && !plain_single {
+                if la < lb && a == ra.0 && (b == rb.0 || (b == n && b == rb.1 && oattrs[lb].atom.is_none())) && !plain_single {
                     let (t, at, bl) = lines[end_line];
-                    if at != oattrs[lb] || !blk(oblocks[lb], bl) || !t.ends_with(&e.text[rb.0..rb.1]) { fail("rule-whole", format!("line {lb} was {:?} {:?}", oattrs[lb], oblocks[lb])); }
+                    if at != oattrs[lb] || !blk(oblocks[lb], bl) || (b == rb.0 && !t.ends_with(&e.text[rb.0..rb.1])) { fail("rule-whole", format!("line {lb} was {:?} {:?}", oattrs[lb], oblocks[lb])); }
                 }
                 if la < lb && a > ra.0 && b > rb.0 && added > 0 && !atom_touch {
                     let (_, at, bl) = lines[la];
@@ -547,7 +547,7 @@ fn a_pasted_fragment_follows_the_rules_in_code_and_around_every_document() {
             let (a, b) = probe.range();
             if (a, b) != (a0, b0) { continue; }
             let (la, lb) = (olines.iter().position(|r| r.0 <= a && a <= r.1).unwrap(), olines.iter().position(|r| r.0 <= b && b <= r.1).unwrap());
-            let landing = if la < lb && a == olines[la].0 && (b == olines[lb].0 || oattrs[la].atom.is_some()) { lb } else { la };
+            let landing = if la < lb && a == olines[la].0 && (b == olines[lb].0 || (b == n && b == olines[lb].1) || oattrs[la].atom.is_some()) { lb } else { la };
             let touches_code = (la..=lb).any(|l| oblocks[l] == Block::Code);
             for (fi, fr) in frags.iter().enumerate() {
                 cases += 1;
@@ -661,9 +661,9 @@ fn a_pasted_fragment_follows_the_rules_in_code_and_around_every_document() {
                     let (_, at, bl) = lines[la];
                     if at != oattrs[la] || bl != oblocks[la] { fail("rule-join", format!("line {la}")); }
                 }
-                if la < lb && a == ra.0 && b == rb.0 && !plain_single {
+                if la < lb && a == ra.0 && (b == rb.0 || (b == n && b == rb.1 && oattrs[lb].atom.is_none())) && !plain_single {
                     let (t, at, bl) = lines[end_line];
-                    if at != oattrs[lb] || !blk(oblocks[lb], bl) || !t.ends_with(&e.text[rb.0..rb.1]) { fail("rule-whole", format!("line {lb} was {:?} {:?}", oattrs[lb], oblocks[lb])); }
+                    if at != oattrs[lb] || !blk(oblocks[lb], bl) || (b == rb.0 && !t.ends_with(&e.text[rb.0..rb.1])) { fail("rule-whole", format!("line {lb} was {:?} {:?}", oattrs[lb], oblocks[lb])); }
                 }
                 if la < lb && a > ra.0 && b > rb.0 && added > 0 && !atom_touch {
                     let (_, at, bl) = lines[la];

@@ -6,6 +6,16 @@ use super::*;
 use rune_text::{Flow, Ink, TextFlow};
 
 impl TextEdit {
+    /// Text pasted unformatted at a paragraph's start in a document takes nothing from the paragraph's first
+    /// character (the next paragraph's bold, say, when a cut paragraph is pasted back before it); elsewhere it
+    /// inherits as typed text does.
+    fn arm_no_marks_at_line_start(&mut self, text: &str) {
+        let (a, b) = self.range();
+        if self.attributed() && !text.is_empty() && a == self.line_range(self.line_of_byte(a)).start && self.text[a..b] != *text {
+            self.typing = Typing::Armed { at: (self.anchor, self.focus), marks: Vec::new() };
+        }
+    }
+
     /// Inserts `s` at `at` as no one's text: it inherits no marks.
     fn insert_plain_at(&mut self, at: usize, s: &str) {
         self.apply_text_and_attr_replace((at, at), s, &[], None, false);
@@ -573,6 +583,7 @@ impl TextEdit {
         let mut frag = self.keep_allowed(frag);
         let unformatted = frag.marks.is_empty() && frag.attrs.is_empty() && frag.blocks.iter().all(|&b| b == Block::Paragraph);
         if !plain.is_empty() && (frag.text.is_empty() || unformatted) {
+            self.arm_no_marks_at_line_start(plain);
             return self.paste(plain);
         }
         // A fragment with nothing to keep is the text it holds.
@@ -598,7 +609,7 @@ impl TextEdit {
         let in_code = !code.is_empty() && code.iter().all(|&c| c);
         // A plain fallback with other lines than the fragment, pasted where the first line is code and with
         // no atom to keep, is pasted whole: its lines cannot be told from the fragment's.
-        if !atoms && !plain.is_empty() && !self.is_single_line() && plain.split('\n').count() != frag.text.split('\n').count() && self.blocks.get(self.line_of_byte(self.range().0)) == Some(&Block::Code) {
+        if !atoms && !plain.is_empty() && !self.is_single_line() && plain.split('\n').count() != frag.text.split('\n').count() && code.first() == Some(&true) {
             return self.paste(plain);
         }
         if in_code && !atoms {

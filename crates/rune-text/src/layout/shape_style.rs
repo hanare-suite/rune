@@ -28,16 +28,23 @@ static ALIASES: std::sync::RwLock<Vec<(&'static str, &'static str)>> = std::sync
 /// later reaches text laid out after it.
 pub fn alias_family(name: &str, family: &str) {
     let mut aliases = ALIASES.write().unwrap_or_else(|e| e.into_inner());
-    // A string is leaked only when no entry holds it already.
-    let family = match aliases.iter().map(|(_, f)| *f).find(|f| *f == family) {
-        Some(held) => held,
-        None => Box::leak(family.to_owned().into_boxed_str()),
-    };
+    // Each distinct string is leaked once, however a name alternates between families.
+    let (family, name) = (intern(family), intern(name));
     if let Some(slot) = aliases.iter_mut().find(|(n, _)| n.eq_ignore_ascii_case(name)) {
         slot.1 = family;
     } else {
-        aliases.push((Box::leak(name.to_owned().into_boxed_str()), family));
+        aliases.push((name, family));
     }
+}
+
+/// `s` as a `'static` string, leaked the first time it is asked for and never again.
+fn intern(s: &str) -> &'static str {
+    static SEEN: std::sync::Mutex<Vec<&'static str>> = std::sync::Mutex::new(Vec::new());
+    let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(held) = seen.iter().find(|h| **h == s) { return held; }
+    let leaked: &'static str = Box::leak(s.to_owned().into_boxed_str());
+    seen.push(leaked);
+    leaked
 }
 
 fn alias_of(name: &str) -> Option<&'static str> {
