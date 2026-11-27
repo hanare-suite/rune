@@ -192,3 +192,134 @@ fn undo_and_redo_of_a_paste_are_exact_in_every_kind_of_field() {
     }
     assert!(fails.is_empty(), "{cases} cases, {} failures, the first:\n{}", fails.len(), fails.iter().take(8).cloned().collect::<Vec<_>>().join("\n"));
 }
+
+fn composer(text: &str, blocks: Vec<Block>) -> TextEdit {
+    let mut e = TextEdit::from_parts(text, vec![], blocks);
+    e.take_changes();
+    e
+}
+
+fn doc(text: &str, blocks: Vec<Block>) -> TextEdit {
+    let mut e = TextEdit::from_parts(text, vec![], blocks);
+    e.set_paragraph_attrs((0..text.split('\n').count()).map(|i| ParagraphAttrs::default().id(1 + i as u64)).collect());
+    e.set_paragraph_ids(100);
+    e.take_changes();
+    e
+}
+
+fn lines_of(e: &TextEdit) -> Vec<(String, Block)> {
+    e.text.split('\n').enumerate().map(|(i, t)| (t.to_string(), e.blocks()[i])).collect()
+}
+
+/// A paste into a code block is dev's: unformatted HTML is the plain text, with its whitespace, in code
+/// lines, whether it lands in an empty field, on an empty code line, or at a line's start or end.
+#[test]
+fn a_paste_into_a_code_block_is_the_plain_text_in_code_lines() {
+    let c = Block::Code;
+    let fields: Vec<(&str, TextEdit, usize)> = vec![
+        ("fresh", composer("", vec![c]), 0),
+        ("empty line in a run", composer("fn a() {\n\n}", vec![c, c, c]), 9),
+        ("start of a line in a run", composer("fn a() {\n}", vec![c, c]), 9),
+        ("end of a line in a run", composer("fn a() {\n}", vec![c, c]), 8),
+        ("doc, empty line in a run", doc("fn a() {\n\n}", vec![c, c, c]), 9),
+    ];
+    let pastes = [
+        ("<div>let  x = 1;</div><div><br></div>", "let  x = 1;\n"),
+        ("<p>let  x = 1;</p><p></p>", "let  x = 1;\n"),
+        ("<p></p><p>let  x = 1;</p>", "\nlet  x = 1;"),
+        ("<p>let  x = 1;</p>", "let  x = 1;"),
+    ];
+    for (name, f, at) in &fields {
+        for (html, plain) in pastes {
+            let (mut x, mut y) = (f.clone(), f.clone());
+            x.set_selection(*at, *at);
+            y.set_selection(*at, *at);
+            x.paste_html(html, plain);
+            y.paste(plain);
+            assert_eq!((lines_of(&x), x.range()), (lines_of(&y), y.range()), "{name}: {html}");
+            assert!(lines_of(&x).iter().all(|l| l.1 == c), "{name}: {html}: {:?}", lines_of(&x));
+        }
+    }
+    // the same text over a selection of code is no change
+    let mut e = doc("ab\n\ncd\nef", vec![c, c, Block::Quote, Block::Paragraph]);
+    e.set_selection(2, 4);
+    e.paste_html("<p></p><p></p><p></p>", "\n\n");
+    assert_eq!(lines_of(&e), vec![("ab".into(), c), ("".into(), c), ("cd".into(), Block::Quote), ("ef".into(), Block::Paragraph)]);
+}
+
+/// Position decides: a line in a code block is code, plain, and one that ends up in a paragraph keeps the
+/// fragment's formatting.
+#[test]
+fn a_paste_across_code_and_paragraphs_formats_the_lines_that_are_paragraphs() {
+    let (p, c) = (Block::Paragraph, Block::Code);
+    for (a, b, want) in [
+        (2, 7, vec![("abX", p), ("Yde", c), ("end", p)]),
+        (2, 5, vec![("abX", p), ("Ycode", c), ("end", p)]),
+        (7, 11, vec![("abcd", p), ("coX", c), ("Ynd", p)]),
+    ] {
+        let mut e = doc("abcd\ncode\nend", vec![p, c, p]);
+        e.set_selection(a, b);
+        e.paste_html("<p><b>X</b></p><p><b>Y</b></p>", "X\nY");
+        let got: Vec<(String, Block)> = lines_of(&e);
+        assert_eq!(got, want.iter().map(|(t, b)| (t.to_string(), *b)).collect::<Vec<_>>(), "{a}..{b}");
+        let bold: Vec<char> = e.marks().iter().filter(|m| m.mark == Mark::Bold).flat_map(|m| e.text[m.range()].chars()).collect();
+        let want_bold: Vec<char> = match a { 7 => vec!['Y'], _ => vec!['X'] };
+        assert_eq!(bold, want_bold, "{a}..{b}: {:?}", e.marks());
+    }
+}
+
+/// A copy that ends behind a break before an empty code line ends in a paragraph, so a paste keeps the
+/// lines apart.
+#[test]
+fn a_copy_that_ends_before_an_empty_code_line_pastes_its_break() {
+    let c = Block::Code;
+    for src in [doc("ab\n\ncd", vec![c, c, c]), composer("ab\n\ncd", vec![c, c, c])] {
+        let mut s = src.clone();
+        s.set_selection(0, 3);
+        let html = s.selected_html();
+        assert!(html.ends_with("<p></p>"), "{html}");
+        let f = s.html_fragment(&html);
+        assert_eq!(f.text, "ab\n", "{html}");
+        let mut dst = composer("xyz\nend", vec![Block::Paragraph; 2]);
+        dst.set_selection(3, 3);
+        dst.paste_html(&html, "ab\n");
+        assert_eq!(dst.text, "xyzab\n\nend", "{html}");
+    }
+}
+
+/// An element that says it is an atom but holds nothing is no atom.
+#[test]
+fn an_empty_atom_element_pastes_as_no_atom() {
+    let d = ParagraphAttrs::default();
+    for html in ["<p data-atom=\"40\"></p>", "<p data-atom=\"40\"><br></p>", "<p data-atom=\"40\">T</p><p data-atom=\"40\"></p>"] {
+        let mut e = TextEdit::from_parts("top\n\nend", vec![], vec![Block::Paragraph; 3]);
+        e.set_paragraph_attrs(vec![d.id(1), d.id(2), d.id(3)]);
+        e.set_paragraph_ids(100);
+        e.set_selection(4, 4);
+        let f = e.html_fragment(html);
+        for (i, t) in f.text.split('\n').enumerate() {
+            assert!(!(t.is_empty() && f.paragraph(i).atom.is_some()), "{html}: empty atom in {:?}", f.text);
+        }
+        e.paste_fragment(f, "");
+        for (i, t) in e.text.split('\n').enumerate() {
+            assert!(!(t.is_empty() && e.paragraph(i).atom.is_some()), "{html}: {:?}", e.text);
+        }
+    }
+}
+
+/// A formatted copy that ends in two breaks joins a single-line field as the lines do, with no trailing space.
+#[test]
+fn a_fragment_ending_in_two_breaks_adds_no_space_to_a_single_line_field() {
+    for (html, plain, want) in [
+        ("<p><b>one</b></p><p></p><p></p>", "one\n\n", "xyonezw"),
+        ("<p><b>one</b></p><p></p>", "one\n", "xyonezw"),
+        ("<p><b>one</b></p><p>two</p><p></p>", "one\ntwo\n", "xyone twozw"),
+        ("<p></p><p><b>one</b></p>", "\none", "xyonezw"),
+    ] {
+        let mut s = TextEdit::new("xyzw").rich();
+        s.set_single_line(true);
+        s.set_selection(2, 2);
+        s.paste_html(html, plain);
+        assert_eq!(s.text, want, "{html}");
+    }
+}

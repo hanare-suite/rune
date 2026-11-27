@@ -346,7 +346,9 @@ fn cut_and_paste_in_place_restores_whole_paragraphs_without_atoms() {
                 let o = e.paragraph(l);
                 (o.style != 0 && e.blocks()[l] != Block::Paragraph) || o.page_break_before || o.indent != 0.0 || o.first_line_indent != 0.0 || e.blocks()[l] == Block::Code
             }) || e.marks().iter().any(|m| m.mark.is_pill() && m.start < b && m.end > a) || e.soft_breaks().iter().any(|&l| (l as usize) > la && (l as usize) <= lb);
-            if !whole || atoms || lossy || e.text[a..b] == *"\n" { continue; }
+            // A paragraph right next to a code block pastes back by position: a line made beside code is code.
+            let beside_code = e.blocks()[lb] == Block::Code || (la > 0 && e.blocks()[la - 1] == Block::Code);
+            if !whole || atoms || lossy || beside_code || e.text[a..b] == *"\n" { continue; }
             cases += 1;
             let html = s.selected_html();
             let f = s.html_fragment(&html);
@@ -384,7 +386,7 @@ fn pasting_a_copy_of_the_selection_back_is_a_no_op_where_the_html_carries_it() {
             let html = s.selected_html();
             let f = s.html_fragment(&html);
             let sel = &e.text[a..b];
-            if lossy || f.text != sel { continue; }
+            if lossy { continue; }
             cases += 1;
             let atoms = (la..=lb).any(|l| e.paragraph(l).atom.is_some());
             for (path, hook) in [("paste_fragment", true), ("paste_html", false)] {
