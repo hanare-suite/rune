@@ -36,12 +36,33 @@ impl TextEdit {
     /// the same lines: a code line keeps the whitespace the HTML collapsed. Marks of those lines go.
     pub(super) fn with_plain_code_lines(frag: &TextEdit, plain: &str, code: &[bool]) -> Option<TextEdit> {
         let (old, pl): (Vec<&str>, Vec<&str>) = (frag.text.split('\n').collect(), plain.split('\n').collect());
-        if old.len() != pl.len() || old.len() != code.len() || !code.iter().any(|&c| c) { return None; }
+        if old.len() != code.len() || !code.iter().any(|&c| c) { return None; }
+        // The plain line each fragment line comes from: the same line when the lines match, else the lines
+        // that hold text, with the atoms' labels left out, in order.
+        let is_atom = |k: usize| frag.attrs.get(k).is_some_and(|a| a.atom.is_some());
+        let src: Vec<Option<&str>> = if old.len() == pl.len() {
+            pl.iter().map(|l| Some(*l)).collect()
+        } else {
+            let mut labels: Vec<&str> = (0..old.len()).filter(|&k| is_atom(k)).map(|k| old[k]).collect();
+            let kept: Vec<&str> = pl.iter().copied().filter(|l| {
+                if l.is_empty() { return false; }
+                if let Some(i) = labels.iter().position(|x| x == l) { labels.remove(i); return false; }
+                true
+            }).collect();
+            let texts: Vec<usize> = (0..old.len()).filter(|&k| !is_atom(k) && !old[k].is_empty()).collect();
+            if texts.len() != kept.len() { return None; }
+            let mut out: Vec<Option<&str>> = vec![None; old.len()];
+            for (k, l) in texts.into_iter().zip(kept) { out[k] = Some(l); }
+            out
+        };
+        let code: Vec<bool> = code.iter().enumerate().map(|(k, &c)| c && src[k].is_some()).collect();
+        if !code.iter().any(|&c| c) { return None; }
+        let (pl, code) = (src, code);
         // Where each byte of the fragment's text goes: a plain line's own bytes are no one's.
         let mut map: Vec<Option<usize>> = vec![None; frag.text.len() + 1];
         let (mut text, mut at) = (String::new(), 0usize);
         for (k, line) in old.iter().enumerate() {
-            let from = if code[k] { pl[k] } else { line };
+            let from = if code[k] { pl[k].unwrap_or(line) } else { line };
             if !code[k] {
                 for i in 0..line.len() { map[at + i] = Some(text.len() + i); }
             }

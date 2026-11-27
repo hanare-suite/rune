@@ -552,8 +552,12 @@ impl TextEdit {
     /// text changes nothing at a caret (but for a single line pasted into an empty plain line), and over a
     /// selection is the plain deletion. A line the paste creates or joins in a code block is code, as typed
     /// text is: where all of them are, it is `plain` (or the fragment's text) pasted as text; where some are,
-    /// those take their text from `plain` line for line and the others keep the fragment's formatting.
+    /// those take their text from `plain` line for line (where its lines are the fragment's, or are once its empty
+    /// lines and its atoms' labels are left out; otherwise they keep the fragment's collapsed text) and the others
+    /// keep the fragment's formatting.
     pub fn paste_fragment(&mut self, mut frag: TextEdit, plain: &str) -> EditOutcome {
+        // The plain text as a field takes it: breaks are line feeds, whichever the clipboard held.
+        let plain = &self.sanitize(plain);
         if self.secure {
             return self.paste(plain);
         }
@@ -592,6 +596,11 @@ impl TextEdit {
         let atoms = frag.attrs.iter().any(|a| a.atom.is_some());
         let code = if self.is_single_line() { Vec::new() } else { self.code_lines(&frag) };
         let in_code = !code.is_empty() && code.iter().all(|&c| c);
+        // A plain fallback with other lines than the fragment, pasted where the first line is code and with
+        // no atom to keep, is pasted whole: its lines cannot be told from the fragment's.
+        if !atoms && !plain.is_empty() && !self.is_single_line() && plain.split('\n').count() != frag.text.split('\n').count() && self.blocks.get(self.line_of_byte(self.range().0)) == Some(&Block::Code) {
+            return self.paste(plain);
+        }
         if in_code && !atoms {
             return self.paste(if plain.is_empty() { frag.text.as_str() } else { plain });
         }
@@ -752,7 +761,8 @@ impl TextEdit {
         if frag_lines > 1 {
             for &sb in &frag.soft_breaks {
                 let target = line_idx + sb as usize;
-                if target > 0 {
+                // (A line of code is no soft line.)
+                if target > 0 && self.blocks.get(target) != Some(&Block::Code) && self.blocks.get(target - 1) != Some(&Block::Code) {
                     self.soft_breaks.push(target as u32);
                 }
             }
