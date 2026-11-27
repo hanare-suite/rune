@@ -17,7 +17,8 @@ pub struct HtmlStyle {
 /// Where an edit that adds lines lies against the lines it touches.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Edge {
-    Inside,
+    /// `copy`: Return's new line copies the line's attributes; `rest`: text of the line stays after the edit.
+    Inside { copy: bool, rest: bool },
     Front { copy: bool },
     Tail,
 }
@@ -378,7 +379,13 @@ impl TextEdit {
                 self.as_text(last)
             } else {
                 let id = self.fresh_id();
-                split_attrs(lines[0], id)
+                match edge {
+                    // What is left of the line goes on in its attributes; any other new
+                    // paragraph of pasted or typed text has the defaults.
+                    Edge::Inside { copy: false, rest } if !(tail && rest) => ParagraphAttrs::default().id(id),
+                    Edge::Tail => ParagraphAttrs::default().id(id),
+                    _ => split_attrs(lines[0], id),
+                }
             };
             lines.push(own);
         }

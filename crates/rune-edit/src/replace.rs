@@ -140,9 +140,11 @@ impl TextEdit {
         // before what is left of it (an atom's line the selection takes counts as gone): the
         // line keeps its id and attributes and the paragraphs the text brings are new ones above
         // it. Return gives them the line's style and alignment; other text, the defaults.
+        // The label of an atom taken whole, without its break, leaves its paragraph as text.
+        let label_gone = line_a == line_b && a == line_a_range.start && b == line_a_range.end && self.paragraph(line_a).atom.is_some();
         let block_a = self.blocks.get(line_a).copied().unwrap_or(Block::Paragraph);
         let front = (a == line_a_range.start && added_lines > 0 && !mark_new_lines_soft && !kept.head && !kept.tail
-            && (self.paragraph(line_a).atom.is_none() || atom_gone) && new_line_block.is_none_or(|blk| blk == block_a))
+            && (self.paragraph(line_a).atom.is_none() || atom_gone || label_gone) && new_line_block.is_none_or(|blk| blk == block_a))
             .then(|| new_line_block.is_some());
         // Text that ends at the start of a later line leaves that line whole: its break stays.
         let tail_whole = front.is_none() && !take_b && !kept.head && !kept.tail && added_lines > 0 && line_a < line_b && b == line_b_range.start;
@@ -150,7 +152,7 @@ impl TextEdit {
         let edge = match front {
             Some(copy) => Edge::Front { copy },
             None if tail_whole => Edge::Tail,
-            None => Edge::Inside,
+            None => Edge::Inside { copy: new_line_block.is_some(), rest: b < line_b_range.end },
         };
         self.splice_attrs(line_a, line_b, added_lines, take_b, kept, edge);
         // Determine the surviving block for `line_a` when `a..b` merges `line_a..=line_b`.
