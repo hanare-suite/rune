@@ -36,6 +36,11 @@ fn show(e: &TextEdit) -> String {
 }
 
 fn doc(text: &str, blocks: Vec<Block>, atoms: &[usize], soft: &[u32], marks: Vec<MarkRange>, attributed: bool) -> TextEdit {
+    doc_with(text, blocks, atoms, soft, marks, attributed, true)
+}
+
+/// `formatted`: the paragraphs have indents and styles as well as alignments (HTML says none of them).
+fn doc_with(text: &str, blocks: Vec<Block>, atoms: &[usize], soft: &[u32], marks: Vec<MarkRange>, attributed: bool, formatted: bool) -> TextEdit {
     let n = text.split('\n').count();
     let mut e = TextEdit::from_parts(text, marks, blocks);
     if attributed {
@@ -43,7 +48,8 @@ fn doc(text: &str, blocks: Vec<Block>, atoms: &[usize], soft: &[u32], marks: Vec
         // Paragraphs alternate between left and centred, and a soft line is its head's (a document keeps that).
         let attrs: Vec<ParagraphAttrs> = (0..n).map(|i| {
             if i > 0 && !soft.contains(&(i as u32)) { para += 1; }
-            let a = ParagraphAttrs::default().id(1 + i as u64).align(if para % 2 == 1 { ParagraphAlign::Center } else { ParagraphAlign::Left }).indent(10.0 * para as f32, if para % 2 == 0 { 5.0 } else { 0.0 }).style(para % 3);
+            let a = ParagraphAttrs::default().id(1 + i as u64).align(if para % 2 == 1 { ParagraphAlign::Center } else { ParagraphAlign::Left });
+            let a = if formatted { a.indent(10.0 * para as f32, if para % 2 == 0 { 5.0 } else { 0.0 }).style(para % 3) } else { a };
             if atoms.contains(&i) { a.atom(20.0) } else { a }
         }).collect();
         e.set_paragraph_attrs(attrs);
@@ -121,8 +127,10 @@ fn key(k: Key, shift: bool) -> KeyEvent { KeyEvent { key: k, mods: Mods { shift,
 
 fn id(i: u64) -> ParagraphAttrs { ParagraphAttrs::default().id(i) }
 
-#[test]
-fn every_edit_over_every_selection_of_documents_with_soft_lines_keeps_the_invariant() {
+/// What a run of the broad probe did: its cases, how many own-copy checks and cut-and-paste checks ran, and what failed.
+struct Probe { cases: usize, own_checks: usize, restore_checks: usize, fails: BTreeMap<String, Vec<String>> }
+
+fn probe_soft_lines(formatted: bool) -> Probe {
     let (p, c, q, u) = (Block::Paragraph, Block::Code, Block::Quote, Block::Bullet(0));
     let bold = |s, e| MarkRange { start: s, end: e, mark: Mark::Bold };
     type Fixture = (&'static str, Vec<Block>, Vec<usize>, Vec<u32>, Vec<MarkRange>);
@@ -157,11 +165,11 @@ fn every_edit_over_every_selection_of_documents_with_soft_lines_keeps_the_invari
         ("html-own", "", ""), ("frag-own", "", ""), ("cut-own", "", ""),
     ];
     let mut fails: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    let mut cases = 0usize;
+    let (mut cases, mut own_checks, mut restore_checks) = (0usize, 0usize, 0usize);
     for attributed in [true, false] {
         for (text, blocks, atoms, soft, marks) in &fixtures {
             if !attributed && !atoms.is_empty() { continue; }
-            let f = doc(text, blocks.clone(), atoms, soft, marks.clone(), attributed);
+            let f = doc_with(text, blocks.clone(), atoms, soft, marks.clone(), attributed, formatted);
             let starts: Vec<usize> = std::iter::once(0).chain(text.match_indices('\n').map(|(i, _)| i + 1)).collect();
             let hard_starts: Vec<usize> = starts.iter().enumerate().filter(|(i, _)| !soft.contains(&(*i as u32))).map(|(_, s)| *s).collect();
             for a in 0..=text.len() { for b in a..=text.len() {
@@ -192,7 +200,8 @@ fn every_edit_over_every_selection_of_documents_with_soft_lines_keeps_the_invari
                             // into the line before or after it, is not itself (the edge probe leaves code out the same way).
                             let (la, lb) = (text[..a].matches('\n').count(), text[..b].matches('\n').count());
                             let lossy_code = (la.saturating_sub(1)..=(lb + 1).min(blocks.len() - 1)).any(|l| blocks[l] == c);
-                            if !(sel_atom && *op == "html-own") && !lossy_code && !formatted_lines(&f, la, lb) {
+                            if !(sel_atom && *op == "html-own") && !lossy_code && !(formatted && formatted_lines(&f, la, lb)) {
+                                own_checks += 1;
                                 // (A paragraph's identity is its head's id: a soft line's id is its own and no one's.)
                                 let hard_ids = |e: &TextEdit| (0..e.text.split('\n').count()).filter(|i| !e.soft_breaks().contains(&(*i as u32))).map(|i| e.paragraph(i).id).collect::<Vec<_>>();
                                 if noid(&x) != noid(&f) { flags.push("OWN-CHANGED".into()); } else if hard_ids(&x) != hard_ids(&f) { flags.push("OWN-IDS".into()); }
@@ -212,7 +221,10 @@ fn every_edit_over_every_selection_of_documents_with_soft_lines_keeps_the_invari
                             let whole = hard_starts.contains(&a) && (hard_starts.contains(&b) || b == text.len()) && la < lb.max(if b == text.len() { lb + 1 } else { lb });
                             let has_atom = (la..=lb).any(|i| atoms.contains(&i));
                             let near_code = (la.saturating_sub(1)..=(lb + 1).min(blocks.len() - 1)).any(|i| blocks[i] == c);
-                            if noid(&x) != noid(&f) && whole && !has_atom && !near_code && !formatted_lines(&f, la, lb) { flags.push("NOT-RESTORED-WHOLE".into()); }
+                            if whole && !has_atom && !near_code && !(formatted && formatted_lines(&f, la, lb)) {
+                                restore_checks += 1;
+                                if noid(&x) != noid(&f) { flags.push("NOT-RESTORED-WHOLE".into()); }
+                            }
                             flags.push(format!("[{h}] cut={}", show(&base)));
                         }
                     }
@@ -238,8 +250,28 @@ fn every_edit_over_every_selection_of_documents_with_soft_lines_keeps_the_invari
             } }
         }
     }
-    let summary: Vec<String> = fails.iter().map(|(k, v)| format!("== {k}: {}\n{}", v.len(), v.iter().take(3).cloned().collect::<Vec<_>>().join("\n"))).collect();
-    assert!(fails.is_empty(), "{cases} cases\n{}", summary.join("\n"));
+    Probe { cases, own_checks, restore_checks, fails }
+}
+
+/// The broad probe over two sets of documents: with alignments only, where the checks that a paste of a selection's own
+/// copy and a cut and paste in place restore it run on every case that is not code or an atom; and with indents and
+/// styles besides, which HTML does not carry, where they skip the paragraphs that have them.
+#[test]
+fn every_edit_over_every_selection_of_documents_with_soft_lines_keeps_the_invariant() {
+    let mut report = Vec::new();
+    let mut failed = false;
+    for (name, formatted) in [("plain", false), ("formatted", true)] {
+        let pr = probe_soft_lines(formatted);
+        report.push(format!("{name}: {} cases, {} own-copy checks, {} cut-and-paste checks", pr.cases, pr.own_checks, pr.restore_checks));
+        println!("{}", report.last().unwrap());
+        // (The plain set skips nothing by format: the checks ran on every case that is no code and has no atom.)
+        if !formatted { assert!(pr.own_checks > 1500 && pr.restore_checks > 50, "{name}: the checks ran: {}", report.last().unwrap()); }
+        for (k, v) in &pr.fails {
+            failed = true;
+            report.push(format!("== {name} {k}: {}\n{}", v.len(), v.iter().take(3).cloned().collect::<Vec<_>>().join("\n")));
+        }
+    }
+    assert!(!failed, "{}", report.join("\n"));
 }
 
 /// Inserting text with a break at the start of a soft line is a mid-paragraph insertion: the head keeps its id,
