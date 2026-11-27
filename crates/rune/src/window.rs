@@ -241,7 +241,7 @@ pub(crate) trait AnyHost {
     fn vanish(&mut self) {}
     /// The close about to come ends the app (`Host::close`).
     fn closing_ends_app(&mut self) {}
-    fn hold_quit(&mut self, _once: bool) -> bool { false }
+    fn hold_quit(&mut self) -> bool { false }
     /// Ends a tracking pop-up menu and answers waiting ones `None`, before the host drops or
     /// the loop exits.
     fn cancel_menus(&mut self) {}

@@ -75,13 +75,13 @@ impl<S: 'static> App<S> {
     /// asks to close the window while `guarded` still says true is asked once: that close is
     /// dropped.
     ///
-    /// When the close of the last main window would end the app, a window that is guarded asks
-    /// first and the app stays. If the answer is a cancel (the guard stays up, or goes down
-    /// without the window closing) that end is dropped, as a cancelled macOS Quit is: the app
-    /// keeps running until its windows close, and the last one closing ends it through the normal
-    /// path, asking again if it is guarded. A hidden `App::keep_running` window counts as
-    /// guarded while `guarded` says true, for a macOS Quit and for the app's end: its `ask` runs,
-    /// and showing the window is the app's job.
+    /// When the close of the last main window would end the app and another window, open or a
+    /// hidden `App::keep_running` one, is guarded, that close is held too: the main window stays,
+    /// the guarded windows ask once, as for a held macOS Quit, and the question is not taken up
+    /// again. After the answer, closing the main window again ends the app, or asks again if a
+    /// guard still holds. A hidden `keep_running` window counts as guarded while `guarded` says
+    /// true, for that close and for a macOS Quit: its `ask` runs, and showing the window is the
+    /// app's job.
     pub fn on_close_guard(self, guarded: fn(&S) -> bool, ask: fn(&mut S, &mut Tx)) -> Self {
         self.shared.close_guard.set(CloseGuard { guarded, ask });
         self

@@ -3,17 +3,6 @@ use winit::event_loop::ActiveEventLoop;
 
 use super::{Host, WindowApp};
 
-/// What a quit asked of a guarded window.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::window) enum Hold {
-    /// The window lets the quit go on.
-    No,
-    /// It holds, and its question is already up.
-    Held,
-    /// It holds, and has just asked.
-    Asked,
-}
-
 /// What a window that stays open still has to do once its hooks ran.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::window) enum Settle {
@@ -40,13 +29,13 @@ pub(in crate::window) fn quit_asks(life: crate::window::Life) -> bool {
 /// Whether the close of this window is held for other windows' guards: it ends the app (`ends`:
 /// it keeps the loop and is not `keep_running`) with no other main window left, and another open
 /// window holds back its close.
-#[allow(dead_code)]
-pub(in crate::window) fn holds_app_end(_closes: bool, _exiting: bool, _ends: bool, _other_mains: usize, _others_guarded: usize) -> bool {
-    false
+pub(in crate::window) fn holds_app_end(closes: bool, exiting: bool, ends: bool, other_mains: usize, others_guarded: usize) -> bool {
+    closes && !exiting && ends && other_mains == 0 && others_guarded > 0
 }
 
 /// The host-free core of `Host::holds_close`: asks the guard of a window that closes, unless the
 /// loop is exiting. True when it holds (`CloseGuard::holds` drops a close the ask leaves behind).
+/// A quit asks an open window the same way (`closes`: `quit_asks`).
 pub(in crate::window) fn hold_close_core(
     app: &mut dyn WindowApp,
     clipboard: &mut crate::clipboard::Client,
@@ -60,56 +49,38 @@ pub(in crate::window) fn hold_close_core(
     true
 }
 
-/// The host-free core of a quit asking a guarded window (`open`: `quit_asks`, `shown`: the window
-/// shows). With `once` (the app's end held for a window) the window asks once, and the end stays
-/// dropped, however the answer goes, for as long as the window shows or its guard holds; a window
-/// that closed (a `keep_running` one hides) with its guard down holds nothing. Without `once`
-/// every quit asks (a macOS Quit).
-pub(in crate::window) fn hold_quit_core(
-    app: &mut dyn WindowApp,
-    clipboard: &mut crate::clipboard::Client,
-    open: bool,
-    shown: bool,
-    ends_app: &mut bool,
-    asked: &mut bool,
-    once: bool,
-) -> Hold {
-    if !open {
-        *asked = false;
-        return Hold::No;
-    }
-    let guarded = app.close_guarded();
-    if !shown && !guarded {
-        *asked = false;
-        return Hold::No;
-    }
-    if once && *asked { return Hold::Held; }
-    if !guarded { return Hold::No; }
-    *asked |= once;
-    if hold_close_core(app, clipboard, open, false, ends_app) { Hold::Asked } else { Hold::No }
-}
-
 impl Host {
     /// A guarded window stays open and asks (`App::on_close_guard`), unless the loop is exiting.
-    /// True when it held the close.
+    /// So does the last main window that would end the app while another window holds back its
+    /// close: it stays open, and the windows that hold ask instead, as for a macOS Quit
+    /// (`holds_app_end`). True when it held the close.
     pub(in crate::window) fn holds_close(&mut self, event_loop: &ActiveEventLoop) -> bool {
         let closes = self.closes();
-        if !hold_close_core(&mut *self.app, &mut self.clipboard, closes, event_loop.exiting(), &mut self.ends_app) {
+        let exiting = event_loop.exiting();
+        if !hold_close_core(&mut *self.app, &mut self.clipboard, closes, exiting, &mut self.ends_app) && !self.holds_for_others(closes, exiting) {
             return false;
         }
         self.settle_open(event_loop);
         true
     }
 
-    /// A quit asks the window (`App::on_close_guard`); its follow-up comes before the turn ends (`about_to_wait`).
-    pub(in crate::window) fn holds_quit(&mut self, once: bool) -> bool {
+    /// The close of the last main window, held for the windows that hold back theirs: they ask at
+    /// the loop's next turn, as for a macOS Quit (`crate::quit::take_held`).
+    fn holds_for_others(&mut self, closes: bool, exiting: bool) -> bool {
+        let ends = self.keeps_loop && !self.keep_running;
+        let (mains, others) = (crate::quit::other_mains(self.main), crate::quit::other_guarded(self.guarded));
+        if !holds_app_end(closes, exiting, ends, mains, others) { return false; }
+        self.ends_app = false;
+        crate::quit::hold();
+        true
+    }
+
+    /// A quit asks the window (`App::on_close_guard`); its follow-up comes before the turn ends (`turn_ends`).
+    pub(in crate::window) fn holds_quit(&mut self) -> bool {
         let open = quit_asks(self.life);
-        let shown = self.life.shown();
-        match hold_quit_core(&mut *self.app, &mut self.clipboard, open, shown, &mut self.ends_app, &mut self.quit_asked, once) {
-            Hold::No => false,
-            Hold::Held => true,
-            Hold::Asked => { self.settle_due = true; true }
-        }
+        let held = hold_close_core(&mut *self.app, &mut self.clipboard, open, false, &mut self.ends_app);
+        self.settle_due |= held;
+        held
     }
 
     /// What a window that stays open after a close was asked of it still has to do: carry out the
@@ -130,13 +101,18 @@ impl Host {
         }
     }
 
-    /// Tells `crate::quit` whether this window holds back a quit, after every handler, so a state
-    /// change and a Quit in one pass meet the same answer.
+    /// Tells `crate::quit` whether this window holds back a quit and whether it is a main window
+    /// still open, after every handler, so a state change and a Quit in one pass meet the same answer.
     pub(in crate::window) fn note_guard(&mut self) {
-        let now = quit_asks(self.life) && self.app.close_guarded();
-        if now != self.guarded {
-            self.guarded = now;
-            crate::quit::guarded_by(now);
+        let guarded = quit_asks(self.life) && self.app.close_guarded();
+        if guarded != self.guarded {
+            self.guarded = guarded;
+            crate::quit::guarded_by(guarded);
+        }
+        let main = self.keeps_loop && !self.life.finished();
+        if main != self.main {
+            self.main = main;
+            crate::quit::main_open(main);
         }
     }
 }
@@ -144,5 +120,6 @@ impl Host {
 impl Drop for Host {
     fn drop(&mut self) {
         if self.guarded { crate::quit::guarded_by(false); }
+        if self.main { crate::quit::main_open(false); }
     }
 }
