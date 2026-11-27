@@ -236,6 +236,18 @@ impl TextEdit {
                 *slot = merged_block;
             }
         }
+        // An atom the edit pushes down a line keeps its own block, and the line above it has the
+        // new line's.
+        if kept.tail && added_lines > 0 {
+            if line_a == line_b {
+                if let Some(slot) = self.blocks.get_mut(line_a) {
+                    *slot = next_line_blk;
+                }
+            }
+            if let Some(slot) = self.blocks.get_mut(line_a + added_lines) {
+                *slot = block_b;
+            }
+        }
         if front.is_some() {
             if let Some(slot) = self.blocks.get_mut(line_a) {
                 *slot = next_line_blk;

@@ -2253,6 +2253,11 @@ example, and `spikes/paged/check.py` checks every point below headless.
     pasted text gives them the defaults, or a pasted fragment's own style, alignment and block.
   - An atom's line never joins text: new paragraphs go above or below it, and text that takes
     its place becomes a paragraph under a new id, in the atom's style.
+  - A fragment of several lines pasted at an empty Paragraph line gives that line the block of
+    the fragment's last line, so a pasted list keeps its last item; elsewhere the line keeps
+    its block. A pasted atom is an atom on a line of its own, with an id of its own and its
+    block, in a code block too (the code line splits around it, and the fragment's text goes in
+    as plain text). A paste that holds what the selection holds changes nothing, on every path.
 - **Pages**: `.page_flow(PageFlow::new(page_height, gap))` lays the field's lines into pages. A
   line that doesn't fit its page moves whole to the next, and the caret, presses, selection
   boxes, caret follow and the input method's cursor rectangle follow it. A paragraph with

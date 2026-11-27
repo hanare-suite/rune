@@ -6,6 +6,25 @@ use super::*;
 use rune_text::{Flow, Ink, TextFlow};
 
 impl TextEdit {
+    /// Whether `frag` is the selection: its text and marks, and for each line it covers whole its
+    /// block and its attributes, ids aside.
+    fn holds_selection(&self, frag: &TextEdit) -> bool {
+        let (a, b) = self.range();
+        if a == b || frag.text != self.text[a..b] { return false; }
+        let bytes = |marks: &[MarkRange], from: usize, to: usize| -> std::collections::BTreeSet<(usize, String)> {
+            marks.iter().flat_map(|m| (m.start.max(from)..m.end.min(to)).map(move |i| (i - from, format!("{:?}", m.mark)))).collect()
+        };
+        if bytes(&self.marks, a, b) != bytes(&frag.marks, 0, frag.text.len()) { return false; }
+        let (la, lb) = (self.line_of_byte(a), self.line_of_byte(b));
+        if frag.blocks.len() != lb - la + 1 { return false; }
+        let (ra, rb) = (self.line_range(la), self.line_range(lb));
+        (0..=lb - la).all(|k| {
+            let whole = (k > 0 || a == ra.start) && (k < lb - la || b == rb.end);
+            let kind = |x: ParagraphAttrs| (x.style, x.align, x.indent.to_bits(), x.first_line_indent.to_bits(), x.page_break_before, x.atom.map(f32::to_bits));
+            !whole || (frag.blocks[k] == self.blocks[la + k] && (!self.attributed() || kind(frag.paragraph(k)) == kind(self.paragraph(la + k))))
+        })
+    }
+
     /// Inserts `s` at `at` as no one's text: it inherits no marks.
     fn insert_plain_at(&mut self, at: usize, s: &str) {
         self.apply_text_and_attr_replace((at, at), s, &[], None, false);
@@ -510,7 +529,11 @@ impl TextEdit {
     /// Pastes `frag`, a fragment [`html_fragment`](Self::html_fragment) made, with the plain
     /// text `plain` where the field keeps none of its formatting, as one edit. It keeps the
     /// fragment's pills, and its atoms as atoms: each on a line of its own, with a new id from
-    /// [`set_paragraph_ids`](Self::set_paragraph_ids), in the fragment's order.
+    /// [`set_paragraph_ids`](Self::set_paragraph_ids), in the fragment's order. A code block takes
+    /// the plain text, but a fragment's atoms still go in as atoms on lines of their own: the code
+    /// line splits around them and its parts keep the Code block. A fragment that holds what the
+    /// selection holds (its text, marks, and for the lines it covers whole their blocks and
+    /// attributes, ids aside) changes nothing.
     pub fn paste_fragment(&mut self, mut frag: TextEdit, plain: &str) -> EditOutcome {
         if self.secure {
             return self.paste(plain);
@@ -537,12 +560,17 @@ impl TextEdit {
             return self.paste(if plain.is_empty() { frag.text.as_str() } else { plain });
         }
         self.sync_invariants();
-        // A code block takes the plain text, whose whitespace HTML would have collapsed.
-        if !self.is_single_line() {
-            let (a, _) = self.range();
-            if self.blocks.get(self.line_of_byte(a)) == Some(&Block::Code) {
-                return self.paste(if plain.is_empty() { frag.text.as_str() } else { plain });
-            }
+        // A code block takes the plain text, whose whitespace HTML would have collapsed; a
+        // fragment's atoms still go in as atoms, on lines of their own, and the code line splits
+        // around them.
+        let atoms = frag.attrs.iter().any(|a| a.atom.is_some());
+        let in_code = !self.is_single_line() && self.blocks.get(self.line_of_byte(self.range().0)) == Some(&Block::Code);
+        if in_code && !atoms {
+            return self.paste(if plain.is_empty() { frag.text.as_str() } else { plain });
+        }
+        // A paste that holds what the selection holds changes nothing, as typing it does not.
+        if self.holds_selection(&frag) {
+            return EditOutcome::default();
         }
         self.break_history_group();
         let before = self.snapshot();
@@ -581,6 +609,9 @@ impl TextEdit {
         let (la, lb) = (self.line_of_byte(a), self.line_of_byte(b));
         let (ra, rb) = (self.line_range(la), self.line_range(lb));
         let recv_start = a == ra.start;
+        // A paragraph the selection takes from its start into a later line, whose text the paste
+        // does not join: a fragment atom first in the paste takes its place.
+        let consumed_first = la < lb && recv_start;
         let empty_line = recv_start && b == rb.end;
         // An atom the selection takes whole, and paragraphs it takes whole, leave the next one.
         let recv_line = if la < lb && recv_start && (b == rb.start || self.paragraph(la).atom.is_some()) { lb } else { la };
@@ -603,7 +634,7 @@ impl TextEdit {
                 // Text before the paste on its line, or an atom behind it: the break goes before an
                 // atom line that joins it. A single line with nothing before it takes the break after.
                 let before = a > ra.start;
-                if frag_atom(&frag, 0) && joined(0) && !plain_single && (before || last > 0) {
+                if frag_atom(&frag, 0) && joined(0) && !plain_single && !consumed_first && (before || last > 0) {
                     // Without marks, whatever the caret inherits: the break is no one's text.
                     frag.insert_plain_at(0, "\n");
                 } else if frag_atom(&frag, last) && (joined(last) || (last == 0 && joined(0))) && !plain_single {
@@ -629,13 +660,17 @@ impl TextEdit {
         for k in 0..frag_lines {
             let (j, line) = (fenced.lead + k, line_idx + k);
             let from = frag.paragraph(k);
-            let single = plain_single && k == 0 && !is_new(j);
+            let consumes = consumed_first && k == 0 && from.atom.is_some() && fenced.lead == 0 && !is_new(j);
+            let single = (plain_single && k == 0 && !is_new(j)) || consumes;
             if !is_new(j) && !single { continue; }
+            // Text of a fragment goes into a code block as plain text.
+            if in_code && from.atom.is_none() { continue; }
             // A pasted atom that takes an empty line gets a new id: its id never named text.
             let atom_id = if single && from.atom.is_some() { self.fresh_id() } else { 0 };
             if self.attributed() {
                 if let Some(slot) = self.attrs_mut().get_mut(line) {
                     let was = *slot;
+                    if consumes { *slot = ParagraphAttrs::default().id(slot.id); }
                     (slot.style, slot.align) = (from.style, from.align);
                     if from.atom.is_some() {
                         slot.atom = from.atom;
@@ -645,7 +680,7 @@ impl TextEdit {
                 }
             }
             if let Some(slot) = self.blocks.get_mut(line) {
-                if !single || *slot == Block::Paragraph {
+                if !single || consumes || *slot == Block::Paragraph {
                     *slot = frag.blocks[k];
                 }
             }
@@ -668,7 +703,7 @@ impl TextEdit {
         }
 
         // Add `frag.marks` shifted by `ins_at`.
-        for m in &frag.marks {
+        for m in frag.marks.iter().filter(|_| !in_code) {
             self.marks.push(MarkRange {
                 start: ins_at + m.start,
                 end: ins_at + m.end,
@@ -679,7 +714,7 @@ impl TextEdit {
         self.sync_invariants();
         // The pasted text's marks and blocks, as one change over it.
         let end = (ins_at + frag.text.len()).min(self.text.len());
-        if !frag.marks.is_empty() { self.note_marks(ins_at..end); }
+        if !frag.marks.is_empty() && !in_code { self.note_marks(ins_at..end); }
         if styled || frag_lines > 1 || frag.blocks.first().is_some_and(|&b| b != Block::Paragraph) {
             self.note_paragraphs(first..first + new.len().max(frag_lines));
         }

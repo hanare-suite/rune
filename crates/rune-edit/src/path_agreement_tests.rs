@@ -252,6 +252,8 @@ fn a_pasted_fragment_follows_the_rules_over_every_selection() {
                     for i in 0..now.len() {
                         let infrag = i >= l0 && i <= l0 + last;
                         if infrag && now[i].1 == NEW && tr[i].1 == NEW { continue; }
+                        // A fragment's atom is an atom of its own where typed text is text.
+                        if infrag && now[i].5 == Some(20.0) { continue; }
                         if infrag && plain_single { continue; }
                         if takes_block && i == l0 + last { let mut n2 = now[i].clone(); n2.6 = tr[i].6; if n2 == tr[i] { continue; } }
                         if now[i] != tr[i] { fail("agree", format!("line {i}; typed gives {}", show(&tr))); break; }
