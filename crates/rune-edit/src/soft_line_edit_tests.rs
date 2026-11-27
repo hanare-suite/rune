@@ -244,35 +244,6 @@ fn a_pasted_atom_at_the_end_of_a_head_line_leaves_no_empty_paragraph() {
     assert_eq!(inv(&x), "");
 }
 
-/// Turning ids on writes them into the stored history, so undo and redo keep them, also through JSON.
-#[test]
-fn ids_turned_on_survive_undo_redo_and_the_json_history() {
-    let p = Block::Paragraph;
-    let mut e = TextEdit::from_parts("ab\ncd\nef", vec![], vec![p, p, p]);
-    e.set_paragraph_attrs(vec![ParagraphAttrs::default(); 3]);
-    e.set_selection(2, 2);
-    e.key(&key(Key::Text("x".into()), false), None);
-    e.key(&key(Key::Enter, false), None);
-    e.set_paragraph_ids(100);
-    let ids = |x: &TextEdit| (0..x.text.split('\n').count()).map(|i| x.paragraph(i).id).collect::<Vec<_>>();
-    let now = ids(&e);
-    assert!(now.iter().all(|&i| i != 0), "{now:?}");
-    let mut u = e.clone();
-    u.undo();
-    assert!(ids(&u).iter().all(|&i| i != 0), "undo keeps ids: {:?}", ids(&u));
-    u.redo();
-    assert_eq!(ids(&u), now, "redo");
-    let j = e.history_json(1000, 1 << 24).expect("history");
-    let j: serde_json::Value = serde_json::from_str(&j.to_string()).unwrap();
-    let mut y = e.clone();
-    y.clear_history();
-    assert!(y.restore_history_json(&j));
-    y.undo();
-    assert!(ids(&y).iter().all(|&i| i != 0), "json undo keeps ids: {:?}", ids(&y));
-    y.redo();
-    assert_eq!(ids(&y), now, "json redo");
-}
-
 /// With ids on, setting the attributes gives an id to any line that has none, so the order of the two calls does not matter.
 #[test]
 fn set_paragraph_attrs_and_ids_end_the_same_in_either_order() {
@@ -306,4 +277,79 @@ fn an_empty_fragment_on_an_empty_line_keeps_the_armed_style() {
     let f = TextEdit::from_parts("", vec![], vec![Block::Paragraph]);
     e.paste_fragment(f, "");
     assert!(e.has_mark(&Mark::Bold), "the armed style stays");
+}
+
+fn nondefault_docs() -> Vec<(&'static str, TextEdit)> {
+    let (p, u, q) = (Block::Paragraph, Block::Bullet(0), Block::Quote);
+    let d = ParagraphAttrs::default;
+    let c = |i: u64| d().id(i).align(ParagraphAlign::Center).indent(10.0, 0.0).style(2);
+    let mut soft = TextEdit::from_parts("ab\ncd\nxy\nef", vec![], vec![u, u, u, p]);
+    soft.set_paragraph_attrs(vec![c(1), c(2), c(3), d().id(4)]);
+    soft.set_paragraph_ids(100);
+    soft.set_soft_breaks(vec![1, 2]);
+    soft.take_changes();
+    let mut hard = TextEdit::from_parts("ab\ncd\nxy\nef", vec![], vec![u, u, u, p]);
+    hard.set_paragraph_attrs(vec![c(1), c(2), c(3), d().id(4)]);
+    hard.set_paragraph_ids(100);
+    hard.take_changes();
+    let plain = TextEdit::from_parts("ab\ncd\nxy\nef", vec![], vec![q, q, q, p]).with_soft_breaks(vec![1, 2]);
+    vec![("soft", soft), ("hard", hard), ("plain-soft", plain)]
+}
+
+/// What the lines of an edit are, ids aside: text, softness, blocks, and the attributes a paste can say.
+fn shape(e: &TextEdit) -> (String, Vec<u32>, Vec<Block>, Vec<(ParagraphAlign, f32, u16, bool)>) {
+    (e.text.clone(), e.soft_breaks().to_vec(), e.blocks().to_vec(), e.paragraph_attrs().iter().map(|a| (a.align, a.indent, a.style, a.atom.is_some())).collect())
+}
+
+/// An atom goes in the same by `insert_atom` and by a pasted fragment: on a line of its own with the defaults, the rest of
+/// the paragraph behind it (text or soft lines) keeping the attributes and block it had, at every caret and selection,
+/// at a soft line's start too (no empty soft line).
+#[test]
+fn insert_atom_and_a_pasted_atom_agree_in_paragraphs_with_soft_lines() {
+    let mut fails: Vec<String> = Vec::new();
+    for (name, e) in nondefault_docs() {
+        let len = e.text.len();
+        for (a, b) in (0..=len).map(|a| (a, a)).chain([(0, 2), (1, 2), (0, 5), (3, 5), (3, 8), (0, 8)]) {
+            let mut i = e.clone();
+            i.set_selection(a, b);
+            i.insert_atom("N", 20.0);
+            let mut f = e.clone();
+            f.set_selection(a, b);
+            let fr = f.html_fragment("<p data-atom=\"9\" data-atom-height=\"20\">N</p>");
+            f.paste_fragment(fr, "N");
+            if shape(&i) != shape(&f) || inv(&i) != "" || inv(&f) != "" {
+                fails.push(format!("{name} {a}..{b}\n   insert_atom {}\n   fragment    {}", show(&i), show(&f)));
+            }
+        }
+    }
+    assert!(fails.is_empty(), "{} failures, the first:\n{}", fails.len(), fails.iter().take(4).cloned().collect::<Vec<_>>().join("\n"));
+    // The remainder of a paragraph behind a break at the end of its first line keeps the paragraph's attributes.
+    for (name, e) in nondefault_docs() {
+        for how in ["insert", "paste"] {
+            let mut x = e.clone();
+            x.set_caret(2);
+            if how == "insert" { x.insert("x\ny"); } else { x.paste("x\ny"); }
+            let shape_of = |l: usize| (x.paragraph(l).align, x.paragraph(l).indent, x.paragraph(l).style, x.blocks()[l]);
+            assert_eq!(shape_of(1), shape_of(0), "{name} {how}: y keeps the paragraph's attributes: {}", show(&x));
+            assert_eq!(x.blocks()[1], e.blocks()[0], "{name} {how}: block");
+        }
+    }
+}
+
+/// Turning ids on clears the undo history (the states from before had no ids): undo after it brings nothing back.
+#[test]
+fn turning_ids_on_clears_the_history() {
+    let p = Block::Paragraph;
+    let mut e = TextEdit::from_parts("ab\ncd", vec![], vec![p, p]);
+    e.set_paragraph_attrs(vec![ParagraphAttrs::default(); 2]);
+    e.set_selection(2, 2);
+    e.key(&key(Key::Text("x".into()), false), None);
+    assert!(e.history_len().0 > 0, "a step is recorded");
+    e.set_paragraph_ids(100);
+    let (text, ids) = (e.text.clone(), (0..2).map(|i| e.paragraph(i).id).collect::<Vec<_>>());
+    e.undo();
+    assert_eq!(e.text, text, "undo brings nothing back");
+    assert_eq!((0..2).map(|i| e.paragraph(i).id).collect::<Vec<_>>(), ids);
+    e.redo();
+    assert_eq!(e.text, text);
 }
