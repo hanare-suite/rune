@@ -82,6 +82,10 @@ fn docs() -> Vec<(&'static str, TextEdit)> {
         ("trail", mk("abc\n", vec![mr(0..3, link())], vec![n, p], vec![d.id(1).style(1), d.id(2)])),
         ("atomtrail", mk("Tab\n", vec![], vec![p, b], vec![d.id(1).atom(30.0).page_break_before(true), d.id(2).style(2)])),
         ("threeatoms", mk("Ta\nTb\nTc", vec![], vec![p, b, c], vec![d.id(1).atom(30.0), d.id(2).atom(30.0).style(2), d.id(3).atom(30.0)])),
+        ("pcode", mk("ab\ncd\nef", vec![mr(0..2, Mark::Bold)], vec![p, c, p], vec![d.id(1).style(1), d.id(2).style(2), d.id(3).style(3)])),
+        ("codep", mk("ab\ncd\nef", vec![mr(3..5, Mark::Bold)], vec![c, p, c], vec![d.id(1).style(1), d.id(2).style(2), d.id(3).style(3)])),
+        ("codeq", mk("ab\n\ncd\nef", vec![], vec![c, c, q, b], vec![d.id(1), d.id(2).style(2), d.id(3).style(3), d.id(4)])),
+        ("atomcodeatom", mk("Ta\nab\nTb\ncd", vec![], vec![c, c, n, c], vec![d.id(1).atom(30.0), d.id(2).style(2), d.id(3).atom(30.0), d.id(4)])),
     ]
 }
 
@@ -135,6 +139,8 @@ fn mkfrag(f: &Frag) -> TextEdit {
     assert_eq!(x.blocks(), &f.1[..]);
     x
 }
+
+fn la_line(e: &TextEdit, a: usize) -> usize { e.line_of_byte(a) }
 
 fn line_ranges(text: &str) -> Vec<(usize, usize)> {
     let mut at = 0;
@@ -266,7 +272,7 @@ fn a_pasted_fragment_follows_the_rules_over_every_selection() {
                     let (_, at, bl) = lines[la];
                     if at != oattrs[la] || bl != oblocks[la] { fail("rule-split-first", String::new()); }
                     let (_, at, bl) = lines[end_line];
-                    let mut want = oattrs[la]; want.id = at.id;
+                    let mut want = oattrs[la]; want.id = at.id; want.page_break_before = false;
                     if bl != oblocks[la] || at.id < 100 || at != want { fail("rule-split-tail", format!("tail {at:?} {bl:?}")); }
                 }
                 // typed text of the same bytes: same rows outside the fragment's new paragraphs
@@ -445,10 +451,12 @@ fn return_gives_the_result_of_a_typed_break_over_every_selection() {
             // The new paragraph is a copy of the line the selection starts on: its style, alignment,
             // indents and block, never a mix of two lines'.
             let want = |l: usize| { let o = e.paragraph(l); (o.style, o.align, (o.indent, o.first_line_indent), e.blocks()[l]) };
-            // (An atom the selection takes becomes text under a new id; that is no new paragraph.)
-            let touches_atom = (e.line_of_byte(a)..=e.line_of_byte(b)).any(|l| e.paragraph(l).atom.is_some());
-            for (i, x) in rr.iter().enumerate().filter(|_| !touches_atom) {
-                if x.1 == NEW && x.5.is_none() && (x.2, x.3, x.4, x.6) != want(line) { fails.push(format!("{msg}\n   new paragraph {i} is not a copy of line {line}")); }
+            // Only two shapes are no copy of that line: an atom's line that became text (under a new id,
+            // in the atom's attributes), and a default line made inside a code block.
+            let as_text = |x: &Row| (la_line(&e, a)..=e.line_of_byte(b)).any(|l| { let o = e.paragraph(l); o.atom.is_some() && (x.2, x.3, x.4, x.6) == (o.style, o.align, (o.indent, o.first_line_indent), e.blocks()[l]) });
+            for (i, x) in rr.iter().enumerate() {
+                let code_default = x.6 == Block::Code && (x.2, x.3, x.4) == (0, ParagraphAlign::Left, (0.0, 0.0));
+                if x.1 == NEW && x.5.is_none() && (x.2, x.3, x.4, x.6) != want(line) && !as_text(x) && !code_default { fails.push(format!("{msg}\n   new paragraph {i} is not a copy of line {line}")); }
             }
             // undo and redo
             let mut y = e.clone();
@@ -484,9 +492,9 @@ fn a_pasted_fragment_follows_the_rules_in_code_and_around_every_document() {
             let (a, b) = probe.range();
             if (a, b) != (a0, b0) { continue; }
             let (la, lb) = (olines.iter().position(|r| r.0 <= a && a <= r.1).unwrap(), olines.iter().position(|r| r.0 <= b && b <= r.1).unwrap());
-            // The line what is left of the selection joins decides whether the paste goes into code.
             let landing = if la < lb && a == olines[la].0 && (b == olines[lb].0 || oattrs[la].atom.is_some()) { lb } else { la };
             let in_code = oblocks[landing] == Block::Code && oattrs[landing].atom.is_none();
+            let touches_code = (la..=lb).any(|l| oblocks[l] == Block::Code);
             for (fi, fr) in frags.iter().enumerate() {
                 cases += 1;
                 let f = mkfrag(fr);
@@ -498,25 +506,35 @@ fn a_pasted_fragment_follows_the_rules_in_code_and_around_every_document() {
                 x.paste_fragment(f.clone(), "");
                 let ch = x.take_changes();
                 let now = rows(&x, &orig);
-                let why = |m: String| format!("{doc} {a}..{b} {:?} frag#{fi} {ft:?}: {m}\n      => {}", &e.text[a..b], show(&now));
-                let mut fail = |k: &str, m: String| fails.entry(format!("{k}{}", if in_code { "/code" } else { "" })).or_default().push(why(m));
+                let why = |m: String| format!("{doc} {a}..{b} {:?} frag#{fi} {ft:?}: {m}\n      => {} marks {:?}", &e.text[a..b], show(&now), x.marks());
+                let mut fail = |k: &str, m: String| fails.entry(format!("{k}{}{}", if in_code { "/code" } else { "" }, if touches_code && !in_code { "/touchcode" } else { "" })).or_default().push(why(m));
                 if let Err(w) = check(&before, &x, &ch) { fail("report", w); }
                 if !(x.text.starts_with(&e.text[..a]) && x.text.ends_with(&e.text[b..]) && x.text.len() >= a + (n - b)) { fail("text-shape", "edges moved".into()); continue; }
                 let mid = &x.text[a..x.text.len() - (n - b)];
                 let off = mid.len() - mid.trim_start_matches('\n').len();
                 let off = if ft.starts_with('\n') { off.saturating_sub(1) } else { off };
                 if !mid[off..].starts_with(ft) || !mid[off + ft.len()..].chars().all(|c| c == '\n') || off > 1 || mid.len() - off - ft.len() > 1 { fail("text-shape", format!("mid {mid:?}")); continue; }
-                if !in_code {
-                    // (A code line holds no marks, wherever the text of the paste ends up.)
-                    let plain_line = |i: &usize| x.blocks()[x.line_of_byte(a + *i)] != Block::Code;
-                    let want: BTreeSet<(usize, String)> = fmarks.iter().flat_map(|m| (m.start..m.end).map(move |i| (off + i, format!("{:?}", m.mark)))).filter(|(i, _)| plain_line(i)).collect();
-                    let got: BTreeSet<(usize, String)> = marked(x.marks(), a, a + mid.len()).into_iter().filter(|(i, _)| plain_line(i)).collect();
-                    if want != got { fail("marks", format!("want {want:?} got {got:?}")); }
+                // strict: marks on code lines anywhere
+                let xl = line_ranges(&x.text);
+                for m in x.marks() {
+                    for (i, r) in xl.iter().enumerate() {
+                        if x.blocks()[i] == Block::Code && x.paragraph(i).atom.is_none() && m.start < r.1 && m.end > r.0 { fail("MARK-ON-CODE-LINE", format!("line {i} {m:?}")); }
+                    }
                 }
+                if !in_code {
+                    let plain_line = |i: &usize| x.blocks()[x.line_of_byte(a + *i)] != Block::Code;
+                    let want: BTreeSet<(usize, String)> = fmarks.iter().flat_map(|m| (m.start..m.end).map(move |i| (off + i, format!("{:?}", m.mark)))).collect();
+                    let got: BTreeSet<(usize, String)> = marked(x.marks(), a, a + mid.len());
+                    if want != got {
+                        let w2: BTreeSet<_> = want.iter().filter(|(i, _)| plain_line(i)).cloned().collect();
+                        let g2: BTreeSet<_> = got.iter().filter(|(i, _)| plain_line(i)).cloned().collect();
+                        // (A code line holds no marks, wherever the text of the paste ends up.)
+                        if w2 != g2 { fail("marks", format!("want {want:?} got {got:?}")); }
+                    }
+                } else if !marked(x.marks(), a, a + mid.len()).is_empty() { fail("marks-in-code", String::new()); }
                 let ids: Vec<u64> = x.paragraph_attrs().iter().map(|a| a.id).collect();
                 let mut u = ids.clone(); u.sort(); u.dedup();
                 if u.len() != ids.len() || ids.contains(&0) { fail("ids", format!("{ids:?}")); }
-                let xl = line_ranges(&x.text);
                 let lines: Vec<(&str, ParagraphAttrs, Block)> = x.text.split('\n').enumerate().map(|(i, t)| (t, x.paragraph(i), x.blocks()[i])).collect();
                 let l0 = xl.iter().position(|r| r.0 <= a + off && a + off <= r.1).unwrap();
                 let flines: Vec<&str> = ft.split('\n').collect();
@@ -533,13 +551,19 @@ fn a_pasted_fragment_follows_the_rules_in_code_and_around_every_document() {
                         if (at.indent, at.first_line_indent, at.page_break_before) != (0.0, 0.0, false) { fail("atom-indent", format!("{at:?}")); }
                     } else {
                         if at.atom.is_some() && !flines[k].is_empty() { fail("text-is-atom", format!("frag line {k} {t:?} is an atom")); }
-                        // A line that is wholly the fragment's and carries a new id is a new paragraph.
-                        if at.id >= 100 && t == flines[k] && at.atom.is_none() && !in_code && !atom_touch {
+                        if at.id >= 100 && t == flines[k] && at.atom.is_none() && !in_code {
+                            let code_line = bl == Block::Code;
+                            let as_text = |o: ParagraphAttrs| { let mut o = o; o.atom = None; o.id = at.id; o };
+                            let kept_atom = atom_touch && (la..=lb).any(|l| oattrs[l].atom.is_some() && (as_text(oattrs[l]) == at || { let mut o = as_text(oattrs[l]); o.page_break_before = false; o == at }));
+                            let code_default = code_line && { let mut o = ParagraphAttrs::default(); o.id = at.id; o == at };
+                            if kept_atom || code_default { continue; }
                             if (at.style, at.align) != (from.style, from.align) || bl != fb[k] || at.indent != 0.0 || at.first_line_indent != 0.0 || at.page_break_before {
-                                fail(&format!("new-para-k{}{}", if k == 0 { "first" } else if k == last { "last" } else { "mid" }, if atom_touch { "/atomtouch" } else { "" }), format!("frag line {k}: {at:?} {bl:?}"));
+                                fail(&format!("new-para-k{}{}{}", if k == 0 { "first" } else if k == last { "last" } else { "mid" }, if atom_touch { "/atomtouch" } else { "" }, if code_line { "/codeline" } else { "" }), format!("frag line {k}: {at:?} {bl:?}"));
                             }
                         }
                         if in_code && at.id >= 100 && t == flines[k] && k > 0 && k < last && (bl != Block::Code) { fail("code-mid-block", format!("{bl:?}")); }
+                        // (The last line of a paste that runs to a later line is that paragraph, in its block.)
+                        if in_code && bl != Block::Code && !flines[k].is_empty() && !(k == last && la < lb) { fail("code-text-not-code", format!("frag line {k} {bl:?}")); }
                     }
                 }
                 let survivors: Vec<usize> = (0..olines.len()).filter(|&i| oattrs[i].atom.is_some() && !(a < b && a < olines[i].1 && b > olines[i].0)).collect();
@@ -552,15 +576,45 @@ fn a_pasted_fragment_follows_the_rules_in_code_and_around_every_document() {
                 }
                 for (i, l) in lines.iter().enumerate() {
                     if l.1.atom.is_none() && l.1.id != 0 && oattrs.iter().any(|o| o.atom.is_some() && o.id == l.1.id) { fail("atom-id-on-text", format!("line {i}")); }
-                    // a text line that is not the atom's label never an atom
                     if l.1.atom == Some(20.0) && l.0 != "Q" { fail("atom-holds-text", format!("line {i} {:?}", l.0)); }
-                    if l.1.atom.is_some() && l.1.atom != Some(20.0) && !oattrs.iter().enumerate().any(|(j, o)| o.id == l.1.id && o.atom.is_some() && &e.text[olines[j].0..olines[j].1] == l.0) { fail("field-atom-text", format!("line {i} {:?}", l.0)); }
                 }
-                // every original paragraph id that survives sits on a line holding some of its paragraph's rule position: no id on two lines (checked), and
-                // ids of untouched lines unchanged (check() covers). Stray empty lines:
+                // untouched lines outside the selection keep everything
+                for i in 0..la { if now[i] != rows(&e, &orig)[i] && !(i + 1 == la && false) { fail("line-before-changed", format!("line {i}")); } }
+                let on = rows(&e, &orig);
+                for i in lb + 1..on.len() { let j = now.len() - (on.len() - i); if now[j] != on[i] { fail("line-after-changed", format!("line {i}")); } }
+                // rules independent of engine
+                let (ra, rb) = (olines[la], olines[lb]);
                 let added = mid.matches('\n').count();
-                if added > ft.matches('\n').count() + 2 { fail("extra-breaks", format!("{mid:?}")); }
-                // undo / redo
+                let end_line = la + added;
+                let mut wo = oattrs[landing]; wo.id = 0;
+                let plain_single = flines.len() == 1 && a == ra.0 && b == rb.1 && wo == ParagraphAttrs::default() && oblocks[landing] == Block::Paragraph;
+                let takes_block = a == ra.0 && b == rb.1 && oblocks[landing] == Block::Paragraph && flines.len() > 1 && !ft.ends_with('\n');
+                let blk = |orig: Block, got: Block| if takes_block { got == orig || got == fb[last] } else { got == orig };
+                if a == b && a == ra.0 && !plain_single {
+                    let (t, at, bl) = lines[end_line];
+                    if at != oattrs[la] || !blk(oblocks[la], bl) || !t.ends_with(&e.text[ra.0..ra.1]) { fail("rule-line-start", format!("line {la} was {:?} {:?}", oattrs[la], oblocks[la])); }
+                }
+                if a > ra.0 && added == 0 && !atom_touch {
+                    let (_, at, bl) = lines[la];
+                    if at != oattrs[la] || bl != oblocks[la] { fail("rule-join", format!("line {la}")); }
+                }
+                if la < lb && a == ra.0 && b == rb.0 && !plain_single {
+                    let (t, at, bl) = lines[end_line];
+                    if at != oattrs[lb] || !blk(oblocks[lb], bl) || !t.ends_with(&e.text[rb.0..rb.1]) { fail("rule-whole", format!("line {lb} was {:?} {:?}", oattrs[lb], oblocks[lb])); }
+                }
+                if la < lb && a > ra.0 && b > rb.0 && added > 0 && !atom_touch {
+                    let (_, at, bl) = lines[la];
+                    if at != oattrs[la] || bl != oblocks[la] { fail("rule-midmid-first", String::new()); }
+                    let (_, at, bl) = lines[end_line];
+                    if at != oattrs[lb] || bl != oblocks[lb] { fail("rule-midmid-last", format!("want {:?} {:?}", oattrs[lb], oblocks[lb])); }
+                }
+                if la == lb && a > ra.0 && b < ra.1 && added > 0 && !atom_touch {
+                    let (_, at, bl) = lines[la];
+                    if at != oattrs[la] || bl != oblocks[la] { fail("rule-split-first", String::new()); }
+                    let (_, at, bl) = lines[end_line];
+                    let mut want = oattrs[la]; want.id = at.id; want.page_break_before = false;
+                    if bl != oblocks[la] || at.id < 100 || at != want { fail("rule-split-tail", format!("tail {at:?} {bl:?}")); }
+                }
                 let mut y = e.clone();
                 y.set_history(true);
                 y.set_selection(a, b);
@@ -706,4 +760,233 @@ fn a_fragment_atom_stays_an_atom_in_a_code_block_and_the_text_around_it_stays_co
     assert_eq!(kinds, vec![("ax", false, Block::Code), ("Q", true, Block::Paragraph), ("ybc", false, Block::Code), ("xyz", false, Block::Paragraph)], "{}", show(&got));
     assert!(e.marks().is_empty(), "text goes in as plain text: {:?}", e.marks());
     assert_eq!(got[0].1, 1);
+}
+
+#[test]
+fn shift_return_is_the_text_of_a_break_with_a_soft_line_and_never_beside_an_atom() {
+    let shift = KeyEvent { key: Key::Enter, mods: Mods { shift: true, ..Mods::default() } };
+    let mut fails: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut cases = 0;
+    for (doc, e) in docs() {
+        let len = e.text.len();
+        let orig: Vec<u64> = e.paragraph_attrs().iter().map(|a| a.id).collect();
+        for a in 0..=len { for b in a..=len {
+            let mut pr = e.clone();
+            pr.set_selection(a, b);
+            if pr.range() != (a, b) { continue; }
+            cases += 1;
+            let mut s = e.clone();
+            s.set_selection(a, b);
+            let before = seen(&s);
+            s.key(&shift, None);
+            let ch = s.take_changes();
+            let mut t = e.clone();
+            t.set_selection(a, b);
+            t.insert("\u{1}");
+            let (sr, tr) = (rows(&s, &orig), rows(&t, &orig));
+            let atom = (e.line_of_byte(a)..=e.line_of_byte(b)).any(|l| e.paragraph(l).atom.is_some());
+            let tag = format!("{}{}", if a == b { "/caret" } else { "" }, if atom { "/atom" } else { "" });
+            let msg = format!("{doc} {a}..{b} {:?}\n   shift: {} soft {:?} caret {:?}\n   typed: {} soft {:?}", &e.text[a..b], show(&sr), s.soft_breaks(), s.range(), show(&tr), t.soft_breaks());
+            if let Err(w) = check(&before, &s, &ch) { fails.entry(format!("report{tag}")).or_default().push(format!("{msg}\n   {w}")); }
+            let ids: Vec<u64> = s.paragraph_attrs().iter().map(|a| a.id).collect();
+            let mut u = ids.clone(); u.sort(); u.dedup();
+            if u.len() != ids.len() { fails.entry(format!("dup{tag}")).or_default().push(msg.clone()); }
+            for (i, x) in s.paragraph_attrs().iter().enumerate() {
+                if x.atom.is_none() && e.paragraph_attrs().iter().any(|o| o.atom.is_some() && o.id == x.id) { fails.entry(format!("atomid{tag}")).or_default().push(format!("{msg} line {i}")); }
+            }
+            for &l in s.soft_breaks() {
+                let l = l as usize;
+                if s.paragraph(l).atom.is_some() { fails.entry(format!("soft-atom{tag}")).or_default().push(msg.clone()); }
+                if l > 0 && s.paragraph(l - 1).atom.is_some() { fails.entry(format!("soft-after-atom{tag}")).or_default().push(msg.clone()); }
+                if l > 0 && s.blocks()[l] != s.blocks()[l - 1] { fails.entry(format!("soft-block{tag}")).or_default().push(msg.clone()); }
+            }
+            // structure vs typed (an atom is never a soft line: beside one the break is a hard break)
+            if atom {
+                let mut y = e.clone();
+                y.set_history(true);
+                y.set_selection(a, b);
+                let snap = |y: &TextEdit| (y.text.clone(), y.paragraph_attrs(), y.blocks().to_vec(), marked(y.marks(), 0, y.text.len()), y.soft_breaks().to_vec());
+                let st = snap(&y);
+                y.key(&shift, None);
+                let done = snap(&y);
+                y.undo();
+                if snap(&y) != st { fails.entry(format!("undo{tag}")).or_default().push(msg.clone()); }
+                y.redo();
+                if snap(&y) != done { fails.entry(format!("redo{tag}")).or_default().push(msg.clone()); }
+                continue;
+            }
+            let i = tr.iter().position(|r| r.0.contains('\u{1}'));
+            let Some(i) = i else { fails.entry(format!("no-x{tag}")).or_default().push(msg.clone()); continue; };
+            if sr.len() != tr.len() + 1 { fails.entry(format!("len{tag}")).or_default().push(msg.clone()); continue; }
+            let (pre, suf) = tr[i].0.split_once('\u{1}').unwrap();
+            let mut ok = true;
+            for j in 0..i { ok &= sr[j] == tr[j]; }
+            for j in i + 1..tr.len() { ok &= sr[j + 1] == tr[j]; }
+            let mut first = tr[i].clone(); first.0 = pre.into();
+            if !ok { fails.entry(format!("others{tag}")).or_default().push(msg.clone()); }
+            else if sr[i] != first { fails.entry(format!("first-part{tag}")).or_default().push(msg.clone()); }
+            else if sr[i + 1].0 != suf || sr[i + 1].6 != tr[i].6 || !s.soft_breaks().contains(&((i + 1) as u32)) { fails.entry(format!("soft-part{tag}")).or_default().push(msg.clone()); }
+            else if (sr[i + 1].2, sr[i + 1].3, sr[i + 1].4) != (tr[i].2, tr[i].3, tr[i].4) { fails.entry(format!("soft-attrs{tag}")).or_default().push(msg.clone()); }
+            // softs otherwise the same
+            let want: BTreeSet<u32> = t.soft_breaks().iter().map(|&l| if l as usize > i { l + 1 } else { l }).chain([(i + 1) as u32]).collect();
+            let got: BTreeSet<u32> = s.soft_breaks().iter().copied().collect();
+            if ok && want != got { fails.entry(format!("softset{tag}")).or_default().push(msg.clone()); }
+            if s.range() != (a + 1 + (s.text.len() - (len - (b - a)) - 1), a + 1 + (s.text.len() - (len - (b - a)) - 1)) && false { }
+            let mut y = e.clone();
+            y.set_history(true);
+            y.set_selection(a, b);
+            let snap = |y: &TextEdit| (y.text.clone(), y.paragraph_attrs(), y.blocks().to_vec(), marked(y.marks(), 0, y.text.len()), y.soft_breaks().to_vec());
+            let st = snap(&y);
+            y.key(&shift, None);
+            let done = snap(&y);
+            y.undo();
+            if snap(&y) != st { fails.entry(format!("undo{tag}")).or_default().push(msg.clone()); }
+            y.redo();
+            if snap(&y) != done { fails.entry(format!("redo{tag}")).or_default().push(msg.clone()); }
+        }}
+    }
+    let fails: BTreeMap<&str, Vec<String>> = fails.iter().map(|(k, v)| (k.as_str(), v.clone())).collect();
+    assert!(fails.is_empty(), "{}", summary(cases, &fails));
+}
+
+#[test]
+fn an_atom_in_every_block_survives_copy_paste_and_cut_and_paste() {
+    let d = ParagraphAttrs::default();
+    let blocks = [Block::Paragraph, Block::Bullet(0), Block::Bullet(1), Block::Numbered(0), Block::Numbered(2), Block::Quote, Block::Code];
+    let mut fails: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut cases = 0;
+    // sources: before / atom / after with every block combination; also two atoms adjacent
+    for &ab in &blocks { for &nb in &blocks { for shape in 0..5 {
+        let (text, bl, at): (&str, Vec<Block>, Vec<ParagraphAttrs>) = match shape {
+            0 => ("aa\nTab\nbb", vec![nb, ab, nb], vec![d.id(1), d.id(2).atom(40.0), d.id(3)]),
+            1 => ("Tab\nbb", vec![ab, nb], vec![d.id(1).atom(40.5), d.id(2)]),
+            2 => ("aa\nTab", vec![nb, ab], vec![d.id(1), d.id(2).atom(40.0)]),
+            3 => ("Ta\nTb\nbb", vec![ab, nb, nb], vec![d.id(1).atom(40.0), d.id(2).atom(41.0), d.id(3)]),
+            _ => ("Tab", vec![ab], vec![d.id(1).atom(40.0).align(ParagraphAlign::Center)]),
+        };
+        if shape == 4 && nb != blocks[0] { continue; }
+        let src = mk(text, vec![], bl.clone(), at.clone());
+        let n = src.text.len();
+        let ol = line_ranges(&src.text);
+        for a in 0..=n { for b in a + 1..=n {
+            let mut s = src.clone();
+            s.set_selection(a, b);
+            if s.range() != (a, b) { continue; }
+            cases += 1;
+            let (la, lb) = (src.line_of_byte(a), src.line_of_byte(b));
+            let html = s.selected_html();
+            let f = s.html_fragment(&html);
+            let name = format!("{text:?} {bl:?} sel {a}..{b} {:?}", &src.text[a..b]);
+            let msg = format!("{name}\n     html {html}\n     frag {:?} blocks {:?} attrs {:?}", f.text, f.blocks(), f.paragraph_attrs().iter().map(|x| (x.atom, x.id, x.align)).collect::<Vec<_>>());
+            let tag = format!("/atom{ab:?}");
+            // expected fragment: text == selection text (a trailing break gives an empty last line)
+            let sel = &src.text[a..b];
+            // A selection of one line break copies as nothing.
+            if sel == "\n" { continue; }
+            let lead = sel.len() - sel.trim_start_matches('\n').len();
+            let lead = lead.min(1);
+            let trail_code = sel.ends_with('\n') && f.text.len() + lead + 1 == sel.len();
+            if f.text != sel[lead..] && !(trail_code && f.text == sel[lead..sel.len() - 1]) { fails.entry(format!("frag-text{tag}/nb{nb:?}")).or_default().push(msg.clone()); continue; }
+            // (A `<pre>` cannot say the copy ended behind a line break: that is no failure of an atom.)
+            let la = la + lead;
+            if lead == 1 && a != ol[la - 1].1 { fails.entry("lead-odd".to_string()).or_default().push(msg.clone()); continue; }
+            let fl = f.text.split('\n').count();
+            if f.blocks().len() != fl { fails.entry(format!("frag-lines{tag}")).or_default().push(msg.clone()); continue; }
+            for k in 0..fl {
+                let line = la + k;
+                let whole = a <= ol[line].0 && b >= ol[line].1;
+                let src_atom = at[line].atom.filter(|_| whole);
+                let got = f.paragraph(k);
+                if got.atom != src_atom { fails.entry(format!("frag-atom{tag}")).or_default().push(format!("{msg}\n     line {k} atom {:?} want {:?}", got.atom, src_atom)); }
+                if src_atom.is_some() && got.id != at[line].id { fails.entry(format!("frag-atom-id{tag}")).or_default().push(msg.clone()); }
+                let empty_tail = k == fl - 1 && k > 0 && b == ol[line].0;
+                if !empty_tail && f.blocks()[k] != bl[line] { fails.entry(format!("frag-block{}{tag}/line{:?}", if src_atom.is_some() { "-ATOM" } else { "" }, bl[line])).or_default().push(format!("{msg}\n     line {k} block {:?} want {:?}", f.blocks()[k], bl[line])); }
+                if src_atom.is_some() && got.align != at[line].align { fails.entry(format!("frag-atom-align{tag}")).or_default().push(msg.clone()); }
+            }
+            // pasting it back over the selection changes nothing
+            let mut x = src.clone();
+            x.set_selection(a, b);
+            if lead == 1 || trail_code { continue; }
+            x.paste_fragment(f.clone(), &src.text[a..b]);
+            let snap = |y: &TextEdit| (y.text.clone(), y.paragraph_attrs(), y.blocks().to_vec());
+            let cut_label = (la..=lb).any(|l| at[l].atom.is_some() && !(a <= ol[l].0 && b >= ol[l].1) && a < ol[l].1 && b > ol[l].0);
+            if snap(&x) != snap(&src) { fails.entry(format!("self-paste{}{tag}", if cut_label { "/cutlabel" } else { "" })).or_default().push(format!("{msg}\n     now {}", show(&rows(&x, &[1, 2, 3])))); }
+            // cut, then paste at the caret: the document comes back, atoms under new ids
+            let has_atom = (la..=lb).any(|l| at[l].atom.is_some() && a <= ol[l].0 && b >= ol[l].1);
+            if has_atom && !cut_label {
+                let mut x = src.clone();
+                x.set_selection(a, b);
+                x.insert("");
+                let after_cut = show(&rows(&x, &[1, 2, 3]));
+                x.paste_fragment(f.clone(), &src.text[a..b]);
+                let key = |y: &TextEdit| y.text.split('\n').enumerate().map(|(i, t)| (t.to_string(), y.paragraph(i).atom, y.blocks()[i])).collect::<Vec<_>>();
+                let mut k2 = key(&src); k2.insert(lb + 1, (String::new(), None, key(&x).get(lb + 1).map_or(Block::Paragraph, |r| r.2)));
+                if key(&x) == k2 { fails.entry("cut-paste-leaves-empty-line".to_string()).or_default().push(String::new()); }
+                else if key(&x) != key(&src) { fails.entry(format!("cut-paste{tag}")).or_default().push(format!("{msg}\n     cut {after_cut}\n     now {}", show(&rows(&x, &[1, 2, 3])))); }
+                let ids: Vec<u64> = x.paragraph_attrs().iter().map(|a| a.id).collect();
+                let mut u = ids.clone(); u.sort(); u.dedup();
+                if u.len() != ids.len() { fails.entry(format!("cut-paste-dup{tag}")).or_default().push(msg.clone()); }
+                // into other documents, at every caret and a few selections
+                for (dn, dst) in [
+                    ("empty", mk("", vec![], vec![Block::Paragraph], vec![d.id(1)])),
+                    ("text", mk("xy\nzw", vec![], vec![Block::Paragraph, Block::Bullet(0)], vec![d.id(1), d.id(2).style(2)])),
+                    ("code", mk("xy\nzw", vec![], vec![Block::Code, Block::Code], vec![d.id(1), d.id(2)])),
+                    ("quote", mk("xy\n\nzw", vec![], vec![Block::Quote, Block::Numbered(0), Block::Quote], vec![d.id(1), d.id(2), d.id(3)])),
+                    ("atomdoc", mk("Tq\nzw", vec![], vec![Block::Quote, Block::Paragraph], vec![d.id(1).atom(9.0), d.id(2)])),
+                ] {
+                    let m = dst.text.len();
+                    for c in 0..=m { for e2 in c..=m {
+                        let mut x = dst.clone();
+                        x.set_selection(c, e2);
+                        if x.range() != (c, e2) { continue; }
+                        let before = seen(&x);
+                        x.paste_fragment(f.clone(), &src.text[a..b]);
+                        let chg = x.take_changes();
+                        let m2 = format!("{msg}\n     into {dn} {c}..{e2}: {}", show(&rows(&x, &[1, 2, 3])));
+                        if let Err(w) = check(&before, &x, &chg) { fails.entry(format!("dst-report/{dn}")).or_default().push(format!("{m2} {w}")); }
+                        // each atom of the fragment is there, an atom on its own line, new id, its block
+                        let want: Vec<(String, Option<f32>, Block)> = (0..fl).filter(|&k| f.paragraph(k).atom.is_some()).map(|k| (f.text.split('\n').nth(k).unwrap().to_string(), f.paragraph(k).atom, f.blocks()[k])).collect();
+                        let got: Vec<(String, Option<f32>, Block)> = x.text.split('\n').enumerate().filter(|(i, _)| x.paragraph(*i).atom.is_some() && x.paragraph(*i).id >= 100).map(|(i, t)| (t.to_string(), x.paragraph(i).atom, x.blocks()[i])).collect();
+                        if want != got { fails.entry(format!("dst-atoms{tag}/{dn}")).or_default().push(m2.clone()); }
+                        let ids: Vec<u64> = x.paragraph_attrs().iter().map(|a| a.id).collect();
+                        let mut u = ids.clone(); u.sort(); u.dedup();
+                        if u.len() != ids.len() || ids.contains(&0) { fails.entry(format!("dst-ids/{dn}")).or_default().push(m2.clone()); }
+                        if !x.text.contains(&f.text) { fails.entry(format!("dst-text/{dn}")).or_default().push(m2.clone()); }
+                    }}
+                }
+            }
+        }}
+    }}}
+    let fails: BTreeMap<&str, Vec<String>> = fails.iter().map(|(k, v)| (k.as_str(), v.clone())).collect();
+    assert!(fails.is_empty(), "{}", summary(cases, &fails));
+}
+
+/// Shift+Return beside an atom, and text typed after it, copy and paste with the atom whole:
+/// an atom is never a soft line and never has one.
+#[test]
+fn shift_return_beside_an_atom_keeps_the_atom_through_copy_and_paste() {
+    let shift = KeyEvent { key: Key::Enter, mods: Mods { shift: true, ..Mods::default() } };
+    let d = ParagraphAttrs::default();
+    for (a, b, typed) in [(4, 4, ""), (0, 4, ""), (7, 7, "xyz"), (7, 11, "xyz"), (7, 7, ""), (4, 7, "")] {
+        let mut e = mk("AAA\nTab\nend", vec![], vec![Block::Paragraph, Block::Paragraph, Block::Bullet(0)], vec![d.id(1), d.id(2).style(2).atom(40.0), d.id(3).style(3)]);
+        e.set_selection(a, b);
+        e.key(&shift, None);
+        if !typed.is_empty() { e.key(&KeyEvent { key: Key::Text(typed.into()), mods: Mods::default() }, None); }
+        let at: Vec<usize> = (0..e.blocks().len()).filter(|&i| e.paragraph(i).atom.is_some()).collect();
+        for &l in e.soft_breaks() {
+            let l = l as usize;
+            assert!(e.paragraph(l).atom.is_none() && (l == 0 || e.paragraph(l - 1).atom.is_none()), "{a}..{b} {typed:?}: soft line {l} beside an atom: {:?} {:?}", e.text, e.soft_breaks());
+        }
+        let n = e.text.len();
+        e.set_selection(0, n);
+        let f = e.html_fragment(&e.selected_html());
+        let label: Vec<&str> = f.text.split('\n').enumerate().filter(|(i, _)| f.paragraph(*i).atom.is_some()).map(|(_, t)| t).collect();
+        // an atom the selection took away (4..7 above) is gone; any other is whole in the copy
+        let kept = at.len();
+        assert_eq!((label.len(), label.iter().all(|t| *t == "Tab")), (kept, true), "{a}..{b} {typed:?}: {:?} {:?}", e.text, f.text);
+        let mut t = mk("", vec![], vec![Block::Paragraph], vec![d.id(1)]);
+        t.paste_fragment(f, "");
+        let pasted = (0..t.blocks().len()).filter(|&i| t.paragraph(i).atom.is_some()).count();
+        assert_eq!(pasted, kept, "{a}..{b} {typed:?}: pasted {:?} from {:?}", t.text, e.text);
+    }
 }
