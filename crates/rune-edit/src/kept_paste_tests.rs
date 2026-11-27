@@ -91,13 +91,13 @@ fn a_join_inside_the_first_paragraph_still_keeps_the_first() {
 }
 
 #[test]
-fn text_typed_over_a_whole_paragraph_keeps_that_paragraph() {
+fn text_typed_over_a_whole_paragraph_joins_the_next_one_which_keeps_its_id() {
     let mut e = field("eins\nzwei", &[]);
     reported(&mut e, |e| {
         e.set_selection(0, 5);
         e.insert("x");
     });
-    assert_eq!((lines(&e), ids(&e)), (vec!["xzwei"], vec![1]));
+    assert_eq!((lines(&e), ids(&e)), (vec!["xzwei"], vec![2]));
 }
 
 #[test]
@@ -519,4 +519,100 @@ fn a_fragment_ending_in_a_break_pasted_in_a_list_item_leaves_the_tail_in_the_lis
     let got = rows(&e);
     assert_eq!((got[1].0.as_str(), got[1].1, got[1].6), ("XA", 2, bullet()), "{got:?}");
     assert_eq!((got[2].0.as_str(), got[2].6), ("YZ", bullet()), "{got:?}");
+}
+
+// A paragraph's identity lives in its line break: the paragraph whose break an edit removes
+// goes with it, and the text left joins the paragraph whose break stays, with its id,
+// attributes and block.
+
+fn all_rows(mut e: TextEdit, f: impl FnOnce(&mut TextEdit)) -> Vec<Row> {
+    reported(&mut e, f);
+    rows(&e).into_iter().map(|mut r| {
+        if ![1, 2, 3].contains(&r.1) && r.1 != 0 { r.1 = NEW; }
+        r
+    }).collect()
+}
+
+fn top() -> Row { ("top".into(), 1, 0, ParagraphAlign::Left, (0.0, 0.0), None, Block::Paragraph) }
+fn end(text: &str) -> Row { (text.into(), 3, 0, ParagraphAlign::Left, (0.0, 0.0), None, Block::Paragraph) }
+
+#[test]
+fn text_over_whole_paragraphs_joins_the_paragraph_whose_break_stays() {
+    // "XYZ\n" and "top\nXYZ\n" selected, in a field where "end" follows.
+    for from in [4, 0] {
+        let edits: [(&str, fn(&mut TextEdit), Vec<Row>); 7] = [
+            ("insert x", |e| e.insert("x"), vec![end("xend")]),
+            ("paste x", |e| { e.paste("x"); }, vec![end("xend")]),
+            ("paste_html x without marks", |e| { e.paste_html("<p>x</p>", "x"); }, vec![end("xend")]),
+            ("paste_html x with marks", |e| { e.paste_html("<p><b>x</b></p>", "x"); }, vec![end("xend")]),
+            ("paste A and a break", |e| { e.paste("A\n"); }, vec![plain_row("A"), end("end")]),
+            ("paste_html A and a break without marks", |e| { e.paste_html("<p>A</p><p></p>", "A\n"); }, vec![plain_row("A"), end("end")]),
+            ("paste_html A and a break with marks", |e| { e.paste_html("<p><b>A</b></p><p></p>", "A\n"); }, vec![plain_row("A"), end("end")]),
+        ];
+        for (name, edit, want) in edits {
+            let got = all_rows(start_field("XYZ", false), |e| { e.set_selection(from, 8); edit(e); });
+            let want = if from == 0 { [vec![], want].concat() } else { [vec![top()], want].concat() };
+            assert_eq!(got, want, "{name} over {from}..8");
+        }
+        let got = all_rows(start_field("XYZ", false), |e| { e.set_selection(from, 8); e.key(&enter(), None); });
+        assert_eq!(got.last(), Some(&end("end")), "Return over {from}..8: {got:?}");
+        assert_eq!(got[got.len() - 2].0, "", "{got:?}");
+    }
+}
+
+#[test]
+fn a_selection_that_ends_inside_a_line_leaves_the_line_it_starts_at_its_id() {
+    let kept = |t: &str| kept_row(t, None, bullet());
+    for (name, edit) in [
+        ("paste", (|e: &mut TextEdit| { e.paste("A\nB"); }) as fn(&mut TextEdit)),
+        ("paste_html with marks", |e| { e.paste_html("<p><b>A</b></p><p>B</p>", "A\nB"); }),
+        ("paste_html without marks", |e| { e.paste_html("<p>A</p><p>B</p>", "A\nB"); }),
+    ] {
+        let got = all_rows(start_field("XYZ", false), |e| { e.set_selection(4, 10); edit(e); });
+        assert_eq!(got, vec![top(), plain_row("A"), kept("Bd")], "{name}");
+    }
+}
+
+#[test]
+fn undo_and_redo_give_back_the_ids_of_text_over_a_whole_paragraph() {
+    for edit in [|e: &mut TextEdit| e.insert("x"), |e: &mut TextEdit| { e.paste("A\n"); }] {
+        let mut e = start_field("XYZ", false);
+        e.set_history(true);
+        e.set_selection(4, 8);
+        let (text, attrs) = (e.text.clone(), e.paragraph_attrs().to_vec());
+        edit(&mut e);
+        let (done, done_attrs) = (e.text.clone(), e.paragraph_attrs().to_vec());
+        e.undo();
+        assert_eq!((e.text.clone(), e.paragraph_attrs().to_vec()), (text, attrs));
+        e.redo();
+        assert_eq!((e.text.clone(), e.paragraph_attrs().to_vec()), (done, done_attrs));
+    }
+}
+
+#[test]
+fn a_composer_loaded_from_aligned_html_still_submits_on_return() {
+    let html = r#"<p style="text-align:center">hello</p>"#;
+    for mut e in [TextEdit::from_html(html), TextEdit::from_html_with_color(html)] {
+        assert!(!e.attributed());
+        assert!(e.key(&enter(), None).submit);
+    }
+}
+
+#[test]
+fn text_with_a_break_pasted_mid_line_leaves_the_tail_in_the_lines_block_with_or_without_marks() {
+    let edits: [(&str, fn(&mut TextEdit)); 6] = [
+        ("paste break", |e| { e.paste("A\n"); }),
+        ("paste_html break without marks", |e| { e.paste_html("<p>A</p><p></p>", "A\n"); }),
+        ("paste_html break with marks", |e| { e.paste_html("<p><b>A</b></p><p></p>", "A\n"); }),
+        ("paste open", |e| { e.paste("A\nB"); }),
+        ("paste_html open without marks", |e| { e.paste_html("<p>A</p><p>B</p>", "A\nB"); }),
+        ("paste_html open with marks", |e| { e.paste_html("<p><b>A</b></p><p>B</p>", "A\nB"); }),
+    ];
+    for (name, edit) in edits {
+        let mut e = start_field("XYZ", false);
+        reported(&mut e, |e| { e.set_caret(5); edit(e); });
+        let got = rows(&e);
+        assert_eq!((got[1].0.starts_with('X'), got[1].6), (true, bullet()), "{name}: {got:?}");
+        assert_eq!((got[2].0.ends_with("YZ"), got[2].6), (true, bullet()), "{name}: {got:?}");
+    }
 }
