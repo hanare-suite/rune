@@ -18,6 +18,11 @@ fn st(e: &TextEdit) -> St {
 
 fn noid(e: &TextEdit) -> St { let mut s = st(e); for a in &mut s.attrs { a.id = 0; } s }
 
+/// Whether a line of `la..=lb` has what HTML cannot say of a paragraph: indents (not written to a copy) or a style.
+fn formatted_lines(e: &TextEdit, la: usize, lb: usize) -> bool {
+    (la..=lb).any(|l| { let o = e.paragraph(l); (o.indent, o.first_line_indent, o.style) != (0.0, 0.0, 0) })
+}
+
 fn nomarks(e: &TextEdit) -> St { let mut s = st(e); s.marks.clear(); s }
 
 fn blk(b: Block) -> &'static str { match b { Block::Paragraph => "P", Block::Code => "C", Block::Quote => "Q", Block::Bullet(_) => "U", _ => "N" } }
@@ -38,7 +43,7 @@ fn doc(text: &str, blocks: Vec<Block>, atoms: &[usize], soft: &[u32], marks: Vec
         // Paragraphs alternate between left and centred, and a soft line is its head's (a document keeps that).
         let attrs: Vec<ParagraphAttrs> = (0..n).map(|i| {
             if i > 0 && !soft.contains(&(i as u32)) { para += 1; }
-            let a = ParagraphAttrs::default().id(1 + i as u64).align(if para % 2 == 1 { ParagraphAlign::Center } else { ParagraphAlign::Left });
+            let a = ParagraphAttrs::default().id(1 + i as u64).align(if para % 2 == 1 { ParagraphAlign::Center } else { ParagraphAlign::Left }).indent(10.0 * para as f32, if para % 2 == 0 { 5.0 } else { 0.0 }).style(para % 3);
             if atoms.contains(&i) { a.atom(20.0) } else { a }
         }).collect();
         e.set_paragraph_attrs(attrs);
@@ -88,6 +93,25 @@ fn hist(base: &TextEdit, x: &mut TextEdit, attributed: bool) -> String {
     let mut re = un.clone();
     re.redo();
     if st(&re) != after { bad.push_str(" REDO"); }
+    // The history saved as JSON and restored undoes and redoes to the same states, and a sync moves nothing.
+    if let Some(j) = x.history_json(1000, 1 << 24) {
+        let j: serde_json::Value = serde_json::from_str(&j.to_string()).unwrap();
+        let mut y = x.clone();
+        y.clear_history();
+        if !y.restore_history_json(&j) {
+            bad.push_str(" JSON-REFUSED");
+        } else {
+            y.undo();
+            if st(&y) != before { bad.push_str(" JSON-UNDO"); }
+            y.redo();
+            if st(&y) != after { bad.push_str(" JSON-REDO"); }
+        }
+    } else if after != before {
+        bad.push_str(" NO-HISTORY");
+    }
+    let mut z = x.clone();
+    z.sync_invariants();
+    if st(&z) != after || !z.take_changes().is_empty() { bad.push_str(" SYNC-MOVES"); }
     if after != before && ch.is_empty() { bad.push_str(" NOCHANGE-REPORT"); }
     if after == before && !ch.is_empty() { bad.push_str(" SPURIOUS-REPORT"); }
     bad
@@ -168,7 +192,7 @@ fn every_edit_over_every_selection_of_documents_with_soft_lines_keeps_the_invari
                             // into the line before or after it, is not itself (the edge probe leaves code out the same way).
                             let (la, lb) = (text[..a].matches('\n').count(), text[..b].matches('\n').count());
                             let lossy_code = (la.saturating_sub(1)..=(lb + 1).min(blocks.len() - 1)).any(|l| blocks[l] == c);
-                            if !(sel_atom && *op == "html-own") && !lossy_code {
+                            if !(sel_atom && *op == "html-own") && !lossy_code && !formatted_lines(&f, la, lb) {
                                 // (A paragraph's identity is its head's id: a soft line's id is its own and no one's.)
                                 let hard_ids = |e: &TextEdit| (0..e.text.split('\n').count()).filter(|i| !e.soft_breaks().contains(&(*i as u32))).map(|i| e.paragraph(i).id).collect::<Vec<_>>();
                                 if noid(&x) != noid(&f) { flags.push("OWN-CHANGED".into()); } else if hard_ids(&x) != hard_ids(&f) { flags.push("OWN-IDS".into()); }
@@ -188,7 +212,7 @@ fn every_edit_over_every_selection_of_documents_with_soft_lines_keeps_the_invari
                             let whole = hard_starts.contains(&a) && (hard_starts.contains(&b) || b == text.len()) && la < lb.max(if b == text.len() { lb + 1 } else { lb });
                             let has_atom = (la..=lb).any(|i| atoms.contains(&i));
                             let near_code = (la.saturating_sub(1)..=(lb + 1).min(blocks.len() - 1)).any(|i| blocks[i] == c);
-                            if noid(&x) != noid(&f) && whole && !has_atom && !near_code { flags.push("NOT-RESTORED-WHOLE".into()); }
+                            if noid(&x) != noid(&f) && whole && !has_atom && !near_code && !formatted_lines(&f, la, lb) { flags.push("NOT-RESTORED-WHOLE".into()); }
                             flags.push(format!("[{h}] cut={}", show(&base)));
                         }
                     }
@@ -486,5 +510,30 @@ fn a_code_head_takes_the_marks_off_its_soft_lines_in_the_same_step() {
         assert_eq!(st(&z), after, "a later edit and its undo");
         z.undo();
         assert_eq!(st(&z), st(&f), "undo again");
+    }
+}
+
+/// Indenting and outdenting say whether they changed anything, and the keys report nothing at the boundary levels.
+#[test]
+fn indent_and_outdent_say_whether_they_changed_anything() {
+    let u = Block::Bullet(0);
+    for attributed in [true, false] {
+        let f = doc("ab\ncd", vec![u, u], &[], &[], vec![], attributed);
+        let mut x = f.clone();
+        x.set_selection(1, 1);
+        x.take_changes();
+        assert!(!x.outdent_list(), "level 0");
+        assert!(!x.key(&key(Key::Tab, true), None).submit);
+        assert_eq!(st(&x), st(&f));
+        assert!(x.take_changes().is_empty());
+        for _ in 0..12 { x.key(&key(Key::Tab, false), None); }
+        let deepest = st(&x);
+        assert_ne!(deepest, st(&f));
+        x.take_changes();
+        assert!(!x.indent_list(), "deepest level");
+        x.key(&key(Key::Tab, false), None);
+        assert_eq!(st(&x), deepest);
+        assert!(x.take_changes().is_empty());
+        assert!(x.outdent_list(), "one level up");
     }
 }

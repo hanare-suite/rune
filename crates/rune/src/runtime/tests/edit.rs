@@ -957,3 +957,42 @@ second line");
     assert!(srt.state.edit.focus > focus_before_edge, "edge autoscroll extends field selection");
     assert!(srt.state.moves.len() > moves_before_edge, "edge autoscroll fires on_input_selection");
 }
+
+/// Tab and Shift+Tab in a list item are the document's whenever the caret is in one: at the deepest level and at level
+/// 0 they change nothing and report nothing, and focus never leaves the field.
+#[test]
+fn tab_in_a_list_item_stays_in_the_field_at_the_boundary_levels() {
+    struct App {
+        edit: TextEdit,
+        other: TextEdit,
+    }
+    fn view(s: &App, _: &mut Cx<App>) -> El {
+        col()
+            .size(320.0, 200.0)
+            .child(text_input(&s.edit, TextStyle::new(14.0, 400.0)).key("ed").size(300.0, 140.0).on_edit(|s: &mut App| &mut s.edit))
+            .child(text_input(&s.other, TextStyle::new(14.0, 400.0)).key("other").size(300.0, 40.0).on_edit(|s: &mut App| &mut s.other))
+    }
+    let mut edit = TextEdit::from_html("<ul><li>item</li></ul>");
+    edit.focused = true;
+    edit.set_selection(2, 2);
+    let mut rt = Runtime::new(App { edit, other: TextEdit::new("next") }, view, (320.0, 200.0), Env::new(true, 1.0));
+    rt.frame(0.0);
+    let tab = |shift: bool| KeyEvent { key: Key::Tab, mods: Mods { shift, ..Mods::default() } };
+    // Level 0: Shift+Tab does nothing and does not leave.
+    rt.state.edit.take_changes();
+    rt.key(tab(true));
+    rt.frame(0.0);
+    assert!(rt.state.edit.focused && !rt.state.other.focused);
+    assert_eq!(rt.state.edit.blocks()[0], Block::Bullet(0));
+    assert!(rt.state.edit.take_changes().is_empty());
+    // Down to the deepest level, then one more Tab.
+    for _ in 0..12 { rt.key(tab(false)); rt.frame(0.0); }
+    let deepest = rt.state.edit.blocks()[0];
+    assert!(matches!(deepest, Block::Bullet(l) if l > 0));
+    rt.state.edit.take_changes();
+    rt.key(tab(false));
+    rt.frame(0.0);
+    assert!(rt.state.edit.focused && !rt.state.other.focused, "focus stays at the deepest level");
+    assert_eq!(rt.state.edit.blocks()[0], deepest);
+    assert!(rt.state.edit.take_changes().is_empty());
+}
