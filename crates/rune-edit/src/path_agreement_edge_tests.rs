@@ -330,7 +330,12 @@ fn an_empty_line_a_fragment_ending_in_an_atom_lands_at_stays_whole() {
 fn cut_and_paste_in_place_restores_whole_paragraphs_without_atoms() {
     let mut fails: Vec<String> = Vec::new();
     let mut cases = 0;
-    for (doc, e) in docs() {
+    // An unmarked paragraph above a marked or linked one: what it pastes back as must not take their marks.
+    let mut all = docs();
+    let next_marked = |m: Mark| { let mut e = TextEdit::from_parts("body\nTerm rest", vec![MarkRange::new(5..9, m)], vec![Block::Paragraph; 2]); e.set_paragraph_attrs(vec![ParagraphAttrs::default().id(1), ParagraphAttrs::default().id(2)]); e.set_paragraph_ids(100); e.take_changes(); e };
+    all.push(("next-bold", next_marked(Mark::Bold)));
+    all.push(("next-link", next_marked(Mark::Link("https://example.com".into()))));
+    for (doc, e) in all {
         let e = styled(e);
         let len = e.text.len();
         let ol = line_ranges(&e.text);
@@ -339,7 +344,7 @@ fn cut_and_paste_in_place_restores_whole_paragraphs_without_atoms() {
             s.set_selection(a, b);
             if s.range() != (a, b) { continue; }
             let (la, lb) = (e.line_of_byte(a), e.line_of_byte(b));
-            let whole = a == ol[la].0 && la < lb && b == ol[lb].0;
+            let whole = a == ol[la].0 && la < lb && (b == ol[lb].0 || (b == len && b == ol[lb].1));
             let atoms = (la..=lb).any(|l| e.paragraph(l).atom.is_some());
             // (The line the selection ends before is not in the copy: only the lines cut count.)
             let lossy = (la..lb).any(|l| {

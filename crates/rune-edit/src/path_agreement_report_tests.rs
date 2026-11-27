@@ -350,22 +350,35 @@ const FALLBACKS: [(&str, &str); 21] = [
 ];
 
 /// A paste into code, whatever the plain fallback's breaks and lines: no carriage return in the text, no marks on
-/// code lines, a report that follows, an exact undo and redo, and where the first line lands in code and there is
-/// no atom, dev's: the plain fallback pasted whole when it has other lines than the fragment.
+/// code lines, no collapsed whitespace in a code line, a report that follows, atoms that stay as they were, unique
+/// ids, an exact undo, and where the first line lands in code and there is no atom, dev's: the plain fallback
+/// pasted whole when it has other lines than the fragment.
 #[test]
 fn a_paste_into_code_is_clean_for_every_plain_fallback() {
     let (p, c, q, u) = (Block::Paragraph, Block::Code, Block::Quote, Block::Bullet(0));
-    let fixtures: Vec<(&str, Vec<Block>)> = vec![
-        ("", vec![c]), ("ab", vec![c]), ("ab\ncd", vec![c, c]), ("ab\n\ncd", vec![c, c, c]), ("\nab\n", vec![c, c, c]),
-        ("ab\ncd\nef", vec![p, c, p]), ("ab\ncd\nef", vec![c, p, c]), ("ab\ncd\nef", vec![c, c, p]), ("ab\ncd\nef", vec![p, c, c]),
-        ("ab\n\nef", vec![p, c, p]), ("ab\n\nef", vec![c, p, c]), ("ab\ncd\nef", vec![q, c, u]), ("ab\ncd\nef", vec![c, u, c]), ("\n\n", vec![c, p, c]), ("\n\n", vec![p, c, p]),
+    let fixtures: Vec<(&str, Vec<Block>, Vec<usize>)> = vec![
+        ("", vec![c], vec![]), ("ab", vec![c], vec![]), ("ab\ncd", vec![c, c], vec![]), ("ab\n\ncd", vec![c, c, c], vec![]), ("\nab\n", vec![c, c, c], vec![]),
+        ("ab\ncd\nef", vec![p, c, p], vec![]), ("ab\ncd\nef", vec![c, p, c], vec![]), ("ab\ncd\nef", vec![c, c, p], vec![]), ("ab\ncd\nef", vec![p, c, c], vec![]),
+        ("ab\n\nef", vec![p, c, p], vec![]), ("ab\n\nef", vec![c, p, c], vec![]), ("ab\ncd\nef", vec![q, c, u], vec![]), ("ab\ncd\nef", vec![c, u, c], vec![]), ("\n\n", vec![c, p, c], vec![]), ("\n\n", vec![p, c, p], vec![]),
+        // atoms with a Code block, and atoms next to code lines
+        ("fn a\nT\nend", vec![c, c, c], vec![1]), ("T\n    end", vec![p, c], vec![0]), ("T\nend", vec![p, c], vec![0]), ("ab\nT\nef", vec![p, c, c], vec![1]),
+        ("ab\nT", vec![c, c], vec![1]), ("T\nT\nef", vec![c, p, c], vec![0, 1]), ("ab\nT\n\nef", vec![c, p, c, c], vec![1]),
     ];
     let mut fails: Vec<String> = Vec::new();
     let mut cases = 0;
-    for (text, blocks) in &fixtures {
-        let mut f = composer(text, blocks.clone());
+    for (text, blocks, atoms) in &fixtures {
+        let mut f = if atoms.is_empty() { composer(text, blocks.clone()) } else {
+            let mut e = TextEdit::from_parts(*text, vec![], blocks.clone());
+            e.set_paragraph_attrs((0..text.split('\n').count()).map(|i| { let a = ParagraphAttrs::default().id(1 + i as u64); if atoms.contains(&i) { a.atom(20.0) } else { a } }).collect());
+            e.set_paragraph_ids(100);
+            e.take_changes();
+            e
+        };
         f.set_history(false);
         for a in 0..=text.len() { for b in a..=text.len() {
+            let mut pr = f.clone();
+            pr.set_selection(a, b);
+            if pr.range() != (a, b) { continue; }
             for (html, plain) in FALLBACKS {
                 cases += 1;
                 let mut x = f.clone();
@@ -373,18 +386,28 @@ fn a_paste_into_code_is_clean_for_every_plain_fallback() {
                 let before = seen(&x);
                 x.paste_html(html, plain);
                 let ch = x.take_changes();
-                let msg = format!("{text:?}{blocks:?} {a}..{b} {html} {plain:?}: {:?}", lines_of(&x));
+                let msg = format!("{text:?}{blocks:?} atoms {atoms:?} {a}..{b} {html} {plain:?}: {:?}", lines_of(&x));
                 if x.text.contains('\r') { fails.push(format!("{msg}: a carriage return in the text")); }
                 let mut off = 0;
-                for (i, t) in x.text.split('\n').enumerate() {
+                let lines: Vec<&str> = x.text.split('\n').collect();
+                for (i, t) in lines.iter().enumerate() {
                     if x.blocks()[i] == Block::Code && x.marks().iter().any(|m| m.start < off + t.len() && m.end > off) { fails.push(format!("{msg}: a mark on code line {i}")); }
+                    if plain.contains("  ") && x.blocks()[i] == Block::Code && x.paragraph(i).atom.is_none() && ["a b", "c d", "x y", "q q"].iter().any(|w| t.contains(w)) { fails.push(format!("{msg}: collapsed whitespace in code line {i}")); }
                     off += t.len() + 1;
                 }
                 if let Err(w) = check(&before, &x, &ch) { fails.push(format!("{msg}: report {w}")); }
+                // atoms the selection leaves stay as they were, and no id of an atom is on text
+                let old_lines: Vec<&str> = f.text.split('\n').collect();
+                for (i, o) in f.paragraph_attrs().iter().enumerate() {
+                    let r = f.line_range(i);
+                    if o.atom.is_none() || (a < b && a < r.end && b > r.start) { continue; }
+                    if !(0..lines.len()).any(|j| lines[j] == old_lines[i] && x.paragraph(j) == *o && x.blocks()[j] == f.blocks()[i]) { fails.push(format!("{msg}: atom {} changed", o.id)); }
+                    if (0..lines.len()).any(|j| x.paragraph(j).atom.is_none() && x.paragraph(j).id == o.id) { fails.push(format!("{msg}: atom id {} on text", o.id)); }
+                }
                 // dev: a fallback with other lines than the fragment, pasted where its first line is code, is pasted whole
                 let f_lines = { let h = f.html_fragment(html); h.text.split('\n').count() };
-                let normal = plain.replace("\r\n", "\n").replace('\r', "\n");
-                if f.blocks()[f.line_of_byte(a)] == c && !normal.is_empty() && normal.split('\n').count() != f_lines {
+                let normal = plain.replace("\r\n", "\n");
+                if f.blocks()[f.line_of_byte(a)] == c && f.paragraph(f.line_of_byte(a)).atom.is_none() && !normal.is_empty() && normal.split('\n').count() != f_lines && a == b {
                     let mut y = f.clone();
                     y.set_selection(a, b);
                     y.paste(plain);
@@ -434,4 +457,78 @@ fn a_fragment_soft_break_in_code_is_dropped() {
     e.set_caret(0);
     e.paste_html("<p>one<br>two</p>", "one\ntwo");
     assert!(e.soft_breaks().is_empty(), "{:?} {:?}", e.soft_breaks(), lines_of(&e));
+}
+
+/// Text pasted or typed at the start of a paragraph takes no marks from the paragraph's first character where it is
+/// unformatted, and none of a link's at all.
+#[test]
+fn text_at_a_paragraphs_start_inherits_no_marks_and_no_link() {
+    let link = Mark::Link("https://example.com".into());
+    for mark in [Mark::Bold, link.clone()] {
+        let field = || doc("body\nTerm rest", vec![]).tap(|e| e.set_marks(vec![mr(5..9, mark.clone())]));
+        let marked_text = |e: &TextEdit, from: usize, to: usize| e.marks().iter().any(|m| m.start < to && from < m.end);
+        // a cut paragraph pasted back
+        let mut e = field();
+        e.set_selection(0, 5);
+        let html = e.selected_html();
+        e.key(&KeyEvent { key: Key::Backspace, mods: Mods::default() }, None);
+        e.paste_html(&html, "body\n");
+        assert_eq!(e.text, "body\nTerm rest");
+        assert!(!marked_text(&e, 0, 4), "{mark:?} paste_html: {:?}", e.marks());
+        assert_eq!(e.paragraph(1).id, 2, "the next paragraph keeps its id");
+        let mut e = field();
+        e.set_selection(0, 5);
+        let html = e.selected_html();
+        e.key(&KeyEvent { key: Key::Backspace, mods: Mods::default() }, None);
+        let f = e.html_fragment(&html);
+        e.paste_fragment(f, "body\n");
+        assert!(!marked_text(&e, 0, 4), "{mark:?} paste_fragment: {:?}", e.marks());
+        let mut e = field();
+        e.set_selection(0, 5);
+        e.key(&KeyEvent { key: Key::Backspace, mods: Mods::default() }, None);
+        e.paste_html(&html, "");
+        assert!(!marked_text(&e, 0, 4), "{mark:?} empty plain: {:?}", e.marks());
+        // one unformatted line, and a plain paste with a break, at the start of the marked paragraph
+        let mut e = field();
+        e.set_selection(5, 5);
+        e.paste_html("<p>new </p>", "new ");
+        assert!(!marked_text(&e, 5, 9), "{mark:?} one line: {:?}", e.marks());
+        let mut e = field();
+        e.set_selection(5, 5);
+        e.paste("new\n");
+        assert!(!marked_text(&e, 5, 8) || mark == Mark::Bold, "{mark:?} plain break: {:?}", e.marks());
+    }
+    // text typed at the start of a paragraph that begins with a link is no part of the link
+    let mut e = doc("body\nTerm rest", vec![]);
+    e.set_marks(vec![mr(5..9, link)]);
+    e.set_caret(5);
+    e.key(&KeyEvent { key: Key::Text("x".into()), mods: Mods::default() }, None);
+    assert!(!e.marks().iter().any(|m| matches!(m.mark, Mark::Link(_)) && m.start <= 5 && 6 <= m.end), "{:?}", e.marks());
+}
+
+trait Tap: Sized {
+    fn tap(self, f: impl FnOnce(&mut Self)) -> Self;
+}
+
+impl Tap for TextEdit {
+    fn tap(mut self, f: impl FnOnce(&mut Self)) -> Self {
+        f(&mut self);
+        self
+    }
+}
+
+/// The end of the text counts as the last paragraph's break: cut from a line's start to the end of the document, the
+/// empty line left is the last paragraph's, with its id, and pasting back restores that id on that paragraph.
+#[test]
+fn a_cut_to_the_end_of_the_document_leaves_the_last_paragraphs_line() {
+    let mut e = doc("ab\ncd\nef", vec![Block::Paragraph; 3]);
+    e.set_selection(3, 8);
+    let html = e.selected_html();
+    e.key(&KeyEvent { key: Key::Backspace, mods: Mods::default() }, None);
+    assert_eq!((e.text.as_str(), e.paragraph(1).id), ("ab\n", 3), "the empty line is ef's");
+    let f = e.html_fragment(&html);
+    e.set_caret(3);
+    e.paste_fragment(f, "cd\nef");
+    assert_eq!(e.text, "ab\ncd\nef");
+    assert_eq!((e.paragraph(0).id, e.paragraph(2).id), (1, 3), "{:?}", e.paragraph_attrs());
 }
