@@ -23,6 +23,23 @@ fn formatted_lines(e: &TextEdit, la: usize, lb: usize) -> bool {
     (la..=lb).any(|l| { let o = e.paragraph(l); (o.indent, o.first_line_indent, o.style) != (0.0, 0.0, 0) })
 }
 
+/// Every atom line of `before` the selection `a..b` did not take still holds its label, its atom and its id in `after`: no
+/// paste puts text on an atom's line or takes its id and lock.
+fn atoms_kept(before: &TextEdit, after: &TextEdit, a: usize, b: usize) -> String {
+    let mut bad = String::new();
+    let mut start = 0;
+    for (i, label) in before.text.split('\n').enumerate() {
+        let end = start + label.len();
+        let attrs = before.paragraph(i);
+        let selected = !(b <= start || a >= end);
+        if attrs.atom.is_some() && !selected && !after.text.split('\n').enumerate().any(|(j, t)| t == label && after.paragraph(j).atom == attrs.atom && after.paragraph(j).id == attrs.id) {
+            bad.push_str(" ATOM-LOST");
+        }
+        start = end + 1;
+    }
+    bad
+}
+
 fn nomarks(e: &TextEdit) -> St { let mut s = st(e); s.marks.clear(); s }
 
 fn blk(b: Block) -> &'static str { match b { Block::Paragraph => "P", Block::Code => "C", Block::Quote => "Q", Block::Bullet(_) => "U", _ => "N" } }
@@ -230,6 +247,7 @@ fn probe_soft_lines(formatted: bool) -> Probe {
                     }
                     cases += 1;
                     let mut bad = inv(&x);
+                    if attributed && matches!(*op, "paste" | "html" | "frag" | "html-own" | "frag-own") { bad.push_str(&atoms_kept(&f, &x, a, b)); }
                     bad.push_str(&hist(&base, &mut x, attributed));
                     for fl in flags.iter().filter(|f| !f.starts_with('[')) { bad.push(' '); bad.push_str(fl); }
                     if matches!(*op, "type" | "insert" | "paste" | "html" | "frag") { group.push((plain.to_string(), format!("{op} {html}"), nomarks(&x))); }
@@ -568,4 +586,113 @@ fn indent_and_outdent_say_whether_they_changed_anything() {
         assert!(x.take_changes().is_empty());
         assert!(x.outdent_list(), "one level up");
     }
+}
+
+fn atom_doc() -> TextEdit {
+    let p = Block::Paragraph;
+    let mut e = TextEdit::from_parts("one\ntwo\nTABLE\nend", vec![], vec![p, p, p, p]);
+    e.set_paragraph_attrs(vec![id(1), id(2), id(7).atom(40.0), id(4)]);
+    e.set_paragraph_ids(100);
+    e.set_soft_breaks(vec![1]);
+    e.take_changes();
+    e
+}
+
+/// A fragment that ends in a soft line, pasted at an atom's start or after it, leaves the atom its label, its id and its
+/// lock: the soft line is never put on an atom's line or directly after one.
+#[test]
+fn a_fragment_ending_in_a_soft_line_leaves_a_table_alone() {
+    let e = atom_doc();
+    let mut copy = e.clone();
+    copy.set_selection(0, 4);
+    let html = copy.selected_html();
+    for (at, label) in [(8, "caret before the table"), (14, "caret after the table")] {
+        for path in ["paste_html", "paste_fragment"] {
+            let mut x = e.clone();
+            x.set_selection(at, at);
+            if path == "paste_html" { x.paste_html(&html, "one\n"); } else { let fr = x.html_fragment(&html); x.paste_fragment(fr, "one\n"); }
+            assert_eq!(atoms_kept(&e, &x, at, at), "", "{label} {path}: {}", show(&x));
+            assert_eq!(inv(&x), "", "{label} {path}: {}", show(&x));
+        }
+    }
+    for (html, plain) in [("<p>x<br><br></p>", "x\n"), ("<p>w</p><ul><li>x<br><br></li></ul>", "w\nx\n")] {
+        let mut e2 = TextEdit::from_parts("TABLE\nend", vec![], vec![Block::Paragraph; 2]);
+        e2.set_paragraph_attrs(vec![id(7).atom(40.0), id(4)]);
+        e2.set_paragraph_ids(100);
+        e2.set_selection(0, 0);
+        e2.paste_html(html, plain);
+        assert_eq!(atoms_kept(&{ let mut b = TextEdit::from_parts("TABLE\nend", vec![], vec![Block::Paragraph; 2]); b.set_paragraph_attrs(vec![id(7).atom(40.0), id(4)]); b }, &e2, 0, 0), "", "{html}: {}", show(&e2));
+    }
+}
+
+/// Pasting a selection's own copy changes nothing where a mark spans a line break, and where a paragraph with a soft
+/// line stands next to code.
+#[test]
+fn pasting_the_own_copy_is_a_no_op_across_marked_breaks_and_beside_code() {
+    let (p, c, q, u) = (Block::Paragraph, Block::Code, Block::Quote, Block::Bullet(0));
+    // Bold across two paragraphs, the second centred.
+    for attributed in [true, false] {
+        let mut e = TextEdit::from_parts("one\ntwo\nend", vec![], vec![p, u, p]);
+        if attributed { e.set_paragraph_attrs(vec![id(1), id(2).align(ParagraphAlign::Center), id(3)]); e.set_paragraph_ids(100); }
+        e.set_selection(0, 7);
+        e.toggle_mark(Mark::Bold);
+        e.take_changes();
+        for (a, b) in [(0, 7), (0, 8), (1, 6), (0, 3), (4, 7)] {
+            let mut x = e.clone();
+            x.set_selection(a, b);
+            let html = x.selected_html();
+            let plain = x.text[a..b].to_string();
+            let steps = x.history_len();
+            x.paste_html(&html, &plain);
+            assert_eq!(st(&x), st(&e), "attributed {attributed} {a}..{b}: {}", show(&x));
+            assert!(x.take_changes().is_empty() && x.history_len() == steps, "attributed {attributed} {a}..{b}: nothing reported");
+        }
+    }
+    // A paragraph with a soft line before a code line, and a bullet with one between code lines.
+    for attributed in [true, false] {
+        for (text, blocks, soft, sels) in [
+            ("ab\ncd\nef", vec![p, p, c], vec![1u32], vec![(0, 6), (0, 5), (0, 8)]),
+            ("ab\ncd\nef", vec![p, p, c], vec![], vec![(0, 6), (0, 5), (0, 3)]),
+            ("ab\ncd\nef", vec![c, p, p], vec![2], vec![(3, 8), (2, 8)]),
+            ("ab\ncd\nef\ngh", vec![c, u, u, c], vec![2], vec![(3, 9), (3, 8)]),
+            ("ab\ncd\nef\ngh", vec![p, q, q, p], vec![2], vec![(3, 9), (3, 8), (0, 9)]),
+        ] {
+            let f = doc_with(text, blocks.clone(), &[], &soft, vec![], attributed, false);
+            for (a, b) in sels {
+                let mut x = f.clone();
+                x.set_selection(a, b);
+                let html = x.selected_html();
+                x.paste_html(&html, &text[a..b]);
+                assert_eq!(st(&x), st(&f), "attributed {attributed} {text:?} soft {soft:?} {a}..{b} [{html}]: {}", show(&x));
+                assert!(x.take_changes().is_empty());
+            }
+        }
+    }
+}
+
+fn page_break_doc() -> TextEdit {
+    let mut e = TextEdit::from_parts("ab\ncd\nef", vec![], vec![Block::Paragraph; 3]);
+    e.set_paragraph_attrs(vec![id(1), id(2).page_break_before(true), id(3)]);
+    e.set_paragraph_ids(100);
+    e.take_changes();
+    e
+}
+
+/// A kept line that becomes a pasted soft line has an id of its own and no page break, as typed text gives.
+#[test]
+fn a_kept_line_that_becomes_a_soft_line_gets_a_new_id_and_no_page_break() {
+    let e = page_break_doc();
+    let mut x = e.clone();
+    x.set_selection(1, 4);
+    x.paste_html("<p>x<br>y</p>", "x\ny");
+    let mut t = e.clone();
+    t.set_selection(1, 4);
+    t.key(&key(Key::Text("x".into()), false), None);
+    t.key(&key(Key::Enter, true), None);
+    t.key(&key(Key::Text("y".into()), false), None);
+    assert_eq!(x.text, t.text);
+    assert_eq!(x.soft_breaks(), t.soft_breaks());
+    for i in 0..3 { assert_eq!((x.paragraph(i).page_break_before, x.paragraph(i).id >= 100 || x.paragraph(i).id == e.paragraph(i).id), (t.paragraph(i).page_break_before, t.paragraph(i).id >= 100 || t.paragraph(i).id == e.paragraph(i).id), "line {i}: paste {} / typed {}", show(&x), show(&t)); }
+    let soft = x.soft_breaks()[0] as usize;
+    assert!(!x.paragraph(soft).page_break_before && x.paragraph(soft).id >= 100, "{}", show(&x));
 }
