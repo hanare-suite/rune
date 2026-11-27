@@ -169,7 +169,7 @@ fn a_pasted_fragment_with_atoms_keeps_atoms_whole_and_ids_unique() {
                 if u.len() != ids.len() { fails.push(why(format!("dup ids {ids:?}"))); }
                 // A field's atom the selection leaves alone stays, with its attributes and block;
                 // a fragment's atoms are atoms of their own, under ids of their own.
-                let survivors: Vec<_> = atoms.iter().filter(|(r, ..)| !(a < r.end && b > r.start)).collect();
+                let survivors: Vec<_> = atoms.iter().filter(|(r, ..)| !(a < b && a < r.end && b > r.start)).collect();
                 let lines: Vec<(&str, ParagraphAttrs, Block)> = x.text.split('\n').enumerate().map(|(i, t)| (t, x.paragraph(i), x.blocks()[i])).collect();
                 let now = lines.iter().filter(|l| l.1.atom.is_some()).count();
                 if now != survivors.len() + frag_atoms { fails.push(why(format!("{now} atoms, want {} and {frag_atoms}: {:?}", survivors.len(), rows(&x, &orig)))); }

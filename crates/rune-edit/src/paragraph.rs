@@ -23,6 +23,21 @@ pub(super) enum Edge {
     Tail,
 }
 
+/// How an edit lies against the lines it touches ([`TextEdit::edit_plan`]).
+pub(super) struct Plan {
+    pub(super) line_a: usize,
+    pub(super) line_b: usize,
+    pub(super) line_a_range: Range<usize>,
+    pub(super) line_b_range: Range<usize>,
+    pub(super) added_lines: usize,
+    pub(super) kept: Kept,
+    pub(super) take_b: bool,
+    pub(super) front: Option<bool>,
+    pub(super) tail_whole: bool,
+    pub(super) block_b: Block,
+    pub(super) edge: Edge,
+}
+
 /// Which of the lines an edit starts on, one more than it adds, are new paragraphs (`true`)
 /// and which are an existing one's, or what is left of it, whatever text they hold now.
 pub(super) fn new_lines(added: usize, kept: Kept, edge: Edge, same_line: bool) -> Vec<bool> {
@@ -205,28 +220,6 @@ impl TextEdit {
         let id = self.next_id;
         if id != 0 { self.next_id += 1; }
         id
-    }
-
-    /// The attributes of a fragment pasted at the start of line `first`, once its text is in:
-    /// lines `first..kept` are the fragment's own paragraphs and line `kept` is the one it was
-    /// pasted before, which gets `recv` back whole. `ids` are those of lines `first..=kept` as
-    /// the text left them, one of them `recv`'s. Each new paragraph takes one of the others,
-    /// the fragment's style and alignment and its atom, and none of the receiving line's
-    /// indents. Returns whether the paste brought any.
-    pub(super) fn paste_before_line(&mut self, frag: &TextEdit, first: usize, kept: usize, recv: ParagraphAttrs, mut ids: Vec<u64>) -> bool {
-        match ids.iter().position(|&id| id == recv.id) {
-            Some(own) => { ids.remove(own); }
-            None => { ids.pop(); }
-        }
-        for k in 0..kept - first {
-            let id = ids.get(k).copied().unwrap_or_else(|| self.fresh_id());
-            let from = frag.paragraph(k);
-            let mut own = ParagraphAttrs::default().id(id).style(from.style).align(from.align);
-            own.atom = from.atom;
-            self.attrs_mut()[first + k] = own;
-        }
-        self.attrs_mut()[kept] = recv;
-        kept > first
     }
 
     /// The attributes, one a line: an empty list (every paragraph the default) filled out.

@@ -6,6 +6,11 @@ use super::*;
 use rune_text::{Flow, Ink, TextFlow};
 
 impl TextEdit {
+    /// Inserts `s` at `at` as no one's text: it inherits no marks.
+    fn insert_plain_at(&mut self, at: usize, s: &str) {
+        self.apply_text_and_attr_replace((at, at), s, &[], None, false);
+    }
+
     fn insert_newline(&mut self, block_for_new_line: Block, soft: bool) {
         if self.secure || self.is_single_line() {
             return;
@@ -585,27 +590,34 @@ impl TextEdit {
         // Only a single line pasted into an empty plain line gives it the pasted paragraph's
         // attributes; every other line the paste lands in keeps its own.
         let plain_single = frag.blocks.len() == 1 && empty_line && without_id == ParagraphAttrs::default() && recv.1 == Block::Paragraph;
-        // An atom the fragment starts or ends with stays on a line of its own: behind a line
-        // break unless the line starts here, and before one unless it ends here. Beside an
-        // atom of the field the fence below does the same.
+        // A fragment's atom is an atom on a line of its own, never an existing paragraph's text:
+        // where its line would join what is left of a line (the first or the last the paste
+        // leaves, as the edit sees them), a line break goes on that side, so the line stays
+        // whole. A single line pasted into an empty plain line takes the line.
         let frag_atom = |frag: &TextEdit, line: usize| frag.attrs.get(line).is_some_and(|a| a.atom.is_some());
+        let mut fenced = self.fence(a, b, &frag.text);
         if frag.attrs.iter().any(|a| a.atom.is_some()) {
-            let beside_atom = self.paragraph(la).atom.is_some() && (a == b || a == ra.end);
-            let before_line = recv_start && !plain_single;
-            if frag_atom(&frag, frag.blocks().len() - 1) && (b < rb.end || before_line) && !beside_atom {
-                frag.set_caret(frag.text.len());
-                frag.insert("\n");
-            }
-            if frag_atom(&frag, 0) && a > ra.start && !beside_atom {
-                frag.set_caret(0);
-                frag.insert("\n");
+            for _ in 0..4 {
+                let new = self.new_lines_of((fenced.a, fenced.b), fenced.text.as_deref().unwrap_or(&frag.text));
+                let (last, joined) = (frag.blocks.len() - 1, |k: usize| !new.get(fenced.lead + k).copied().unwrap_or(false));
+                // Text before the paste on its line, or an atom behind it: the break goes before an
+                // atom line that joins it. A single line with nothing before it takes the break after.
+                let before = a > ra.start;
+                if frag_atom(&frag, 0) && joined(0) && !plain_single && (before || last > 0) {
+                    // Without marks, whatever the caret inherits: the break is no one's text.
+                    frag.insert_plain_at(0, "\n");
+                } else if frag_atom(&frag, last) && (joined(last) || (last == 0 && joined(0))) && !plain_single {
+                    frag.insert_plain_at(frag.text.len(), "\n");
+                } else {
+                    break;
+                }
+                fenced = self.fence(a, b, &frag.text);
             }
         }
         // The paste is one edit of the text, as typed text over the selection is: beside an atom
         // the text goes on lines of its own, behind a line break (`lead`) or before one. The
         // lines it adds that are new paragraphs, and not an existing one's text, take the
         // fragment's style, alignment and block; the others keep their own.
-        let fenced = self.fence(a, b, &frag.text);
         let (fa, fb) = (fenced.a, fenced.b);
         let text = fenced.text.as_deref().unwrap_or(&frag.text);
         let (ins_at, first) = (fa + fenced.lead, self.line_of_byte(fa));
