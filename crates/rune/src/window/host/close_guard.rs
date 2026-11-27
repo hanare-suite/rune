@@ -37,6 +37,14 @@ pub(in crate::window) fn quit_asks(life: crate::window::Life) -> bool {
     !life.finished()
 }
 
+/// Whether the close of this window is held for other windows' guards: it ends the app (`ends`:
+/// it keeps the loop and is not `keep_running`) with no other main window left, and another open
+/// window holds back its close.
+#[allow(dead_code)]
+pub(in crate::window) fn holds_app_end(_closes: bool, _exiting: bool, _ends: bool, _other_mains: usize, _others_guarded: usize) -> bool {
+    false
+}
+
 /// The host-free core of `Host::holds_close`: asks the guard of a window that closes, unless the
 /// loop is exiting. True when it holds (`CloseGuard::holds` drops a close the ask leaves behind).
 pub(in crate::window) fn hold_close_core(
