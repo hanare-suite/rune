@@ -706,7 +706,7 @@ impl TextEdit {
     }
 
     /// Decrease list nesting level (`Shift+Tab`) for list items in the selection.
-    /// Returns `true` if the selection was inside a list item.
+    /// Returns `true` if a list item was outdented (not at level 0 already).
     pub fn outdent_list(&mut self) -> bool {
         if self.secure || self.is_single_line() {
             return false;
@@ -726,9 +726,10 @@ impl TextEdit {
                 *slot = slot.with_level(lvl.saturating_sub(1));
             }
         }
-        if self.blocks != was { self.note_paragraphs(first..last + 1); }
+        let changed = self.blocks != was;
+        if changed { self.note_paragraphs(first..last + 1); }
         self.record_change(before, EditKind::Other);
-        true
+        changed
     }
 
     /// Return the current selection as plain text, replacing each wholly contained
