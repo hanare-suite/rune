@@ -323,3 +323,115 @@ fn a_fragment_ending_in_two_breaks_adds_no_space_to_a_single_line_field() {
         assert_eq!(s.text, want, "{html}");
     }
 }
+
+/// The plain fallbacks a browser or a word processor puts on the clipboard, as lines and as breaks.
+const FALLBACKS: [(&str, &str); 21] = [
+    ("<p><b>X</b></p>", "X"),
+    ("<p><b>a  b</b></p><p>c  d</p>", "a  b\nc  d"),
+    ("<p><b>a  b</b></p><p>c  d</p>", "a  b\n\nc  d"),
+    ("<p><b>a  b</b></p><p>c  d</p>", "a  b\n\nc  d\n"),
+    ("<p><b>a  b</b></p><p>c  d</p><p></p>", "a  b\nc  d\n"),
+    ("<ul><li>a  b</li><li>c</li></ul>", "a  b\nc"),
+    ("<pre><code>a  b\nc</code></pre>", "a  b\nc"),
+    ("<blockquote>q  q</blockquote>", "q  q"),
+    ("<p></p><p><b>x  y</b></p>", "\nx  y"),
+    ("<p><b>a</b><br>b  c</p>", "a\nb  c"),
+    ("<p><b>a  b</b></p><p>c  d</p>", ""),
+    ("<p><i>x  y</i></p>", "x  y\n"),
+    ("<p><b>x</b></p><p><b>y</b></p><p><b>z</b></p>", "x\ny\nz"),
+    ("<div>let  x = 1;</div><div><br></div>", "let  x = 1;\n"),
+    ("<p><b>a  b</b></p><p>c  d</p>", "a  b\r\nc  d"),
+    ("<p><b>a  b</b></p><p>c  d</p>", "a  b\r\n\r\nc  d\r\n"),
+    ("<p>a  <b>b</b></p><ul><li>c  d</li></ul>", "a  b\nc  d"),
+    ("<p><b>a  b</b></p><p></p>", "a  b\n"),
+    ("<ul><li></li></ul>", ""),
+    ("<p><b>a\tb</b></p><p><b>c</b></p>", "a\tb\nc"),
+    ("<p><b>one</b></p><p>two</p>", "one\r\ntwo\r\n"),
+];
+
+/// A paste into code, whatever the plain fallback's breaks and lines: no carriage return in the text, no marks on
+/// code lines, a report that follows, an exact undo and redo, and where the first line lands in code and there is
+/// no atom, dev's: the plain fallback pasted whole when it has other lines than the fragment.
+#[test]
+fn a_paste_into_code_is_clean_for_every_plain_fallback() {
+    let (p, c, q, u) = (Block::Paragraph, Block::Code, Block::Quote, Block::Bullet(0));
+    let fixtures: Vec<(&str, Vec<Block>)> = vec![
+        ("", vec![c]), ("ab", vec![c]), ("ab\ncd", vec![c, c]), ("ab\n\ncd", vec![c, c, c]), ("\nab\n", vec![c, c, c]),
+        ("ab\ncd\nef", vec![p, c, p]), ("ab\ncd\nef", vec![c, p, c]), ("ab\ncd\nef", vec![c, c, p]), ("ab\ncd\nef", vec![p, c, c]),
+        ("ab\n\nef", vec![p, c, p]), ("ab\n\nef", vec![c, p, c]), ("ab\ncd\nef", vec![q, c, u]), ("ab\ncd\nef", vec![c, u, c]), ("\n\n", vec![c, p, c]), ("\n\n", vec![p, c, p]),
+    ];
+    let mut fails: Vec<String> = Vec::new();
+    let mut cases = 0;
+    for (text, blocks) in &fixtures {
+        let mut f = composer(text, blocks.clone());
+        f.set_history(false);
+        for a in 0..=text.len() { for b in a..=text.len() {
+            for (html, plain) in FALLBACKS {
+                cases += 1;
+                let mut x = f.clone();
+                x.set_selection(a, b);
+                let before = seen(&x);
+                x.paste_html(html, plain);
+                let ch = x.take_changes();
+                let msg = format!("{text:?}{blocks:?} {a}..{b} {html} {plain:?}: {:?}", lines_of(&x));
+                if x.text.contains('\r') { fails.push(format!("{msg}: a carriage return in the text")); }
+                let mut off = 0;
+                for (i, t) in x.text.split('\n').enumerate() {
+                    if x.blocks()[i] == Block::Code && x.marks().iter().any(|m| m.start < off + t.len() && m.end > off) { fails.push(format!("{msg}: a mark on code line {i}")); }
+                    off += t.len() + 1;
+                }
+                if let Err(w) = check(&before, &x, &ch) { fails.push(format!("{msg}: report {w}")); }
+                // dev: a fallback with other lines than the fragment, pasted where its first line is code, is pasted whole
+                let f_lines = { let h = f.html_fragment(html); h.text.split('\n').count() };
+                let normal = plain.replace("\r\n", "\n").replace('\r', "\n");
+                if f.blocks()[f.line_of_byte(a)] == c && !normal.is_empty() && normal.split('\n').count() != f_lines {
+                    let mut y = f.clone();
+                    y.set_selection(a, b);
+                    y.paste(plain);
+                    if (lines_of(&x), x.range()) != (lines_of(&y), y.range()) { fails.push(format!("{msg}: dev's {:?}", lines_of(&y))); }
+                }
+                let mut h = f.clone();
+                h.set_history(true);
+                h.set_selection(a, b);
+                h.paste_html(html, plain);
+                h.undo();
+                if (h.text.clone(), h.blocks().to_vec(), h.marks().to_vec()) != (f.text.clone(), f.blocks().to_vec(), f.marks().to_vec()) { fails.push(format!("{msg}: undo")); }
+            }
+        }}
+    }
+    assert!(fails.is_empty(), "{cases} cases, {} failures, the first:\n{}", fails.len(), fails.iter().take(10).cloned().collect::<Vec<_>>().join("\n"));
+}
+
+/// Atoms among code lines take the plain fallback's text for the code lines, whatever its breaks and blank lines.
+#[test]
+fn atoms_among_code_lines_take_the_plain_fallbacks_text() {
+    let d = ParagraphAttrs::default();
+    let atom_frag = |text: &str| { let mut f = TextEdit::from_parts(text, vec![mr(0..1, Mark::Bold)], vec![Block::Paragraph; text.split('\n').count()]); f.set_paragraph_attrs(vec![d, d.atom(20.0).id(50), d]); f };
+    for (plain, want) in [
+        ("a  a\nQ\nb  b", ["a  a", "Q", "b  bxy"]),
+        ("a  a\r\nQ\r\nb  b", ["a  a", "Q", "b  bxy"]),
+        ("a  a\n\nQ\n\nb  b\n", ["a  a", "Q", "b  bxy"]),
+        ("a  a\r\n\r\nQ\r\nb  b\r\n", ["a  a", "Q", "b  bxy"]),
+    ] {
+        let mut e = doc("xy", vec![Block::Code]);
+        e.set_caret(0);
+        e.paste_fragment(atom_frag("a a\nQ\nb b"), plain);
+        assert_eq!(e.text.split('\n').collect::<Vec<_>>(), want, "{plain:?}");
+        assert!(!e.text.contains('\r') && e.marks().is_empty(), "{plain:?}: {:?} {:?}", e.text, e.marks());
+        assert_eq!(e.paragraph(1).atom, Some(20.0), "{plain:?}");
+    }
+    // a fallback that cannot be matched leaves the fragment's text
+    let mut e = doc("xy", vec![Block::Code]);
+    e.set_caret(0);
+    e.paste_fragment(atom_frag("a a\nQ\nb b"), "something else entirely\nand more\nand more\nand more");
+    assert_eq!(e.text.split('\n').collect::<Vec<_>>(), ["a a", "Q", "b bxy"]);
+}
+
+/// A fragment's soft break is no soft break of a code line.
+#[test]
+fn a_fragment_soft_break_in_code_is_dropped() {
+    let mut e = composer("xy", vec![Block::Code]);
+    e.set_caret(0);
+    e.paste_html("<p>one<br>two</p>", "one\ntwo");
+    assert!(e.soft_breaks().is_empty(), "{:?} {:?}", e.soft_breaks(), lines_of(&e));
+}
