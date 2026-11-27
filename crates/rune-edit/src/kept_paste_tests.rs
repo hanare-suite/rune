@@ -767,20 +767,64 @@ fn a_single_line_pasted_into_an_empty_line_with_only_an_id_gives_it_the_pasted_a
     assert_eq!(got, vec![("A".into(), 2, 5, ParagraphAlign::Center, (0.0, 0.0), None, bullet())]);
 }
 
+/// The paths that put `A`, `B` and `C`, or `A` to `D`, on lines of their own.
+const THREE: [Path; 5] = [
+    ("insert", |e| e.insert("A\nB\nC")),
+    ("paste", |e| { e.paste("A\nB\nC"); }),
+    ("paste_html unmarked", |e| { e.paste_html("<p>A</p><p>B</p><p>C</p>", "A\nB\nC"); }),
+    ("paste_html marked", |e| { e.paste_html("<p><b>A</b></p><p>B</p><p>C</p>", "A\nB\nC"); }),
+    ("paste_fragment", |e| { e.paste_fragment(TextEdit::from_parts("A\nB\nC", vec![], vec![]), ""); }),
+];
+const FOUR: [Path; 5] = [
+    ("insert", |e| e.insert("A\nB\nC\nD\n")),
+    ("paste", |e| { e.paste("A\nB\nC\nD\n"); }),
+    ("paste_html unmarked", |e| { e.paste_html("<p>A</p><p>B</p><p>C</p><p>D</p><p></p>", "A\nB\nC\nD\n"); }),
+    ("paste_html marked", |e| { e.paste_html("<p><b>A</b></p><p>B</p><p>C</p><p>D</p><p></p>", "A\nB\nC\nD\n"); }),
+    ("paste_fragment", |e| { e.paste_fragment(TextEdit::from_parts("A\nB\nC\nD\n", vec![], vec![]), ""); }),
+];
+
 #[test]
 fn every_path_agrees_over_every_shape_of_selection() {
     let docs: [(&str, fn() -> TextEdit, Vec<(usize, usize)>); 2] = [
-        ("atom", atom_between, vec![(4, 12), (4, 14), (0, 12), (0, 14), (2, 12)]),
-        ("list", list_before_plain, vec![(4, 8), (4, 10), (5, 8), (5, 10), (0, 8), (0, 10), (2, 8)]),
+        ("atom", atom_between, vec![(4, 12), (4, 14), (0, 12), (0, 14), (2, 12), (4, 11)]),
+        ("list", list_before_plain, vec![(4, 8), (4, 10), (5, 8), (5, 10), (0, 8), (0, 10), (2, 8), (4, 4), (5, 5), (7, 7)]),
     ];
     for (doc, make, shapes) in docs {
         for sel in shapes {
-            for (kind, paths) in [("break", BREAK), ("open", OPEN)] {
+            for (kind, paths) in [("break", BREAK), ("open", OPEN), ("three", THREE), ("four", FOUR)] {
                 let first = leaves(make(), sel, paths[0].0, paths[0].1);
                 for (name, edit) in &paths[1..] {
                     assert_eq!(leaves(make(), sel, name, *edit), first, "{doc} {kind}: {name} against {} over {sel:?}", paths[0].0);
                 }
             }
         }
+    }
+}
+
+#[test]
+fn new_paragraphs_in_the_middle_of_a_line_are_defaults_on_every_path() {
+    let item = |t: &str| row(t, 2, 2, 10.0, None, bullet());
+    let tail = |t: &str| row(t, NEW, 2, 10.0, None, bullet());
+    for (name, edit) in THREE {
+        let got = leaves(list_before_plain(), (5, 5), name, edit);
+        let want = vec![row("top", 1, 0, 0.0, None, Block::Paragraph), item("XA"), plain_row("B"), tail("CYZ"), row("end", 3, 3, 0.0, None, Block::Paragraph)];
+        assert_eq!(got, want, "{name}");
+    }
+}
+
+#[test]
+fn an_atoms_label_selected_without_its_break_leaves_its_paragraph_as_text_on_every_path() {
+    // `Tabelle` is selected (4..11): the paragraph keeps its style and loses the lock.
+    let text = |t: &str| row(t, NEW, 2, 0.0, None, Block::Paragraph);
+    let end = row("end", 3, 3, 0.0, None, bullet());
+    for (name, edit) in BREAK {
+        assert_eq!(leaves(atom_between(), (4, 11), name, edit), vec![aaa(), plain_row("A"), text(""), end.clone()], "{name}");
+    }
+    for (name, edit) in OPEN {
+        assert_eq!(leaves(atom_between(), (4, 11), name, edit), vec![aaa(), plain_row("A"), text("B"), end.clone()], "{name}");
+    }
+    let typed: [Path; 3] = [("insert", |e| e.insert("x")), ("paste", |e| { e.paste("x"); }), ("paste_html marked", |e| { e.paste_html("<b>x</b>", "x"); })];
+    for (name, edit) in typed {
+        assert_eq!(leaves(atom_between(), (4, 11), name, edit), vec![aaa(), text("x"), end.clone()], "{name}");
     }
 }
