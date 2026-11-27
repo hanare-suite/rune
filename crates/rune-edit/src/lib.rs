@@ -20,12 +20,14 @@ mod direction_keys;
 mod display;
 mod history;
 mod html;
+mod html_import;
 mod ime;
 mod input;
 mod keys;
 mod marks;
 mod model;
 mod paragraph;
+mod paste_shape;
 mod pills;
 mod replace;
 mod secure;
@@ -97,6 +99,7 @@ pub use model::ParagraphAttrs;
 pub use model::ParagraphInfo;
 pub use model::ParagraphStyle;
 pub use model::RichStyle;
+pub use paragraph::HtmlStyle;
 #[doc(hidden)]
 pub use model::atom_colors;
 #[doc(hidden)]
@@ -169,6 +172,8 @@ pub struct TextEdit {
     history_off: bool,
     /// What edits changed since [`TextEdit::take_changes`].
     changes: changes::ChangeLog,
+    /// How paragraph styles read and write as HTML ([`TextEdit::set_html_styles`]).
+    html_styles: Arc<[HtmlStyle]>,
 }
 
 impl std::fmt::Debug for TextEdit {
@@ -320,6 +325,7 @@ impl TextEdit {
             next_id: 0,
             history_off: false,
             changes: changes::ChangeLog::default(),
+            html_styles: Arc::default(),
         }
     }
 
@@ -349,7 +355,8 @@ impl TextEdit {
         self.allowed_marks.unwrap_or(Self::DEFAULT_ALLOWED_MARKS)
     }
 
-    /// Internal constructor for `html::parse_html` that keeps parsed [`Mark::Color`] marks until
+    /// Internal constructor for `html::parse_html` that keeps parsed run styles ([`Mark::Color`],
+    /// [`Mark::Size`] and the other document marks) until
     /// [`from_html`](Self::from_html), [`from_html_with_color`](Self::from_html_with_color), or
     /// [`paste_html`](Self::paste_html) applies the target field's allowed-mark mask.
     pub(crate) fn from_parsed_html(
@@ -359,7 +366,7 @@ impl TextEdit {
         soft_breaks: Vec<u32>,
     ) -> TextEdit {
         let mut edit = Self::new(text).rich();
-        edit.allowed_marks = Some(Self::DEFAULT_ALLOWED_MARKS | (1 << Mark::Color(String::new()).kind_order()));
+        edit.allowed_marks = Some(Self::DEFAULT_ALLOWED_MARKS | Self::DOCUMENT_MARKS);
         edit.marks = marks;
         edit.blocks = blocks;
         edit.soft_breaks = soft_breaks;
@@ -525,33 +532,6 @@ impl TextEdit {
         self.marks.is_empty() && self.attrs.is_empty() && self.typing == Typing::Inherited && self.blocks.iter().all(|&b| b == Block::Paragraph)
     }
 
-    /// Parse an HTML fragment (`<b>`, `<strong>`, `<i>`, `<em>`, `<u>`, `<s>`, `<del>`, `<strike>`,
-    /// `<a href>`, `<code>`, `<pre>`, `<ul>`, `<ol>`, `<li>`, `<blockquote>`, `<p>`, `<div>`,
-    /// `<br>`, and inline `style` for `font-weight`, `font-style`, `text-decoration`) into a
-    /// [`TextEdit`].
-    /// Unknown tags keep their text and strip the wrapper; `<script>` and `<style>` are dropped.
-    /// Text colours (`style="color:..."`, `<font color>`) are stripped by default; use
-    /// [`from_html_with_color`](Self::from_html_with_color) to load saved coloured HTML.
-    pub fn from_html(html_str: &str) -> TextEdit {
-        let mut edit = html::parse_html(html_str).rich();
-        edit.allowed_marks = None;
-        edit.sync_invariants();
-        edit
-    }
-
-    /// Like [`from_html`](Self::from_html), but opts the returned field into [`Mark::Color`]
-    /// (as if built with [`allow_color(true)`](Self::allow_color)) and keeps CSS `style="color:..."`
-    /// and `<font color>` text colours.
-    ///
-    /// ```
-    /// use rune_edit::TextEdit;
-    /// let edit = TextEdit::from_html_with_color(r#"<p><span style="color:#d93025">red</span></p>"#);
-    /// assert_eq!(edit.active_color(), Some("#d93025"));
-    /// ```
-    pub fn from_html_with_color(html_str: &str) -> TextEdit {
-        html::parse_html(html_str).rich().allow_color(true)
-    }
-
     /// Serialize the entire document's text, inline marks, and paragraph blocks to safe HTML.
     pub fn to_html(&self) -> String {
         let e = self.synced();
@@ -595,7 +575,8 @@ impl TextEdit {
         self.sync_invariants();
     }
 
-    /// Replace the per-line [`Block`] list on `self.text`.
+    /// Replace the per-line [`Block`] list on `self.text`. A code line holds no marks: those on lines
+    /// that become code are dropped, and reported as a change.
     pub fn set_blocks(&mut self, blocks: Vec<Block>) {
         self.blocks = blocks;
         self.clamp_list_levels();

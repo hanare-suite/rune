@@ -19,7 +19,7 @@ pub(crate) mod rich;
 pub(crate) mod run;
 pub(crate) mod run_marks;
 mod shape;
-mod shape_style;
+pub(crate) mod shape_style;
 pub(crate) mod span;
 pub(crate) mod span_map;
 pub(crate) mod tabular;

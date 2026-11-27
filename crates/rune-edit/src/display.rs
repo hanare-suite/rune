@@ -195,6 +195,13 @@ impl TextEdit {
         (spans, strikes, links, display_blocks)
     }
 
+    /// Whether the label of pill `id` is the object character (U+FFFC) alone: a placeholder
+    /// for something that is no text.
+    #[doc(hidden)]
+    pub fn pill_is_object(&self, id: &str) -> bool {
+        self.marks.iter().any(|m| m.mark.pill_id() == Some(id) && self.text.get(m.start..m.end) == Some("\u{FFFC}"))
+    }
+
     /// Each [`Mark::Pill`]'s byte range in `self.display().0`, with its id.
     #[doc(hidden)]
     pub fn display_pills(&self) -> Vec<(u32, u32, &str)> {

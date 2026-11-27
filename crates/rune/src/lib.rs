@@ -81,6 +81,7 @@ pub use edit::Block;
 pub use edit::Clause;
 pub use edit::EditChange;
 pub use edit::EditChangeKind;
+pub use edit::HtmlStyle;
 pub use edit::Ime;
 pub use edit::Key;
 pub use edit::KeyEvent;

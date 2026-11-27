@@ -176,6 +176,8 @@ fn try_headless_configured<S: 'static>(mut app: crate::app::App<S>, args: Args, 
     let menus = crate::native_menu::MenuGuard::attach(&shared, true);
     let state_ms = launched.elapsed().as_secs_f64() * 1000.0;
     let mut rt = runtime_for(&spec, state, prep.size, Env::new(prep.dark, prep.scale), Arc::new(|| {}));
+    // A script's copy reaches its paste: the run has a clipboard of its own, never the system's.
+    rt.use_clipboard(&crate::clipboard::memory());
     if let Some(attach) = attach_playground {
         attach(&mut rt, playground, &spec, args.playground.clone(), args.variant.clone(), false);
     }

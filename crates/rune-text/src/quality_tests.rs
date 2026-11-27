@@ -57,7 +57,7 @@ fn pill_chips_keep_room_and_never_overlap_at_wraps() {
         .enumerate()
         .map(|(k, label)| {
             let start = content.find(label).unwrap() as u32;
-            PillChip { start, end: start + label.len() as u32, icon: (k == 1).then_some(&DOT), image: None, bg: None, fg: None, ring: None, radius: None, bare: None }
+            PillChip { start, end: start + label.len() as u32, icon: (k == 1).then_some(&DOT), image: None, bg: None, fg: None, ring: None, radius: None, bare: None, stand_in: false }
         })
         .collect();
     let scale = 2.0;
@@ -141,7 +141,7 @@ fn a_pill_wider_than_its_line_wraps_inside_it() {
     let label = "@Migrate config loader to the new schema";
     let content = format!("as in {label} did");
     let start = content.find(label).unwrap() as u32;
-    let pills = [PillChip { start, end: start + label.len() as u32, icon: None, image: None, bg: None, fg: None, ring: None, radius: None, bare: None }];
+    let pills = [PillChip { start, end: start + label.len() as u32, icon: None, image: None, bg: None, fg: None, ring: None, radius: None, bare: None, stand_in: false }];
     let scale = 2.0;
     for width in (90..=200).step_by(7) {
         let max = width as f32 * scale;
@@ -444,10 +444,10 @@ fn pill_chips_apply_custom_radius_clamping_ring_and_leading_images() {
     let (c0, c1) = find("@capsule");
     let (l0, l1) = find("@logo");
     let pills = [
-        PillChip { start: d0, end: d1, icon: None, image: None, bg: None, fg: None, ring: None, radius: None, bare: None },
-        PillChip { start: s0, end: s1, icon: None, image: None, bg: None, fg: None, ring: Some((ring_color, 0.0)), radius: Some(-3.0), bare: None },
-        PillChip { start: c0, end: c1, icon: None, image: None, bg: None, fg: None, ring: Some((ring_color, 1.5)), radius: Some(999.0), bare: None },
-        PillChip { start: l0, end: l1, icon: Some(&FALLBACK), image: Some(logo.clone()), bg: None, fg: None, ring: Some((ring_color, 1.0)), radius: Some(8.0), bare: None },
+        PillChip { start: d0, end: d1, icon: None, image: None, bg: None, fg: None, ring: None, radius: None, bare: None, stand_in: false },
+        PillChip { start: s0, end: s1, icon: None, image: None, bg: None, fg: None, ring: Some((ring_color, 0.0)), radius: Some(-3.0), bare: None, stand_in: false },
+        PillChip { start: c0, end: c1, icon: None, image: None, bg: None, fg: None, ring: Some((ring_color, 1.5)), radius: Some(999.0), bare: None, stand_in: false },
+        PillChip { start: l0, end: l1, icon: Some(&FALLBACK), image: Some(logo.clone()), bg: None, fg: None, ring: Some((ring_color, 1.0)), radius: Some(8.0), bare: None, stand_in: false },
     ];
     let bare = text.layout_blocks(content, &[], &[], &[], style, scale, None, Alignment::Start);
     let layout = text.layout_blocks(content, &[], &[], &pills, style, scale, None, Alignment::Start);
@@ -487,6 +487,7 @@ fn pill_chips_apply_custom_radius_clamping_ring_and_leading_images() {
         ring: Some((ring_color, 1.0)),
         radius: Some(999.0),
         bare: None,
+        stand_in: false,
     }];
     let wlayout = text.layout_blocks(&wrapped_text, &[], &[], &wpills, style, scale, Some(150.0 * scale), Alignment::Start);
     let (mut wchips, mut wicons, mut wimages) = (Vec::new(), Vec::new(), Vec::new());
@@ -512,6 +513,7 @@ fn pill_chips_apply_custom_radius_clamping_ring_and_leading_images() {
         ring: Some((ring_color, 1.0)),
         radius: Some(999.0),
         bare: None,
+        stand_in: false,
     }];
     let rlayout = text.layout_blocks(rtl_text, &[], &[], &rpills, style, scale, None, Alignment::Start);
     let (mut rchips, mut ricons, mut rimages) = (Vec::new(), Vec::new(), Vec::new());
@@ -581,4 +583,24 @@ fn text_flow_line_span_covers_single_wrapped_multiline_and_blank_lines() {
     let blank_at = doc.find("\n\n").unwrap() + 1;
     let blank_span = pflow.line_span(blank_at, blank_at + 1, line_px).unwrap();
     assert!(blank_span.0 > code_span.0 && blank_span.1 < code_span.1);
+}
+
+/// The object character under a pill whose icon stands in for it takes no room at any scale,
+/// whatever advance and tracking its font gives it: the pill is as wide as its icon and padding.
+#[test]
+fn an_object_character_an_icon_stands_in_for_takes_no_room() {
+    static DOT: Icon = Icon { name: "dot", view: 24.0, body: "<circle cx=\"12\" cy=\"12\" r=\"8\"/>" };
+    let mut text = TextSystem::default();
+    let pm = PillMetrics::new(14.0);
+    for style in [TextStyle::new(14.0, 400.0), TextStyle::new(14.0, 400.0).family(Family::Mono)] {
+        for scale in [1.0, 2.0, 3.0] {
+            let pills = [PillChip { start: 1, end: 4, icon: Some(&DOT), image: None, bg: None, fg: None, ring: None, radius: None, bare: None, stand_in: true }];
+            let layout = text.layout_blocks("a\u{FFFC}b", &[], &[], &pills, style, scale, None, Alignment::Start);
+            let advance = layout.lines().flat_map(|line| line.runs()).flat_map(|run| run.clusters()).find(|c| c.text_range() == (1..4)).map(|c| c.advance());
+            assert!(advance.is_some_and(|a| a.abs() < 0.01), "{:?} at scale {scale}: the character advances {advance:?}", style.family);
+            let around = text.layout_blocks("ab", &[], &[], &[], style, scale, None, Alignment::Start).full_width();
+            let room = ((pm.lead_alone() * scale).round() + (pm.trail() * scale).round()) as f32;
+            assert!((layout.full_width() - around - room).abs() < 1.0, "{:?} at scale {scale}: {} wide, {around} without the pill and {room} for it", style.family, layout.full_width());
+        }
+    }
 }

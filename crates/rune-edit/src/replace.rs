@@ -1,5 +1,6 @@
 //! Core text and attribute replacement engine, grapheme stepping, and input sanitization.
 
+use super::paragraph::{Edge, Plan, new_lines};
 use super::*;
 
 /// The previous grapheme boundary, so a caret or backspace takes a ZWJ emoji, flag or skin
@@ -84,13 +85,95 @@ impl TextEdit {
     /// Core replacement engine. `back` is how far before the inserted text's end the caret goes.
     pub(crate) fn apply_fenced(
         &mut self,
-        (a, b): (usize, usize),
+        range: (usize, usize),
         s: &str,
         inserted_marks: &[Mark],
         new_line_block: Option<Block>,
         mark_new_lines_soft: bool,
         back: usize,
     ) {
+        self.apply_fenced_lines(range, s, inserted_marks, new_line_block, mark_new_lines_soft, back, false);
+    }
+
+    /// How an edit that replaces `a..b` with `s` lies against the lines it touches: which
+    /// atoms it leaves whole, which paragraph survives its merged lines, and where it goes.
+    pub(super) fn edit_plan(&self, (a, b): (usize, usize), s: &str, new_line_block: Option<Block>, mark_new_lines_soft: bool) -> Plan {
+        let line_a = self.line_of_byte(a);
+        let line_b = self.line_of_byte(b);
+        let line_a_range = self.line_range(line_a);
+        let line_b_range = self.line_range(line_b);
+
+        let added_lines = count_newlines(s.as_bytes());
+        // An empty first paragraph gives way to the one merged into it; an atom the edit ends
+        // before keeps its line.
+        let kept = self.kept_atoms((a, b), (line_a, line_b), s);
+        // So does an atom deleted from its start: what follows it is not the atom.
+        let atom_gone = line_a < line_b && a == line_a_range.start && !kept.head && self.paragraph(line_a).atom.is_some();
+        // An atom that stays on a line of its own behind the new text gives nothing to the
+        // line before it.
+        // And paragraphs taken whole, from a line's start to the start of another's, whatever
+        // goes in their place: a paragraph's id, attributes and block live in its line break,
+        // and the one that stays is the last one's, which the text left joins.
+        // (The end of the text counts as the last paragraph's break.)
+        // A soft line's start is the middle of its paragraph, never a paragraph's start: only hard lines' starts count.
+        let soft = |line: usize| self.soft_breaks.binary_search(&(line as u32)).is_ok();
+        let (hard_a, hard_b) = (!soft(line_a), !soft(line_b));
+        let whole = line_a < line_b && hard_a && a == line_a_range.start && ((b == line_b_range.start && hard_b) || (b == self.text.len() && b == line_b_range.end));
+        let take_b = !(kept.tail && added_lines > 0) && (atom_gone || whole);
+        // A paragraph taken to the end of the text, whose last line is soft: the paragraph that stays is
+        // the one the soft lines belong to, the hard line above them, not the soft line itself.
+        let mut owner_b = line_b;
+        if whole && b != line_b_range.start {
+            while owner_b > line_a && self.soft_breaks.binary_search(&(owner_b as u32)).is_ok() { owner_b -= 1; }
+        }
+        // An insertion at the start of a line, over a selection that starts there or none, goes
+        // before what is left of it (an atom's line the selection takes counts as gone): the
+        // line keeps its id and attributes and the paragraphs the text brings are new ones above
+        // it. Return gives them the line's style and alignment; other text, the defaults.
+        // The label of an atom taken whole, without its break, leaves its paragraph as text.
+        let label_gone = line_a == line_b && a == line_a_range.start && b == line_a_range.end && self.paragraph(line_a).atom.is_some();
+        let block_a = self.blocks.get(line_a).copied().unwrap_or(Block::Paragraph);
+        let front = (a == line_a_range.start && hard_a && added_lines > 0 && !mark_new_lines_soft && !kept.head && !kept.tail
+            && (self.paragraph(line_a).atom.is_none() || atom_gone || label_gone) && new_line_block.is_none_or(|blk| blk == block_a))
+            .then(|| new_line_block.is_some());
+        // Text with a line break over a selection that starts in the middle of a line and ends in a
+        // later one: the last line the edit leaves ends with the later paragraph's break, so it is
+        // that paragraph, with its id, attributes and block; the first line keeps its own.
+        let tail_whole = front.is_none() && !take_b && !kept.head && !kept.tail && added_lines > 0 && line_a < line_b && !(a == line_a_range.start && hard_a)
+            && self.paragraph(line_b).atom.is_none();
+        let block_b = self.blocks.get(line_b).copied().unwrap_or(Block::Paragraph);
+        // What is left of the paragraph behind the edit: the rest of the line, or the soft lines that follow it. It keeps the
+        // paragraph's attributes and block, whether or not the inserted text ends in a break.
+        let rest = b < line_b_range.end || soft(line_b + 1);
+        let edge = match front {
+            Some(copy) => Edge::Front { copy },
+            None if tail_whole => Edge::Tail,
+            None => Edge::Inside { copy: new_line_block.is_some(), rest },
+        };
+        Plan { line_a, line_b, line_b_range, added_lines, kept, take_b, front, tail_whole, block_b, owner_b, edge }
+    }
+
+    /// Which of the lines an edit replacing `a..b` with `s` starts on, one more than it adds, are
+    /// new paragraphs (see [`apply_fenced_lines`](Self::apply_fenced_lines)).
+    pub(super) fn new_lines_of(&self, (a, b): (usize, usize), s: &str) -> Vec<bool> {
+        let p = self.edit_plan((a, b), s, None, false);
+        new_lines(p.added_lines, p.kept, p.edge, p.line_a == p.line_b)
+    }
+
+    /// [`apply_fenced`](Self::apply_fenced) that, with `want`, says which of the lines from the
+    /// one `range` starts on, as many as the text's line breaks add, are new paragraphs, and
+    /// which hold what the edit left of an existing one. A paste decorates the new ones.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn apply_fenced_lines(
+        &mut self,
+        (a, b): (usize, usize),
+        s: &str,
+        inserted_marks: &[Mark],
+        new_line_block: Option<Block>,
+        mark_new_lines_soft: bool,
+        back: usize,
+        want: bool,
+    ) -> Vec<bool> {
         // Callers sync first; a second whole-text pass here would show on every keystroke.
         self.column = Column::Free;
         self.affinity = parley::Affinity::Downstream;
@@ -102,6 +185,7 @@ impl TextEdit {
             && !mark_new_lines_soft
             && new_line_block.is_none_or(|b| b == Block::Paragraph)
             && self.attrs.is_empty()
+            && !want
             && self.blocks.iter().all(|&b| b == Block::Paragraph)
         {
             // Plain text: no per-line passes, so a keystroke in a long plain field costs what
@@ -114,39 +198,25 @@ impl TextEdit {
             self.focus = self.anchor;
             self.cancel_composition();
             if del_len + ins_len > 0 { self.note_text(a..b, ins_len); }
-            return;
+            return Vec::new();
         }
-        let line_a = self.line_of_byte(a);
-        let line_b = self.line_of_byte(b);
-        let line_a_range = self.line_range(line_a);
-        let line_b_range = self.line_range(line_b);
-
+        let Plan { line_a, line_b, line_b_range, added_lines, kept, take_b, front, tail_whole, block_b, owner_b, edge } = self.edit_plan((a, b), s, new_line_block, mark_new_lines_soft);
         let removed_lines = line_b - line_a;
-        let added_lines = count_newlines(s.as_bytes());
-        // An empty first paragraph gives way to the one merged into it; an atom the edit ends
-        // before keeps its line.
-        let kept = self.kept_atoms((a, b), (line_a, line_b), s);
-        // So does an atom deleted from its start: what follows it is not the atom.
-        let atom_gone = line_a < line_b && a == line_a_range.start && !kept.head && self.paragraph(line_a).atom.is_some();
-        // An atom that stays on a line of its own behind the new text gives nothing to the
-        // line before it.
-        let take_b = !(kept.tail && added_lines > 0)
-            && (atom_gone || (line_a < line_b && line_a_range.is_empty() && a == line_a_range.start && b == line_b_range.start));
-        self.splice_attrs(line_a, line_b, added_lines, take_b, kept);
-        // Determine the surviving block for `line_a` when `a..b` merges `line_a..=line_b`.
+        let new_lines = if want { new_lines(added_lines, kept, edge, line_a == line_b) } else { Vec::new() };
+        if owner_b != line_b && line_b < self.attrs.len() {
+            self.attrs[line_b] = self.attrs[owner_b];
+        }
+        self.splice_attrs(line_a, line_b, added_lines, take_b, kept, edge);
+        // A line's softness describes the break before it, and when lines merge that break survives only if it
+        // is the one before the first: the merged line is as soft as `line_a`, never as `line_b`.
+        let merged_soft = self.soft_breaks.binary_search(&(line_a as u32)).is_ok() && line_a > 0 && !kept.tail; // (an atom below it is a paragraph of its own)
+        // Determine the surviving block for `line_a` when `a..b` merges `line_a..=line_b` (a soft line is in the
+        // block of the paragraph above, whichever paragraph's text it holds: see `soft_block` below).
+        let soft_block = self.blocks.get(line_a).copied().unwrap_or(Block::Paragraph);
         let merged_block = if take_b || (kept.tail && added_lines == 0) {
-            self.blocks.get(line_b).copied().unwrap_or(Block::Paragraph)
+            self.blocks.get(if take_b { owner_b } else { line_b }).copied().unwrap_or(Block::Paragraph)
         } else {
             self.blocks.get(line_a).copied().unwrap_or(Block::Paragraph)
-        };
-        let merged_soft = if line_a < line_b
-            && line_a_range.is_empty()
-            && a == line_a_range.start
-            && b == line_b_range.start
-        {
-            self.soft_breaks.binary_search(&(line_b as u32)).is_ok() && line_a > 0
-        } else {
-            self.soft_breaks.binary_search(&(line_a as u32)).is_ok()
         };
 
         let next_line_blk = new_line_block.unwrap_or(match merged_block {
@@ -164,6 +234,45 @@ impl TextEdit {
         if added_lines > 0 {
             let insert_pos = (line_a + 1).min(self.blocks.len());
             self.blocks.splice(insert_pos..insert_pos, std::iter::repeat_n(next_line_blk, added_lines));
+        }
+        // Text with a line break in the middle of a line leaves the tail in the line's block; one
+        // that ends at the start of a later line leaves that line's own.
+        // So does an edit that starts behind an atom and ends in a later paragraph: the last line
+        // it leaves is that paragraph's.
+        if tail_whole || (kept.head && !kept.tail && line_a < line_b && added_lines > 0) {
+            if let Some(slot) = self.blocks.get_mut(line_a + added_lines) {
+                *slot = block_b;
+            }
+        } else if added_lines > 0 && front.is_none() && new_line_block.is_none() && !kept.tail && (b < line_b_range.end || self.soft_breaks.binary_search(&((line_b + 1) as u32)).is_ok()) {
+            if let Some(slot) = self.blocks.get_mut(line_a + added_lines) {
+                *slot = merged_block;
+            }
+        }
+        // An atom the edit pushes down a line keeps its own block, and the line above it has the
+        // new line's.
+        if kept.tail && added_lines > 0 {
+            if line_a == line_b {
+                if let Some(slot) = self.blocks.get_mut(line_a) {
+                    *slot = next_line_blk;
+                }
+            }
+            if let Some(slot) = self.blocks.get_mut(line_a + added_lines) {
+                *slot = block_b;
+            }
+        }
+        if front.is_some() {
+            if let Some(slot) = self.blocks.get_mut(line_a) {
+                *slot = next_line_blk;
+            }
+            if let Some(slot) = self.blocks.get_mut(line_a + added_lines) {
+                *slot = merged_block;
+            }
+        }
+
+        if merged_soft && added_lines == 0 {
+            if let Some(slot) = self.blocks.get_mut(line_a) {
+                *slot = soft_block;
+            }
         }
 
         // Update `soft_breaks`.
@@ -243,8 +352,10 @@ impl TextEdit {
         self.anchor = a + ins_len - back;
         self.focus = self.anchor;
         self.cancel_composition();
-        self.sync_invariants();
+        // (A paste that wants its lines decorates them first, and mirrors when it is done.)
+        self.sync_inner(!want);
         self.mark_edited();
+        new_lines
     }
 
     pub(crate) fn replace(&mut self, (mut a, mut b): (usize, usize), s: &str, kind: EditKind) {
@@ -269,7 +380,18 @@ impl TextEdit {
         let (a, b, back) = (fenced.a, fenced.b, fenced.back);
         let s = fenced.text.as_deref().unwrap_or(s);
         if kind == EditKind::Other { self.break_history_group(); }
+        // Nothing replaced by nothing is nothing, whatever style is armed: the style stays, and no atom is turned into text.
+        if a == b && s.is_empty() {
+            self.anchor = a - back;
+            self.focus = self.anchor;
+            self.cancel_composition();
+            self.mark_edited();
+            return;
+        }
+        // (Breaks typed or pasted over soft ones are hard ones: not the same text.)
+        let softer = s.contains('\n') && !self.soft_breaks.is_empty() && { let (la, lb) = (self.line_of_byte(a), self.line_of_byte(b)); self.soft_breaks.iter().any(|&l| (l as usize) > la && (l as usize) <= lb) };
         if &self.text[a..b] == s
+            && !softer
             && self.typing == Typing::Inherited
             && !self.marks.iter().any(|m| m.mark.is_pill() && m.start < b && a < m.end)
         {

@@ -5,7 +5,7 @@ use std::ops::Range;
 use rune_text::{Direction, Flow};
 
 use super::{ListKind, escape_html};
-use crate::{Block, Mark, MarkRange, TextEdit};
+use crate::{Baseline, Block, Mark, MarkColor, MarkRange, ParagraphAlign, TextEdit};
 
 /// Serializes byte range `range` of `edit` to HTML.
 pub(crate) fn serialize_html(edit: &TextEdit, range: Range<usize>) -> String {
@@ -23,9 +23,34 @@ pub(crate) fn serialize_html(edit: &TextEdit, range: Range<usize>) -> String {
             let sub_start = p.range.start.max(start);
             let sub_end = p.range.end.min(end);
             if sub_start <= sub_end
-                && (sub_start < sub_end || start == end || (p.range.start >= start && p.range.end <= end))
+                && (sub_start < sub_end || start == end || (p.range.start >= start && p.range.end <= end) || (start == p.range.end && end > start))
             {
-                paras.push((p.index, sub_start..sub_end, p.block, p.soft_break && p.range.start > start));
+                // A copy that begins at a line's end begins with that line's empty rest, as a plain paragraph
+                // wherever it is from: no empty bullet or quote above what is pasted.
+                let lead = sub_start == sub_end && start == p.range.end && p.range.start < start && end > start && !edit.soft_breaks().contains(&(p.index as u32 + 1));
+                paras.push((p.index, sub_start..sub_end, if lead { Block::Paragraph } else { p.block }, p.soft_break && p.range.start > start));
+            }
+        }
+    }
+
+    // An empty code line the selection ends at the start of is no part of it: a `<pre>` cannot say its
+    // break, so the copy ends behind the break before it, in a paragraph.
+    // (A whole document keeps its last line, empty or not.)
+    while paras.len() > 1 && !(start == 0 && end == edit.text.len()) && paras.last().is_some_and(|p| p.2 == Block::Code && p.1.is_empty() && p.1.start == end && edit.line_range(p.0).start == end) {
+        paras.pop();
+    }
+
+    // A copy that ends behind a line break, at the start of a paragraph it takes nothing of,
+    // ends in an empty paragraph, so a paste breaks the line there as the copy did.
+    let mut open_end = end > start && edit.text.as_bytes()[end - 1] == b'\n' && paras.last().is_some_and(|p| p.1.end < end);
+    // If the line it ends at the start of is a soft line, the break is a soft one, which the copy says as an
+    // empty soft line of the paragraph it ends: `a<br><br>`.
+    if open_end {
+        let line = edit.line_of_byte(end);
+        if let Some(prev) = paras.last().filter(|p| p.0 + 1 == line && !matches!(p.2, Block::Code) && edit.paragraph(p.0).atom.is_none()) {
+            if edit.soft_breaks().binary_search(&(line as u32)).is_ok() && edit.line_range(line).start == end && edit.blocks().get(line) == Some(&prev.2) && edit.paragraph(line).atom.is_none() {
+                paras.push((line, end..end, prev.2, true));
+                open_end = false;
             }
         }
     }
@@ -38,10 +63,19 @@ pub(crate) fn serialize_html(edit: &TextEdit, range: Range<usize>) -> String {
         match block {
             Block::Code => {
                 out.push_str("<pre");
+                out.push_str(&atom_attrs(edit, paras[idx].0, &paras[idx].1));
                 out.push_str(dirs[idx]);
+                // An atom's `<pre>` is its own, so it can say how it is aligned.
+                if edit.paragraph(paras[idx].0).atom.is_some() {
+                    out.push_str(align_css(edit.paragraph(paras[idx].0).align));
+                }
                 out.push_str("><code>");
+                // (A parser drops the newline after `<code>`: a block that starts at an empty line says so with another.)
+                if paras[idx].1.is_empty() { out.push('\n'); }
                 let mut first = true;
-                while idx < paras.len() && paras[idx].2 == Block::Code {
+                // An atom is a `<pre>` of its own, so it says so; text lines go in one block.
+                let alone = edit.paragraph(paras[idx].0).atom.is_some();
+                while idx < paras.len() && paras[idx].2 == Block::Code && (first || (!alone && edit.paragraph(paras[idx].0).atom.is_none())) {
                     if !first {
                         out.push('\n');
                     }
@@ -50,6 +84,8 @@ pub(crate) fn serialize_html(edit: &TextEdit, range: Range<usize>) -> String {
                     escape_html(&edit.text[r.clone()], &mut out);
                     idx += 1;
                 }
+                // (A parser drops a newline before the end of the document: a last block that ends in an empty line says so with another.)
+                if idx == paras.len() && !open_end && paras[idx - 1].1.is_empty() { out.push('\n'); }
                 out.push_str("</code></pre>");
             }
             Block::Bullet(_) | Block::Numbered(_) => {
@@ -57,6 +93,7 @@ pub(crate) fn serialize_html(edit: &TextEdit, range: Range<usize>) -> String {
                 let mut open_lists: Vec<ListKind> = Vec::new();
                 while idx < paras.len() && paras[idx].2.is_list() {
                     let (_, ref r, blk, _) = paras[idx];
+                    let head_atom = edit.paragraph(paras[idx].0).atom.is_some();
                     let (kind, level) = match blk {
                         Block::Bullet(l) => (ListKind::Bullet, l as usize),
                         Block::Numbered(l) => (ListKind::Numbered, l as usize),
@@ -87,15 +124,18 @@ pub(crate) fn serialize_html(edit: &TextEdit, range: Range<usize>) -> String {
                         open_lists.push(k);
                     }
                     out.push_str("<li");
+                    out.push_str(&atom_attrs(edit, paras[idx].0, r));
                     out.push_str(dirs[idx]);
+                    out.push_str(align_css(edit.paragraph(paras[idx].0).align));
                     out.push('>');
                     serialize_inline(edit, r.clone(), &mut out);
                     idx += 1;
-                    while idx < paras.len() && paras[idx].3 && paras[idx].2 == blk {
+                    while idx < paras.len() && paras[idx].3 && !head_atom && edit.paragraph(paras[idx].0).atom.is_none() && paras[idx].2 == blk {
                         out.push_str("<br>");
                         serialize_inline(edit, paras[idx].1.clone(), &mut out);
                         idx += 1;
                     }
+                    if paras[idx - 1].3 && paras[idx - 1].1.is_empty() { out.push_str("<br>"); }
                     out.push_str("</li>");
                 }
                 while let Some(k) = open_lists.pop() {
@@ -106,34 +146,98 @@ pub(crate) fn serialize_html(edit: &TextEdit, range: Range<usize>) -> String {
                 }
             }
             Block::Quote => {
+                let head_atom = edit.paragraph(paras[idx].0).atom.is_some();
                 out.push_str("<blockquote");
+                out.push_str(&atom_attrs(edit, paras[idx].0, &paras[idx].1));
                 out.push_str(dirs[idx]);
+                out.push_str(align_css(edit.paragraph(paras[idx].0).align));
                 out.push('>');
                 serialize_inline(edit, paras[idx].1.clone(), &mut out);
                 idx += 1;
-                while idx < paras.len() && paras[idx].3 && paras[idx].2 == Block::Quote {
+                while idx < paras.len() && paras[idx].3 && !head_atom && edit.paragraph(paras[idx].0).atom.is_none() && paras[idx].2 == Block::Quote {
                     out.push_str("<br>");
                     serialize_inline(edit, paras[idx].1.clone(), &mut out);
                     idx += 1;
                 }
+                // (A `<br>` ends no line at the end of a block: an empty soft line is a second one.)
+                if paras[idx - 1].3 && paras[idx - 1].1.is_empty() { out.push_str("<br>"); }
                 out.push_str("</blockquote>");
             }
             Block::Paragraph => {
-                out.push_str("<p");
+                let attrs = edit.paragraph(paras[idx].0);
+                let head_atom = attrs.atom.is_some();
+                let named = edit.html_styles().iter().find(|s| s.style == attrs.style);
+                let tag = named.map_or("p", |s| s.tag);
+                out.push('<');
+                out.push_str(tag);
+                if let Some(class) = named.and_then(|s| s.class) {
+                    out.push_str(" class=\"");
+                    escape_html(class, &mut out);
+                    out.push('"');
+                }
+                // An atom copied whole says so, with the id the app keeps its content under.
+                out.push_str(&atom_attrs(edit, paras[idx].0, &paras[idx].1));
                 out.push_str(dirs[idx]);
+                out.push_str(align_css(attrs.align));
                 out.push('>');
                 serialize_inline(edit, paras[idx].1.clone(), &mut out);
                 idx += 1;
-                while idx < paras.len() && paras[idx].3 && paras[idx].2 == Block::Paragraph {
+                while idx < paras.len() && paras[idx].3 && !head_atom && edit.paragraph(paras[idx].0).atom.is_none() && paras[idx].2 == Block::Paragraph {
                     out.push_str("<br>");
                     serialize_inline(edit, paras[idx].1.clone(), &mut out);
                     idx += 1;
                 }
-                out.push_str("</p>");
+                if paras[idx - 1].3 && paras[idx - 1].1.is_empty() { out.push_str("<br>"); }
+                out.push_str("</");
+                out.push_str(tag);
+                out.push('>');
             }
         }
     }
+    if open_end {
+        out.push_str("<p></p>");
+    }
     out
+}
+
+/// ` data-atom` and ` data-atom-height` for a paragraph that is an atom copied whole, with the id the
+/// app keeps its content under: they go on its `<p>`, `<li>`, `<blockquote>` or `<pre>`.
+fn atom_attrs(edit: &TextEdit, line: usize, copied: &std::ops::Range<usize>) -> String {
+    let attrs = edit.paragraph(line);
+    match attrs.atom.filter(|_| *copied == edit.line_range(line)) {
+        Some(height) => format!(" data-atom=\"{}\" data-atom-height=\"{height}\"", attrs.id),
+        None => String::new(),
+    }
+}
+
+/// A block's ` style` attribute for its alignment, empty when it is left-aligned.
+fn align_css(align: ParagraphAlign) -> &'static str {
+    match align {
+        ParagraphAlign::Left => "",
+        ParagraphAlign::Center => " style=\"text-align:center\"",
+        ParagraphAlign::Right => " style=\"text-align:right\"",
+        ParagraphAlign::Justified => " style=\"text-align:justify\"",
+    }
+}
+
+/// The inline CSS of the marks among `active` that have no element of their own and are not
+/// colours (a colour has its own span): family, size and highlight.
+fn span_css(active: &[&Mark]) -> String {
+    let mut css = String::new();
+    let rgb = |c: MarkColor| c.get().hex()[..7].to_owned();
+    for m in active {
+        match m {
+            Mark::Family(name) => {
+                let name: String = name.chars().filter(|c| !matches!(c, '\'' | '"' | ';' | '<' | '>' | '&' | '\\')).collect();
+                css.push_str(&format!("font-family:'{name}';"));
+            }
+            Mark::Size(size) => css.push_str(&format!("font-size:{}pt;", size.get())),
+            Mark::Highlight(c) => css.push_str(&format!("background-color:{};", rgb(*c))),
+            _ => {}
+        }
+    }
+    css.pop();
+    css
 }
 
 /// Each copied block's ` dir` attribute, by `paras` index: the direction the field showed it in
@@ -232,8 +336,16 @@ fn serialize_marks(edit: &TextEdit, range: Range<usize>, out: &mut String) {
             Mark::Pill(_) => 7,
             other => other.kind_order(),
         });
+        let css = span_css(&active);
+        if !css.is_empty() {
+            out.push_str("<span style=\"");
+            out.push_str(&css);
+            out.push_str("\">");
+        }
         for m in &active {
             match m {
+                Mark::Baseline(Baseline::Sub) => out.push_str("<sub>"),
+                Mark::Baseline(Baseline::Super) => out.push_str("<sup>"),
                 Mark::Bold => out.push_str("<strong>"),
                 Mark::Italic => out.push_str("<em>"),
                 Mark::Underline => out.push_str("<u>"),
@@ -262,8 +374,13 @@ fn serialize_marks(edit: &TextEdit, range: Range<usize>, out: &mut String) {
                 Mark::Code => out.push_str("</code>"),
                 Mark::Color(_) => out.push_str("</span>"),
                 Mark::Link(_) => out.push_str("</a>"),
+                Mark::Baseline(Baseline::Sub) => out.push_str("</sub>"),
+                Mark::Baseline(Baseline::Super) => out.push_str("</sup>"),
                 _ => {}
             }
+        }
+        if !css.is_empty() {
+            out.push_str("</span>");
         }
     }
 }

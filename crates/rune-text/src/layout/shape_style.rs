@@ -11,12 +11,44 @@ use super::span::{Ink, Span};
 pub(super) fn families<'a>(spans: &'a [Span], collection: &mut Collection, rest: &[FontFamilyName<'a>]) -> Families<'a> {
     let mut out: Vec<(&'a str, Vec<FontFamilyName<'a>>)> = Vec::new();
     for name in spans.iter().filter_map(|s| s.family.as_deref()) {
-        if out.iter().any(|(n, _)| *n == name) || collection.family_id(name).is_none() {
+        let family = alias_of(name).unwrap_or(name);
+        if out.iter().any(|(n, _)| *n == name) || collection.family_id(family).is_none() {
             continue;
         }
-        out.push((name, std::iter::once(FontFamilyName::named(name)).chain(rest.iter().cloned()).collect()));
+        out.push((name, std::iter::once(FontFamilyName::named(family)).chain(rest.iter().cloned()).collect()));
     }
     Families(out)
+}
+
+static ALIASES: std::sync::RwLock<Vec<(&'static str, &'static str)>> = std::sync::RwLock::new(Vec::new());
+
+/// Draws runs whose span or `Mark::Family` names `name` in the registered family `family`: a
+/// word processor shows a document's Calibri in the metric-compatible font it bundles and keeps
+/// the name. Names match whatever their case. Call it before the first frame; an alias set
+/// later reaches text laid out after it.
+pub fn alias_family(name: &str, family: &str) {
+    let mut aliases = ALIASES.write().unwrap_or_else(|e| e.into_inner());
+    // Each distinct string is leaked once, however a name alternates between families.
+    let (family, name) = (intern(family), intern(name));
+    if let Some(slot) = aliases.iter_mut().find(|(n, _)| n.eq_ignore_ascii_case(name)) {
+        slot.1 = family;
+    } else {
+        aliases.push((name, family));
+    }
+}
+
+/// `s` as a `'static` string, leaked the first time it is asked for and never again.
+fn intern(s: &str) -> &'static str {
+    static SEEN: std::sync::Mutex<Vec<&'static str>> = std::sync::Mutex::new(Vec::new());
+    let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(held) = seen.iter().find(|h| **h == s) { return held; }
+    let leaked: &'static str = Box::leak(s.to_owned().into_boxed_str());
+    seen.push(leaked);
+    leaked
+}
+
+fn alias_of(name: &str) -> Option<&'static str> {
+    ALIASES.read().unwrap_or_else(|e| e.into_inner()).iter().find(|(n, _)| n.eq_ignore_ascii_case(name)).map(|(_, family)| *family)
 }
 
 pub(super) struct Families<'a>(Vec<(&'a str, Vec<FontFamilyName<'a>>)>);
@@ -41,3 +73,7 @@ pub(super) fn push_baselines(b: &mut RangedBuilder<'_, Ink>, spans: &[Span], siz
         b.push(StyleProperty::VerticalAlign(VerticalAlign::length(if baseline == Baseline::Super { shift } else { -shift })), r);
     }
 }
+
+#[cfg(test)]
+#[path = "shape_style_tests.rs"]
+mod tests;

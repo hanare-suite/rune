@@ -360,6 +360,9 @@ impl TextEdit {
     }
 
     pub(super) fn record_change(&mut self, before: Option<Snapshot>, kind: EditKind) {
+        // Whatever the edit did to a paragraph, its soft lines are still its own.
+        // (A soft line that became code has no marks: normalizing is part of the same step.)
+        if self.mirror_soft_lines() { self.normalize_marks(); }
         let Some(before) = before.filter(|_| self.recording()) else {
             return;
         };

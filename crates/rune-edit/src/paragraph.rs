@@ -5,10 +5,56 @@
 
 use super::*;
 
-/// `a` without its atom.
-fn without_atom(mut a: ParagraphAttrs) -> ParagraphAttrs {
-    a.atom = None;
-    a
+/// One paragraph style as HTML, for [`TextEdit::set_html_styles`]: paragraphs of `style` are
+/// the element `tag`, with `class` when it has one. A class matches whatever its case.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct HtmlStyle {
+    pub style: u16,
+    pub tag: &'static str,
+    pub class: Option<&'static str>,
+}
+
+/// Where an edit that adds lines lies against the lines it touches.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Edge {
+    /// `copy`: Return's new line copies the line's attributes; `rest`: text of the line stays after the edit.
+    Inside { copy: bool, rest: bool },
+    Front { copy: bool },
+    Tail,
+}
+
+/// How an edit lies against the lines it touches ([`TextEdit::edit_plan`]).
+pub(super) struct Plan {
+    pub(super) line_a: usize,
+    pub(super) line_b: usize,
+    pub(super) line_b_range: Range<usize>,
+    pub(super) added_lines: usize,
+    pub(super) kept: Kept,
+    pub(super) take_b: bool,
+    pub(super) front: Option<bool>,
+    pub(super) tail_whole: bool,
+    pub(super) block_b: Block,
+    /// The line the paragraph that stays, when `take_b`, is the first line of: `line_b`, or the hard line above
+    /// the soft ones a paragraph taken to the end of the text ends with.
+    pub(super) owner_b: usize,
+    pub(super) edge: Edge,
+}
+
+/// Which of the lines an edit starts on, one more than it adds, are new paragraphs (`true`)
+/// and which are an existing one's, or what is left of it, whatever text they hold now.
+pub(super) fn new_lines(added: usize, kept: Kept, edge: Edge, same_line: bool) -> Vec<bool> {
+    // An edit that adds no line leaves the one line it is on as it was.
+    if added == 0 { return vec![false]; }
+    let mut lines = vec![true; added + 1];
+    match edge {
+        Edge::Front { .. } => lines[added] = false,
+        Edge::Tail => (lines[0], lines[added]) = (false, false),
+        Edge::Inside { rest, .. } => {
+            lines[0] = kept.tail && same_line;
+            lines[added] = !(kept.tail || (kept.head && !same_line) || rest);
+        }
+    }
+    lines
 }
 
 /// What a paragraph split off `a` takes: everything but its page break, its atom and its id.
@@ -70,16 +116,33 @@ impl TextEdit {
         self.open_document();
         self.attrs = attrs.into_iter().map(ParagraphAttrs::clean).collect();
         self.sync_invariants();
+        self.give_ids_to_lines_without();
+    }
+
+    /// With ids on, every line that has none takes one (so the order of the attributes and the ids does not matter).
+    fn give_ids_to_lines_without(&mut self) {
+        if self.next_id == 0 { return; }
+        for i in 0..self.attrs.len() {
+            if self.attrs[i].id == 0 {
+                let id = self.fresh_id();
+                self.attrs[i].id = id;
+            }
+        }
     }
 
     /// Replaces paragraph `line`'s attributes, as [`Self::set_paragraph_attrs`] does all of them.
     pub fn set_paragraph(&mut self, line: usize, attrs: ParagraphAttrs) {
         self.open_document();
         self.sync_invariants();
-        if let Some(slot) = self.attrs_mut().get_mut(line) {
+        // A soft line is part of its paragraph: it sets the head's, under the head's id.
+        let mut head = line;
+        while head > 0 && self.soft_breaks.binary_search(&(head as u32)).is_ok() { head -= 1; }
+        let attrs = if head == line { attrs } else { attrs.id(self.paragraph(head).id) };
+        if let Some(slot) = self.attrs_mut().get_mut(head) {
             *slot = attrs.clean();
         }
         self.sync_invariants();
+        self.give_ids_to_lines_without();
     }
 
     /// The attributes of the paragraph at the caret, or the selection's first.
@@ -123,13 +186,25 @@ impl TextEdit {
     }
 
     /// Gives every paragraph an edit makes from now on an id: `next`, then the one after it,
-    /// and so on. Paragraphs already there keep the ids they have. 0 turns ids off.
+    /// and so on. Paragraphs already there keep the ids they have; turning ids on (from off) gives
+    /// one to every line that has none in a field whose paragraphs carry attributes, and clears the
+    /// undo history, which holds states from before there were ids (an app that keeps its own
+    /// history, with [`set_history(false)`](Self::set_history), is not affected). 0 turns ids off.
     pub fn set_paragraph_ids(&mut self, next: u64) {
         self.open_document();
+        let was_off = self.next_id == 0;
         self.next_id = next;
         if next != 0 {
+            let had_attrs = !self.attrs.is_empty();
             self.sync_invariants();
             self.attrs_mut();
+            // Turning ids on: a line that has none takes one now. The stored history is from before there were ids: it goes.
+            if was_off && had_attrs {
+                self.give_ids_to_lines_without();
+            }
+            if was_off && (!self.history.undo.is_empty() || !self.history.redo.is_empty() || self.group.is_open()) {
+                self.clear_history();
+            }
         }
     }
 
@@ -140,8 +215,11 @@ impl TextEdit {
     }
 
     /// Replaces the selection with a locked atom on a line of its own: `label` as its text,
-    /// `height` points tall, with the next paragraph id. One edit. Line breaks in `label`
-    /// become spaces; an empty label inserts nothing.
+    /// `height` points tall. The atom is always a new paragraph: a fresh id (never a paragraph's it
+    /// stands in), the default attributes and the Paragraph block, whatever the position (the end of a
+    /// line, a soft line's start, over a selection, on an empty line), and the typing style is
+    /// cleared. It goes in as a one-atom fragment does through [`paste_fragment`](Self::paste_fragment): the same rules
+    /// apply over every selection. One edit. Line breaks in `label` become spaces; an empty label inserts nothing.
     pub fn insert_atom(&mut self, label: &str, height: f32) {
         self.open_document();
         let label: String = label.chars().map(|c| if c.is_control() || matches!(c, '\u{2028}' | '\u{2029}') { ' ' } else { c }).collect();
@@ -149,25 +227,21 @@ impl TextEdit {
             return;
         }
         self.sync_invariants();
+        self.attrs_mut(); // (any field: it is attributed from here, and a plain one still gets the atom on a line of its own)
+        // One code path with a pasted atom: a one-atom fragment (a new paragraph: default attributes, the Paragraph block) goes
+        // through `paste_fragment`, so the same rules apply over every selection. The label goes in with no style.
+        let mut frag = TextEdit::from_parts(label, Vec::new(), vec![Block::Paragraph]);
+        frag.set_paragraph_attrs(vec![ParagraphAttrs::default().atom(height)]);
         self.undo_group(|e| {
-            let (a, b) = e.range();
-            e.replace((a, b), "", EditKind::Other);
-            let at = e.range().0;
-            let line = e.line_of_byte(at);
-            let range = e.line_range(line);
-            // On a line of its own: a break before it unless the line starts here, and one
-            // after it unless the line ends here.
-            let (lead, trail) = (at > range.start || e.paragraph(line).atom.is_some(), at < range.end);
-            let text = format!("{}{label}{}", if lead { "\n" } else { "" }, if trail { "\n" } else { "" });
-            e.replace((at, at), &text, EditKind::Other);
-            let line = line + usize::from(lead);
-            let id = if e.paragraph(line).id != 0 { e.paragraph(line).id } else { e.fresh_id() };
-            let mut attrs = e.paragraph(line);
-            (attrs.atom, attrs.id) = (Some(height), id);
-            let attrs = attrs.clean();
-            if let Some(slot) = e.attrs_mut().get_mut(line) { *slot = attrs; }
-            let end = at + usize::from(lead) + label.len();
-            (e.anchor, e.focus) = (end, end);
+            e.typing = Typing::Inherited;
+            e.paste_fragment_with(frag, "", paste_shape::PasteOpts { always_insert: true, as_rich: true });
+            e.typing = Typing::Inherited;
+            // The caret ends at the atom's end, not behind the break a paste leaves after it.
+            let line = e.line_of_byte(e.focus);
+            if line > 0 && e.paragraph(line - 1).atom.is_some() && e.focus == e.line_range(line).start {
+                let end = e.line_range(line - 1).end;
+                (e.anchor, e.focus) = (end, end);
+            }
         });
     }
 
@@ -281,15 +355,43 @@ impl TextEdit {
         }
     }
 
+    /// `attrs` for a paragraph of text. What was an atom takes a new id with it: an atom's id
+    /// names what the app keeps for the atom, and never text.
+    fn as_text(&mut self, attrs: ParagraphAttrs) -> ParagraphAttrs {
+        if attrs.atom.is_none() { return attrs; }
+        let mut text = attrs;
+        (text.atom, text.id) = (None, self.fresh_id());
+        text
+    }
+
     /// The attributes after an edit that merged lines `la..=lb` into one and added `added`
     /// lines after it. The merged line keeps `la`'s attributes (`lb`'s with `take_b`), each
     /// added line takes a copy with a new id, and an atom stays only on a line `kept` names.
+    /// Text on a line that was an atom's is a new paragraph, with a new id.
+    /// `edge`: `Front` says the edit inserted at the start of line `la`: the added lines come first, new
+    /// paragraphs (copies of the line's style for Return), and the line keeps its attributes. `Tail`
+    /// says the edit ended at the start of line `lb`, which stays as it was after the added lines.
     /// An atom `kept.tail` names is the last line the edit leaves and keeps its own attributes
     /// there, so the merged line never takes them too: no id ends up on two paragraphs.
-    pub(super) fn splice_attrs(&mut self, la: usize, lb: usize, added: usize, take_b: bool, kept: Kept) {
+    pub(super) fn splice_attrs(&mut self, la: usize, lb: usize, added: usize, take_b: bool, kept: Kept, edge: Edge) {
         if self.attrs.is_empty() { return; }
         let get = |attrs: &[ParagraphAttrs], i: usize| attrs.get(i).copied().unwrap_or_default();
         let (first, last) = (get(&self.attrs, la), get(&self.attrs, lb));
+        if let Edge::Front { copy } = edge {
+            // An insertion at the line's start: the added lines come first, the line itself last.
+            let line = if take_b { last } else { first };
+            let mut lines = Vec::with_capacity(added + 1);
+            for _ in 0..added {
+                let id = self.fresh_id();
+                // Return copies the line the selection starts on, whole, not a mix of two lines'.
+                lines.push(if copy { split_attrs(first, id) } else { ParagraphAttrs::default().id(id) });
+            }
+            // An atom the edit took gives its line to text, under a new id.
+            lines.push(self.as_text(line));
+            let end = (lb + 1).min(self.attrs.len());
+            self.attrs.splice(la.min(end)..end, lines);
+            return;
+        }
         let survivor = if kept.head {
             first
         } else if kept.tail {
@@ -300,24 +402,33 @@ impl TextEdit {
             first
         };
         let mut lines = Vec::with_capacity(added + 1);
-        lines.push(if kept.head || (kept.tail && added == 0) { survivor } else { without_atom(survivor) });
+        lines.push(if kept.head || (kept.tail && added == 0) {
+            survivor
+        } else if kept.tail && la == lb {
+            // The atom an insertion pushed down a line took its attributes with it: the line
+            // the typed text is on is a new paragraph.
+            let id = self.fresh_id();
+            if matches!(edge, Edge::Inside { copy: true, .. }) { split_attrs(last, id) } else { ParagraphAttrs::default().id(id) }
+        } else {
+            self.as_text(survivor)
+        });
         for k in 1..=added {
             let tail = k == added;
-            let own = if tail && kept.tail {
+            let own = if tail && (kept.tail || edge == Edge::Tail) {
                 last
             } else if tail && kept.head && lb > la {
-                without_atom(last)
+                self.as_text(last)
             } else {
                 let id = self.fresh_id();
-                split_attrs(lines[0], id)
+                match edge {
+                    // What is left of the line goes on in its attributes; any other new
+                    // paragraph of pasted or typed text has the defaults.
+                    Edge::Inside { copy: false, rest } if !(tail && rest) => ParagraphAttrs::default().id(id),
+                    Edge::Tail => ParagraphAttrs::default().id(id),
+                    _ => split_attrs(lines[0], id),
+                }
             };
             lines.push(own);
-        }
-        // The atom an insertion pushed down a line took its attributes with it: the line the
-        // typed text is on is a new paragraph.
-        if kept.tail && added > 0 && la == lb {
-            let id = self.fresh_id();
-            lines[0] = split_attrs(last, id);
         }
         let end = (lb + 1).min(self.attrs.len());
         self.attrs.splice(la.min(end)..end, lines);
@@ -335,3 +446,27 @@ mod atom_edge_tests;
 #[cfg(test)]
 #[path = "fuzz_tests.rs"]
 mod fuzz_tests;
+
+#[cfg(test)]
+#[path = "kept_paste_tests.rs"]
+mod kept_paste_tests;
+
+#[cfg(test)]
+#[path = "path_agreement_tests.rs"]
+mod path_agreement_tests;
+
+#[cfg(test)]
+#[path = "path_agreement_edge_tests.rs"]
+mod path_agreement_edge_tests;
+
+#[cfg(test)]
+#[path = "path_agreement_report_tests.rs"]
+mod path_agreement_report_tests;
+
+#[cfg(test)]
+#[path = "soft_line_tests.rs"]
+mod soft_line_tests;
+
+#[cfg(test)]
+#[path = "soft_line_edit_tests.rs"]
+mod soft_line_edit_tests;

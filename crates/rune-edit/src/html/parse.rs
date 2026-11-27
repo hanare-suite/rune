@@ -1,7 +1,7 @@
 //! Safe HTML fragment parser into [`TextEdit`].
 
-use super::{ListKind, color::parse_font_color, decode_entities, extract_attr, is_safe_href, parse_style_marks};
-use crate::{Block, MAX_LIST_LEVEL, Mark, MarkRange, TextEdit};
+use super::{ListKind, block_align, block_atom, block_style, color::parse_font_color, decode_entities, extract_attr, is_safe_href, parse_style_marks};
+use crate::{Baseline, Block, HtmlStyle, MAX_LIST_LEVEL, Mark, MarkRange, ParagraphAlign, ParagraphAttrs, TextEdit};
 
 const MAX_DEPTH: usize = 512;
 
@@ -17,8 +17,10 @@ struct TagFrame {
     suppressed_marks: Vec<Mark>,
 }
 
-pub(crate) fn parse_html(html: &str) -> TextEdit {
+pub(crate) fn parse_html(html: &str, styles: &[HtmlStyle]) -> TextEdit {
     let mut text = String::new();
+    // Each line's attributes, as far as a block element set them.
+    let mut line_attrs: Vec<ParagraphAttrs> = Vec::new();
     let mut marks: Vec<MarkRange> = Vec::new();
     let mut blocks: Vec<Block> = vec![Block::Paragraph];
     let mut soft_breaks: Vec<u32> = Vec::new();
@@ -251,6 +253,7 @@ pub(crate) fn parse_html(html: &str) -> TextEdit {
                             blk,
                             in_pre,
                         );
+                        mark_block(&mut line_attrs, blocks.len(), block_align(attrs), block_atom(attrs));
                     }
                     "blockquote" => {
                         in_quote += 1;
@@ -266,6 +269,7 @@ pub(crate) fn parse_html(html: &str) -> TextEdit {
                             blk,
                             in_pre,
                         );
+                        mark_block(&mut line_attrs, blocks.len(), block_align(attrs), block_atom(attrs));
                     }
                     "pre" => {
                         in_pre += 1;
@@ -280,6 +284,7 @@ pub(crate) fn parse_html(html: &str) -> TextEdit {
                             Block::Code,
                             in_pre,
                         );
+                        mark_block(&mut line_attrs, blocks.len(), block_align(attrs), block_atom(attrs));
                     }
                     "p" | "div" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
                         let blk = current_default_block(&list_stack, in_pre, in_quote, in_li);
@@ -294,6 +299,17 @@ pub(crate) fn parse_html(html: &str) -> TextEdit {
                             blk,
                             in_pre,
                         );
+                        // Inside a list item the item's own line keeps what it has.
+                        let (style, align, atom) = (block_style(styles, &tag, attrs), block_align(attrs), block_atom(attrs));
+                        if style.is_some() || align.is_some() || atom.is_some() {
+                            line_attrs.resize(blocks.len(), ParagraphAttrs::default());
+                            let slot = &mut line_attrs[blocks.len() - 1];
+                            slot.style = style.unwrap_or(slot.style);
+                            slot.align = align.unwrap_or(slot.align);
+                            if let Some((id, height)) = atom {
+                                *slot = slot.atom(height).id(id);
+                            }
+                        }
                     }
                     _ => {}
                 }
@@ -301,6 +317,10 @@ pub(crate) fn parse_html(html: &str) -> TextEdit {
                 let mut to_add = Vec::new();
                 let mut to_suppress = Vec::new();
                 match tag.as_str() {
+                    // A heading the field has a style for is that style, not bold text.
+                    "h1" | "h2" | "h3" | "h4" | "h5" | "h6" if block_style(styles, &tag, attrs).is_some() => {}
+                    "sub" => to_add.push(Mark::Baseline(Baseline::Sub)),
+                    "sup" => to_add.push(Mark::Baseline(Baseline::Super)),
                     "b" | "strong" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => to_add.push(Mark::Bold),
                     "i" | "em" => to_add.push(Mark::Italic),
                     "u" | "ins" => to_add.push(Mark::Underline),
@@ -572,5 +592,31 @@ pub(crate) fn parse_html(html: &str) -> TextEdit {
         blocks.pop();
     }
 
-    TextEdit::from_parsed_html(text, marks, blocks, soft_breaks)
+    let mut edit = TextEdit::from_parsed_html(text, marks, blocks, soft_breaks.clone());
+    // A line `<br>` made is part of the paragraph before it.
+    line_attrs.resize(edit.blocks().len(), ParagraphAttrs::default());
+    for &line in &soft_breaks {
+        if let Some(i) = (line as usize).checked_sub(1).filter(|_| (line as usize) < line_attrs.len()) {
+            // A soft line has its paragraph's attributes, but is no atom and has no id of its own.
+            line_attrs[i + 1] = line_attrs[i];
+            line_attrs[i + 1].atom = None;
+            line_attrs[i + 1].id = 0;
+        }
+    }
+    if line_attrs.iter().any(|a| *a != ParagraphAttrs::default()) {
+        edit.set_paragraph_attrs(line_attrs);
+    }
+    edit
+}
+
+/// What a `<li>`, `<blockquote>` or `<pre>` says of its line: its alignment, and the atom (its id and
+/// height) it is, as the app's own copy writes it.
+fn mark_block(line_attrs: &mut Vec<ParagraphAttrs>, lines: usize, align: Option<ParagraphAlign>, atom: Option<(u64, f32)>) {
+    if align.is_none() && atom.is_none() { return; }
+    line_attrs.resize(lines, ParagraphAttrs::default());
+    let slot = &mut line_attrs[lines - 1];
+    slot.align = align.unwrap_or(slot.align);
+    if let Some((id, height)) = atom {
+        *slot = slot.atom(height).id(id);
+    }
 }

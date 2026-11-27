@@ -1,0 +1,1 @@
+- **`PillChip` has a public `stand_in` field**, which a text field sets for a pill whose label is the object character and that has an icon (it draws as the icon alone, see the object-pill entry). Apps that build a `PillChip` as a literal add `stand_in: false`.

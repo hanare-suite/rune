@@ -26,6 +26,12 @@ impl TextEdit {
     /// Synchronize `blocks`, `soft_breaks`, and `marks` with `self.text`.
     #[doc(hidden)]
     pub fn sync_invariants(&mut self) {
+        self.sync_inner(true);
+    }
+
+    /// [`sync_invariants`](Self::sync_invariants), with or without the soft lines mirroring their heads: an edit
+    /// that is not done yet (a paste that has its atoms to put in) mirrors when it is.
+    pub(super) fn sync_inner(&mut self, mirror: bool) {
         self.anchor = Self::clamp_char_boundary(&self.text, self.anchor);
         self.focus = Self::clamp_char_boundary(&self.text, self.focus);
         if self.secure {
@@ -50,9 +56,34 @@ impl TextEdit {
             }
         }
         self.sync_attrs(line_count);
+        // An atom has a label: a line with no text is no atom (it takes an id of its own, as text does).
+        if self.has_atoms() {
+            let empty: Vec<usize> = self.text.split('\n').enumerate().filter(|(i, l)| l.is_empty() && self.attrs.get(*i).is_some_and(|a| a.atom.is_some())).map(|(i, _)| i).collect();
+            for i in empty {
+                let id = self.fresh_id();
+                self.attrs[i].atom = None;
+                self.attrs[i].id = id;
+                self.note_paragraphs(i..i + 1);
+            }
+        }
         self.soft_breaks.sort_unstable();
         self.soft_breaks.dedup();
-        self.soft_breaks.retain(|&idx| idx > 0 && (idx as usize) < line_count);
+        // An atom is never a soft line and never has one: whatever edit left it beside one.
+        let attrs = &self.attrs;
+        let plain = |i: usize| attrs.get(i).is_none_or(|a| a.atom.is_none());
+        let mut dropped: Vec<usize> = Vec::new();
+        self.soft_breaks.retain(|&idx| {
+            let line = idx as usize;
+            if idx == 0 || line >= line_count { return false; }
+            let keep = plain(line) && plain(line - 1);
+            if !keep { dropped.push(line); }
+            keep
+        });
+        // A line whose softness went with an edit is a paragraph change, wherever it is.
+        for line in dropped {
+            self.note_paragraphs(line..line + 1);
+        }
+        if mirror { self.mirror_soft_lines(); }
         self.normalize_marks();
         self.snap_to_pills();
         let anchor_line = self.line_of_byte(self.anchor);
@@ -62,6 +93,40 @@ impl TextEdit {
             let bits = self.allowed_marks.unwrap_or(Self::DEFAULT_ALLOWED_MARKS);
             marks.retain(|m| bits & 1 << m.kind_order() != 0);
         }
+    }
+
+    /// A soft line is part of its paragraph: it has its head's (the hard line it follows) block, style, alignment
+    /// and indents, so under a code head it is code, and under any other it is not, whatever edit joined or moved it.
+    /// Cheap: it looks at the soft lines only.
+    pub(super) fn mirror_soft_lines(&mut self) -> bool {
+        let mut mirrored: Vec<usize> = Vec::new();
+        let mut blocks_changed = false;
+        for k in 0..self.soft_breaks.len() {
+            let i = self.soft_breaks[k] as usize;
+            if i == 0 || i >= self.blocks.len() { continue; }
+            // (A soft line beside an atom is about to go: sync drops it, and it keeps what it was.)
+            if self.attrs.get(i - 1).is_some_and(|a| a.atom.is_some()) || self.attrs.get(i).is_some_and(|a| a.atom.is_some()) { continue; }
+            let mut changed = false;
+            if self.blocks[i] != self.blocks[i - 1] {
+                self.blocks[i] = self.blocks[i - 1];
+                changed = true;
+                blocks_changed = true;
+            }
+            if i < self.attrs.len() {
+                let head = self.attrs[i - 1];
+                let own = &mut self.attrs[i];
+                let (was, now) = ((own.style, own.align, own.indent.to_bits(), own.first_line_indent.to_bits()), (head.style, head.align, head.indent.to_bits(), head.first_line_indent.to_bits()));
+                if was != now {
+                    (own.style, own.align, own.indent, own.first_line_indent) = (head.style, head.align, head.indent, head.first_line_indent);
+                    changed = true;
+                }
+            }
+            if changed { mirrored.push(i); }
+        }
+        for line in mirrored {
+            self.note_paragraphs(line..line + 1);
+        }
+        blocks_changed
     }
 
     pub(super) fn normalize_marks(&mut self) {
@@ -96,6 +161,7 @@ impl TextEdit {
             }
             // One pass: cut each mark around the (sorted, disjoint) code ranges it overlaps.
             let mut out = Vec::with_capacity(self.marks.len());
+            let mut stripped: Vec<Range<usize>> = Vec::new();
             for m in self.marks.drain(..) {
                 let mut start = m.start;
                 let first = code_ranges.partition_point(|cr| cr.end <= start);
@@ -103,6 +169,7 @@ impl TextEdit {
                     if cr.start >= m.end {
                         break;
                     }
+                    stripped.push(m.start.max(cr.start)..m.end.min(cr.end));
                     if start < cr.start {
                         out.push(MarkRange { start, end: cr.start, mark: m.mark.clone() });
                     }
@@ -113,6 +180,10 @@ impl TextEdit {
                 }
             }
             self.marks = out;
+            // Marks a code line cannot hold went with the edit: they are a change too.
+            for r in stripped {
+                self.note_marks(r);
+            }
         }
 
         // Merge overlapping or adjacent ranges of the same mark kind.
@@ -226,7 +297,19 @@ impl TextEdit {
         }
         let line_start = self.line_range(line_idx).start;
         if pos <= line_start {
-            return Vec::new();
+            // In a document the caret before a paragraph's first character takes that
+            // character's marks, as a word processor's does, but a link's: text typed before a link is not in it.
+            // Any other field starts a line plain.
+            if !self.attributed() {
+                return Vec::new();
+            }
+            let mut out = Vec::new();
+            for m in &self.marks {
+                if m.start <= pos && pos < m.end && !m.mark.is_pill() && !matches!(m.mark, Mark::Link(_)) && !out.iter().any(|existing: &Mark| existing.same_kind(&m.mark)) {
+                    out.push(m.mark.clone());
+                }
+            }
+            return out;
         }
         let mut out = Vec::new();
         for m in &self.marks {
@@ -430,8 +513,10 @@ impl TextEdit {
         }
         self.marks.push(MarkRange { start: a, end: b, mark });
         self.typing = Typing::Inherited;
+        let log_at = self.changes.len();
         self.normalize_marks();
-        if self.marks != was { self.note_marks(a..b); }
+        // (Marks a code line cannot hold are no change where the command changed none.)
+        if self.marks != was { self.note_marks(a..b); } else { self.changes.truncate(log_at); }
         self.record_change(before, EditKind::Other);
     }
 
@@ -469,8 +554,10 @@ impl TextEdit {
         }
         self.marks = out;
         self.typing = Typing::Inherited;
+        let log_at = self.changes.len();
         self.normalize_marks();
-        if self.marks != was { self.note_marks(a..b); }
+        // (Marks a code line cannot hold are no change where the command changed none.)
+        if self.marks != was { self.note_marks(a..b); } else { self.changes.truncate(log_at); }
         self.record_change(before, EditKind::Other);
     }
 
@@ -510,7 +597,8 @@ impl TextEdit {
         }
     }
 
-    /// Line index range `first_line..=last_line` covered by the current selection.
+    /// Line index range `first_line..=last_line` the commands that format paragraphs act on: the selection's, widened to
+    /// whole paragraphs (a soft line is part of the paragraph its head starts).
     pub(super) fn selected_line_range(&self) -> (usize, usize) {
         let (a, b) = self.range();
         let first = self.line_of_byte(a);
@@ -519,7 +607,11 @@ impl TextEdit {
         } else {
             self.line_of_byte(b)
         };
-        (first, last.max(first))
+        // Whole paragraphs: from the head of the first line's soft group to the last soft line of the last one's.
+        let (mut first, mut last) = (first, last.max(first));
+        while first > 0 && self.soft_breaks.binary_search(&(first as u32)).is_ok() { first -= 1; }
+        while self.soft_breaks.binary_search(&((last + 1) as u32)).is_ok() { last += 1; }
+        (first, last)
     }
 
     /// The [`Block`] attribute of the paragraph at the caret or selection.
@@ -601,7 +693,7 @@ impl TextEdit {
     }
 
     /// Increase list nesting level (`Tab`) for list items in the selection, up to [`MAX_LIST_LEVEL`].
-    /// Returns `true` if the selection was inside a list item.
+    /// Returns `true` if a list item was indented (not at the deepest level already).
     pub fn indent_list(&mut self) -> bool {
         if self.secure || self.is_single_line() {
             return false;
@@ -621,13 +713,14 @@ impl TextEdit {
                 *slot = slot.with_level((lvl + 1).min(MAX_LIST_LEVEL));
             }
         }
-        if self.blocks != was { self.note_paragraphs(first..last + 1); }
+        let changed = self.blocks != was;
+        if changed { self.note_paragraphs(first..last + 1); }
         self.record_change(before, EditKind::Other);
-        true
+        changed
     }
 
     /// Decrease list nesting level (`Shift+Tab`) for list items in the selection.
-    /// Returns `true` if the selection was inside a list item.
+    /// Returns `true` if a list item was outdented (not at level 0 already).
     pub fn outdent_list(&mut self) -> bool {
         if self.secure || self.is_single_line() {
             return false;
@@ -647,9 +740,10 @@ impl TextEdit {
                 *slot = slot.with_level(lvl.saturating_sub(1));
             }
         }
-        if self.blocks != was { self.note_paragraphs(first..last + 1); }
+        let changed = self.blocks != was;
+        if changed { self.note_paragraphs(first..last + 1); }
         self.record_change(before, EditKind::Other);
-        true
+        changed
     }
 
     /// Return the current selection as plain text, replacing each wholly contained

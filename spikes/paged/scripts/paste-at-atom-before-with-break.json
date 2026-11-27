@@ -1,0 +1,30 @@
+{
+ "events": [
+  {
+   "t": 0.2,
+   "type": "key",
+   "name": "Right"
+  },
+  {
+   "t": 0.45,
+   "type": "key",
+   "name": "Left"
+  },
+  {
+   "t": 0.7,
+   "type": "mark",
+   "name": "at"
+  },
+  {
+   "t": 0.95,
+   "type": "paste",
+   "text": "Xy\nL1\n",
+   "html": "<p><b>X</b>y</p><ul><li>L1</li></ul><p></p>"
+  },
+  {
+   "t": 1.2,
+   "type": "mark",
+   "name": "pasted"
+  }
+ ]
+}

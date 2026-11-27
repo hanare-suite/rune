@@ -141,6 +141,10 @@ pub struct PillChip {
     pub ring: Option<(Color, f32)>,
     pub radius: Option<f32>,
     pub bare: Option<Box<BareIcon>>,
+    /// The label is the object character alone, which stands for something that is no text:
+    /// the icon is all the chip holds. The font's glyph for the character is not drawn and
+    /// takes no room.
+    pub stand_in: bool,
 }
 
 impl PillChip {
@@ -202,6 +206,11 @@ pub struct PillMetrics {
 impl PillMetrics {
     pub fn new(size: f32) -> Self {
         Self { margin: (size * 0.12).max(1.5), pad: (size * 0.36).max(3.0), icon: (size * 0.95).round(), icon_gap: (size * 0.22).max(2.0) }
+    }
+
+    /// Room before a label that takes none itself, its icon standing in for it.
+    pub fn lead_alone(&self) -> f32 {
+        self.margin + self.pad + self.icon
     }
 
     /// Room before the label, inside the chip and out.

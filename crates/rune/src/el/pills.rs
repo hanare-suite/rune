@@ -50,6 +50,7 @@ impl El {
                 ring: st.ring,
                 radius: st.radius,
                 bare: None,
+                stand_in: false,
             });
         }
         t.spans = with_pill_colors(&t.spans, &t.cold.pills);
@@ -98,6 +99,7 @@ impl El {
             ring: style.ring,
             radius: style.radius,
             bare: None,
+            stand_in: false,
         });
         t.spans = with_pill_colors(&t.spans, &t.cold.pills);
         self
@@ -136,7 +138,7 @@ impl El {
         let at = t.cold.pills.partition_point(|p| p.start < start);
         let InlineIcon { icon, image, size, gap, radius, color } = icon;
         let bare = Some(Box::new(BareIcon { size, gap, radius, image, replace: None }));
-        t.cold.pills.insert(at, PillChip { start, end, icon, image: None, bg: None, fg: color, ring: None, radius: None, bare });
+        t.cold.pills.insert(at, PillChip { start, end, icon, image: None, bg: None, fg: color, ring: None, radius: None, bare, stand_in: false });
         self
     }
 
@@ -174,7 +176,7 @@ impl El {
         let InlineImage { pixels, width, ascent, descent, bleed } = image;
         let replace = Some(Replace { width, ascent, descent, bleed });
         let bare = Some(Box::new(BareIcon { size: 0.0, gap: 0.0, radius: 0.0, image: Some(pixels), replace }));
-        t.cold.pills.insert(at, PillChip { start, end, icon: None, image: None, bg: None, fg: None, ring: None, radius: None, bare });
+        t.cold.pills.insert(at, PillChip { start, end, icon: None, image: None, bg: None, fg: None, ring: None, radius: None, bare, stand_in: false });
         self
     }
 
@@ -344,7 +346,8 @@ impl El {
                 } else {
                     st.icon.or_else(|| inp.pill_icon.as_ref().and_then(|f| f(id)))
                 };
-                crate::text::PillChip { start, end, icon, image, bg: st.bg, fg: st.fg, ring: st.ring, radius: st.radius, bare: None }
+                let stand_in = icon.is_some() && inp.edit.pill_is_object(id);
+                crate::text::PillChip { start, end, icon, image, bg: st.bg, fg: st.fg, ring: st.ring, radius: st.radius, bare: None, stand_in }
             })
             .collect();
     }

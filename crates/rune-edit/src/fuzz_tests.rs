@@ -6,6 +6,9 @@
 //! 3. Nothing outside the bytes the changes name is different: not a paragraph's attributes,
 //!    not its block, not a mark.
 //! 4. The field's own history stays empty.
+//! 5. A paragraph that is not an atom never carries an id that was an atom's earlier: an app
+//!    that keys an atom's content by id would take the text for the atom.
+//! 6. A rich paste over selected atoms leaves the lines a plain paste of the same text does.
 
 use std::collections::BTreeSet;
 
@@ -17,10 +20,11 @@ pub(super) struct Seen {
     attrs: Vec<ParagraphAttrs>,
     blocks: Vec<Block>,
     marks: Vec<MarkRange>,
+    soft: Vec<u32>,
 }
 
 pub(super) fn seen(e: &TextEdit) -> Seen {
-    Seen { text: e.text.clone(), attrs: e.paragraph_attrs(), blocks: e.blocks().to_vec(), marks: e.marks().to_vec() }
+    Seen { text: e.text.clone(), attrs: e.paragraph_attrs(), blocks: e.blocks().to_vec(), marks: e.marks().to_vec(), soft: e.soft_breaks().to_vec() }
 }
 
 /// Each line's first byte and the byte of the line break that ends it.
@@ -76,7 +80,9 @@ pub(super) fn check(before: &Seen, e: &TextEdit, changes: &[EditChange]) -> Resu
     }
     let mut ids: Vec<u64> = now.attrs.iter().map(|a| a.id).collect();
     ids.sort_unstable();
-    if ids.contains(&0) || ids.windows(2).any(|w| w[0] == w[1]) {
+    // Ids are the field's when it numbers paragraphs: a document without ids has none to be unique.
+    let numbered = before.attrs.iter().any(|a| a.id != 0);
+    if numbered && (ids.contains(&0) || ids.windows(2).any(|w| w[0] == w[1])) {
         return Err(format!("ids {:?}", now.attrs.iter().map(|a| a.id).collect::<Vec<_>>()));
     }
     if e.history_len() != (0, 0) {
@@ -109,7 +115,36 @@ pub(super) fn check(before: &Seen, e: &TextEdit, changes: &[EditChange]) -> Resu
     if marked(&before.marks, old_hi, before.text.len()) != marked(&now.marks, new_hi, now.text.len()) {
         return Err(format!("marks after byte {old_hi} (now {new_hi}) went from {:?} to {:?}", before.marks, now.marks));
     }
+    // A line whose paragraph the changes leave alone is as soft as it was.
+    for i in 0..head {
+        if before.soft.contains(&(i as u32)) != now.soft.contains(&(i as u32)) {
+            return Err(format!("line {i}, before the change, was soft {:?} and is {:?}", before.soft, now.soft));
+        }
+    }
+    for k in 1..=tail {
+        let (i, j) = (old_lines.len() - k, new_lines.len() - k);
+        if before.soft.contains(&(i as u32)) != now.soft.contains(&(j as u32)) {
+            return Err(format!("line {i}, after the change, was soft {:?} and is {:?} (now {j})", before.soft, now.soft));
+        }
+    }
     Ok(())
+}
+
+/// Checks that no paragraph of text carries an id in `atoms`, every id an atom had so far,
+/// and adds the ids of the atoms `e` holds now.
+pub(super) fn atom_ids_stay_atoms(atoms: &mut BTreeSet<u64>, e: &TextEdit) -> Result<(), String> {
+    let attrs = e.paragraph_attrs();
+    if let Some(a) = attrs.iter().find(|a| a.atom.is_none() && atoms.contains(&a.id)) {
+        return Err(format!("id {} was an atom's and is now on text: {:?}", a.id, attrs.iter().map(|a| (a.id, a.atom.is_some())).collect::<Vec<_>>()));
+    }
+    atoms.extend(attrs.iter().filter(|a| a.atom.is_some()).map(|a| a.id));
+    Ok(())
+}
+
+/// Whether the selection is one or more atoms whole: from the start of one to the end of one.
+fn selects_atoms(e: &TextEdit) -> bool {
+    let (a, b) = e.range();
+    a < b && e.atom_at(a).is_some_and(|(start, _)| start == a) && e.atom_at(b).is_some_and(|(_, end)| end == b)
 }
 
 struct Rng(u64);
@@ -144,6 +179,7 @@ fn document() -> TextEdit {
         d.id(6).align(ParagraphAlign::Justified).indent(12.0, 6.0), d.id(7), d.id(8).page_break_before(true),
     ]);
     e.set_paragraph_ids(9);
+    e.set_html_styles([HtmlStyle { style: 1, tag: "h1", class: None }, HtmlStyle { style: 2, tag: "p", class: Some("title") }]);
     e.set_history(false);
     e.take_changes();
     e
@@ -185,7 +221,13 @@ fn step(e: &mut TextEdit, rng: &mut Rng) -> String {
         12 => key(e, Key::Enter, Mods { shift: true, ..none }),
         13..=15 => key(e, Key::Backspace, Mods { alt: rng.one_in(6), cmd: rng.one_in(8), ..none }),
         16 | 17 => key(e, Key::Delete, Mods { alt: rng.one_in(6), ..none }),
-        18 => { let s = rng.pick(&["eingefügt", "zwei\nZeilen", "\nvorn", "hinten\n", "a\n\nb", "\n"]); e.paste(s); format!("paste {s:?}") }
+        18 => {
+            let s = rng.pick(&["eingefügt", "zwei\nZeilen", "\nvorn", "hinten\n", "a\n\nb", "\n"]);
+            let (was, (a, b)) = (e.clone(), e.range());
+            e.paste(s);
+            assert_eq!(super::soft_line_tests::atoms_kept(&was, e, a, b), "", "a paste of {s:?} took an atom");
+            format!("paste {s:?}")
+        }
         19 => {
             let html = rng.pick(&[
                 "<b>fett</b> und <i>schräg</i>",
@@ -193,8 +235,21 @@ fn step(e: &mut TextEdit, rng: &mut Rng) -> String {
                 "<ol><li>eins</li><li>zwei</li></ol><p>danach</p>",
                 "<blockquote>Zitat</blockquote>",
                 "<p>erste</p><p><u>zweite</u></p>",
+                "<h1 style=\"text-align:center\">Titel</h1><p style=\"text-align:right\"><span style=\"color:#c00000;font-size:14pt\">rot</span></p>",
+                "<p class=\"title\">Kopf</p>",
+                "<p align=\"center\">Mitte <sup>hoch</sup></p><p>unten</p>",
             ]);
+            let twin = selects_atoms(e).then(|| {
+                let mut twin = e.clone();
+                twin.paste(&html::parse_html(html, e.html_styles()).rich().text);
+                twin
+            });
+            let (was, (a, b)) = (e.clone(), e.range());
             e.paste_html(html, "");
+            assert_eq!(super::soft_line_tests::atoms_kept(&was, e, a, b), "", "a paste of {html:?} took an atom");
+            if let Some(twin) = twin {
+                assert_eq!(e.text, twin.text, "a rich paste of {html:?} over selected atoms leaves other lines than a plain paste");
+            }
             format!("paste_html {html:?}")
         }
         20 => { e.insert_atom("Block", 24.0); "insert_atom".into() }
@@ -227,12 +282,13 @@ fn random_edits_report_what_they_changed_and_keep_ids_unique() {
     for seed in 1..=SEEDS {
         let mut rng = Rng(seed.wrapping_mul(0x9e37_79b9_7f4a_7c15));
         let mut e = document();
+        let mut atoms = BTreeSet::new();
         for round in 0..ROUNDS {
             let before = seen(&e);
             let (anchor, focus) = (e.anchor, e.focus);
             let what = step(&mut e, &mut rng);
             let changes = e.take_changes();
-            if let Err(why) = check(&before, &e, &changes) {
+            if let Err(why) = check(&before, &e, &changes).and_then(|()| atom_ids_stay_atoms(&mut atoms, &e)) {
                 panic!(
                     "seed {seed}, round {round}: {why}\n after {what} with the selection {anchor}..{focus}\n text before {:?}\n text now    {:?}\n ids before {:?}\n changes {changes:?}",
                     before.text, e.text, before.attrs.iter().map(|a| (a.id, a.atom.is_some())).collect::<Vec<_>>(),
@@ -248,11 +304,17 @@ fn changes_left_untaken_across_edits_still_apply_in_order() {
     for seed in 1..=SEEDS {
         let mut rng = Rng(seed.wrapping_mul(0xd1b5_4a32_d192_ed03));
         let mut e = document();
+        let mut atoms = BTreeSet::new();
         for round in 0..ROUNDS / 4 {
             let before = seen(&e);
-            let what: Vec<String> = (0..1 + rng.below(4)).map(|_| step(&mut e, &mut rng)).collect();
+            let mut ids = Ok(());
+            let what: Vec<String> = (0..1 + rng.below(4)).map(|_| {
+                let what = step(&mut e, &mut rng);
+                ids = std::mem::replace(&mut ids, Ok(())).and_then(|()| atom_ids_stay_atoms(&mut atoms, &e));
+                what
+            }).collect();
             let changes = e.take_changes();
-            if let Err(why) = check(&before, &e, &changes) {
+            if let Err(why) = check(&before, &e, &changes).and(ids) {
                 panic!("seed {seed}, round {round}: {why}\n after {what:?}\n text before {:?}\n text now    {:?}\n changes {changes:?}", before.text, e.text);
             }
         }

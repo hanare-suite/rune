@@ -163,6 +163,7 @@ pub use layout::rich::RichLayoutOptions;
 pub use layout::rich::TextInput;
 pub use layout::run::Run;
 pub use layout::run::RunLayout;
+pub use layout::shape_style::alias_family;
 #[doc(hidden)]
 pub use layout::span::BareIcon;
 pub use layout::run_marks::Baseline;
