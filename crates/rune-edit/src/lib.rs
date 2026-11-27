@@ -174,8 +174,6 @@ pub struct TextEdit {
     changes: changes::ChangeLog,
     /// How paragraph styles read and write as HTML ([`TextEdit::set_html_styles`]).
     html_styles: Arc<[HtmlStyle]>,
-    /// Set while `insert_atom` pastes its atom: a paste that holds what the selection holds still replaces it.
-    replace_always: bool,
 }
 
 impl std::fmt::Debug for TextEdit {
@@ -328,7 +326,6 @@ impl TextEdit {
             history_off: false,
             changes: changes::ChangeLog::default(),
             html_styles: Arc::default(),
-            replace_always: false,
         }
     }
 

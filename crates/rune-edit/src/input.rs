@@ -558,7 +558,11 @@ impl TextEdit {
     /// those take their text from `plain` line for line (where its lines are the fragment's, or are once its empty
     /// lines and its atoms' labels are left out; otherwise they keep the fragment's collapsed text) and the others
     /// keep the fragment's formatting.
-    pub fn paste_fragment(&mut self, mut frag: TextEdit, plain: &str) -> EditOutcome {
+    pub fn paste_fragment(&mut self, frag: TextEdit, plain: &str) -> EditOutcome {
+        self.paste_fragment_with(frag, plain, paste_shape::PasteOpts::default())
+    }
+
+    pub(super) fn paste_fragment_with(&mut self, mut frag: TextEdit, plain: &str, opts: paste_shape::PasteOpts) -> EditOutcome {
         // The plain text as a field takes it: breaks are line feeds, whichever the clipboard held.
         let plain = &self.sanitize(plain);
         if self.secure {
@@ -588,7 +592,7 @@ impl TextEdit {
             }
             return self.paste(&frag.text);
         }
-        if !self.rich {
+        if !self.rich && !opts.as_rich {
             return self.paste(if plain.is_empty() { frag.text.as_str() } else { plain });
         }
         self.sync_invariants();
@@ -596,7 +600,7 @@ impl TextEdit {
         // Over code it holds it only where the plain text is no other: a foreign paste goes in as its plain text.
         let (ca, cb) = self.range();
         let over_code = (self.line_of_byte(ca)..=self.line_of_byte(cb)).any(|l| self.blocks.get(l) == Some(&Block::Code));
-        if (!over_code || plain.is_empty() || plain.as_str() == &self.text[ca..cb]) && self.holds_selection(&frag) {
+        if (!over_code || plain.is_empty() || plain.as_str() == &self.text[ca..cb]) && !opts.always_insert && self.holds_selection(&frag) {
             self.anchor = self.range().1;
             self.focus = self.anchor;
             self.cancel_composition();

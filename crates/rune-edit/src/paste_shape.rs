@@ -2,6 +2,15 @@
 
 use super::*;
 
+/// How a paste differs from the default (see [`TextEdit::paste_fragment_with`](TextEdit)).
+#[derive(Clone, Copy, Default)]
+pub(super) struct PasteOpts {
+    /// A paste that holds what the selection holds still replaces it.
+    pub(super) always_insert: bool,
+    /// The field is treated as rich for this paste.
+    pub(super) as_rich: bool,
+}
+
 impl TextEdit {
     /// The line a paste over the selection lands in, the one what is left of the selection's lines
     /// joins: the later line when the selection takes the earlier one whole, from its start into a
@@ -231,7 +240,7 @@ impl TextEdit {
     /// block and its attributes, ids aside.
     pub(super) fn holds_selection(&self, frag: &TextEdit) -> bool {
         let (a, b) = self.range();
-        if self.replace_always || a == b || frag.text != self.text[a..b] { return false; }
+        if a == b || frag.text != self.text[a..b] { return false; }
         // (A mark that spans a line break holds the break's byte or not, as the copy says: the breaks are left out.)
         let bytes = |marks: &[MarkRange], text: &str, from: usize, to: usize| -> std::collections::BTreeSet<(usize, String)> {
             marks.iter().flat_map(|m| (m.start.max(from)..m.end.min(to)).filter(|&i| text.as_bytes()[i] != b'\n').map(move |i| (i - from, format!("{:?}", m.mark)))).collect()

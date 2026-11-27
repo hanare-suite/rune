@@ -234,10 +234,7 @@ impl TextEdit {
         frag.set_paragraph_attrs(vec![ParagraphAttrs::default().atom(height)]);
         self.undo_group(|e| {
             e.typing = Typing::Inherited;
-            let rich = std::mem::replace(&mut e.rich, true);
-            e.replace_always = true;
-            e.paste_fragment(frag, "");
-            (e.rich, e.replace_always) = (rich, false);
+            e.paste_fragment_with(frag, "", paste_shape::PasteOpts { always_insert: true, as_rich: true });
             e.typing = Typing::Inherited;
             // The caret ends at the atom's end, not behind the break a paste leaves after it.
             let line = e.line_of_byte(e.focus);
