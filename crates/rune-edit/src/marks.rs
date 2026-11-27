@@ -56,6 +56,16 @@ impl TextEdit {
             }
         }
         self.sync_attrs(line_count);
+        // An atom has a label: a line with no text is no atom (it takes an id of its own, as text does).
+        if self.has_atoms() {
+            let empty: Vec<usize> = self.text.split('\n').enumerate().filter(|(i, l)| l.is_empty() && self.attrs.get(*i).is_some_and(|a| a.atom.is_some())).map(|(i, _)| i).collect();
+            for i in empty {
+                let id = self.fresh_id();
+                self.attrs[i].atom = None;
+                self.attrs[i].id = id;
+                self.note_paragraphs(i..i + 1);
+            }
+        }
         self.soft_breaks.sort_unstable();
         self.soft_breaks.dedup();
         // An atom is never a soft line and never has one: whatever edit left it beside one.

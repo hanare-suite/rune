@@ -499,7 +499,8 @@ impl TextEdit {
     /// block is code whatever the HTML says: plain text, with the whitespace of `plain`. Pills
     /// (`<span data-pill="id">`) paste as their plain labels: a field restores them only from
     /// its app's own copies, and an app's paste hook can with
-    /// [`paste_html_with_pills`](Self::paste_html_with_pills).
+    /// [`paste_html_with_pills`](Self::paste_html_with_pills). An atom of the HTML is its label as text too: this is the
+    /// path for a foreign clipboard, and an app pastes its own atoms through [`paste_fragment`](Self::paste_fragment).
     pub fn paste_html(&mut self, html_str: &str, plain: &str) -> EditOutcome {
         self.paste_rich(html_str, plain, false)
     }
@@ -592,7 +593,10 @@ impl TextEdit {
         }
         self.sync_invariants();
         // A paste that holds what the selection holds changes nothing, as typing it does not (beside code too).
-        if self.holds_selection(&frag) {
+        // Over code it holds it only where the plain text is no other: a foreign paste goes in as its plain text.
+        let (ca, cb) = self.range();
+        let over_code = (self.line_of_byte(ca)..=self.line_of_byte(cb)).any(|l| self.blocks.get(l) == Some(&Block::Code));
+        if (!over_code || plain.is_empty() || plain.as_str() == &self.text[ca..cb]) && self.holds_selection(&frag) {
             self.anchor = self.range().1;
             self.focus = self.anchor;
             self.cancel_composition();

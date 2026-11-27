@@ -69,6 +69,8 @@ pub(crate) fn serialize_html(edit: &TextEdit, range: Range<usize>) -> String {
                     out.push_str(align_css(edit.paragraph(paras[idx].0).align));
                 }
                 out.push_str("><code>");
+                // (A parser drops the newline after `<code>`: a block that starts at an empty line says so with another.)
+                if paras[idx].1.is_empty() { out.push('\n'); }
                 let mut first = true;
                 // An atom is a `<pre>` of its own, so it says so; text lines go in one block.
                 let alone = edit.paragraph(paras[idx].0).atom.is_some();

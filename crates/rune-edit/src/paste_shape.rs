@@ -159,9 +159,9 @@ impl TextEdit {
                 }
             }
         }
-        self.receiving_paragraph_heads_soft_lines(frag, line_idx, frag_lines, new, lead);
+        let given = self.receiving_paragraph_heads_soft_lines(frag, line_idx, frag_lines, new, lead);
         if self.attributed() {
-            for t in kept_soft {
+            for t in kept_soft.into_iter().filter(|&t| Some(t) != given) {
                 let id = self.fresh_id();
                 let slot = &mut self.attrs_mut()[t];
                 slot.id = id;
@@ -175,14 +175,14 @@ impl TextEdit {
     /// receiving line's id, attributes and block, and the soft lines (the landed one with an id of its own) mirror it, as
     /// typing the text with `Shift+Return` gives. Where the head is a line that was there (the paste is inside a
     /// paragraph), it stays as it is and mirroring does the rest, as typed text does.
-    pub(super) fn receiving_paragraph_heads_soft_lines(&mut self, frag: &TextEdit, line_idx: usize, frag_lines: usize, new: &[bool], lead: usize) {
+    pub(super) fn receiving_paragraph_heads_soft_lines(&mut self, frag: &TextEdit, line_idx: usize, frag_lines: usize, new: &[bool], lead: usize) -> Option<usize> {
         let is_new = |j: usize| new.get(j).copied().unwrap_or(false);
         let last_line = line_idx + frag_lines - 1;
-        if frag_lines < 2 || is_new(lead + frag_lines - 1) || self.attrs.get(last_line).is_some_and(|a| a.atom.is_some()) { return; }
+        if frag_lines < 2 || is_new(lead + frag_lines - 1) || self.attrs.get(last_line).is_some_and(|a| a.atom.is_some()) { return None; }
         let mut head_k = frag_lines - 1;
         while head_k > 0 && frag.soft_breaks.contains(&(head_k as u32)) && self.soft_breaks.contains(&((line_idx + head_k) as u32)) { head_k -= 1; }
         let head_line = line_idx + head_k;
-        if head_line >= last_line || !is_new(lead + head_k) { return; }
+        if head_line >= last_line || !is_new(lead + head_k) { return None; }
         if self.attributed() {
             let recv = self.paragraph(last_line);
             let id = self.fresh_id();
@@ -192,6 +192,7 @@ impl TextEdit {
             slot[last_line].page_break_before = false;
         }
         self.blocks[head_line] = self.blocks[last_line];
+        Some(last_line)
     }
 
     /// Everything an edit can change in the document, to tell whether it changed anything.
@@ -216,7 +217,8 @@ impl TextEdit {
         if (1..=lb - la).any(|k| self.soft_breaks.contains(&((la + k) as u32)) != frag.soft_breaks.contains(&(k as u32))) { return false; }
         let (ra, rb) = (self.line_range(la), self.line_range(lb));
         (0..=lb - la).all(|k| {
-            let whole = (k > 0 || a == ra.start) && (k < lb - la || b == rb.end);
+            // (A selection that ends at the start of its last line, a later one than the first, takes none of it.)
+            let whole = (k > 0 || a == ra.start) && (k < lb - la || (b == rb.end && !(la < lb && b == rb.start)));
             let kind = |x: ParagraphAttrs| (x.style, x.align, x.indent.to_bits(), x.first_line_indent.to_bits(), x.page_break_before, x.atom.map(f32::to_bits));
             !whole || (frag.blocks[k] == self.blocks[la + k] && (!self.attributed() || kind(frag.paragraph(k)) == kind(self.paragraph(la + k))))
         })
