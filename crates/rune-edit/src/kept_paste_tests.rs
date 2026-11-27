@@ -894,3 +894,60 @@ fn text_over_the_break_behind_an_atom_leaves_the_next_paragraph_its_block() {
         }
     }
 }
+
+// An atom copies and pastes whole in every block, a spaced rgb() highlight reads, a paste of what
+// is selected leaves the caret behind it, and unformatted HTML pastes as unmarked text.
+
+#[test]
+fn an_atom_copies_and_pastes_whole_in_every_block() {
+    for blk in [Block::Paragraph, Block::Bullet(0), Block::Numbered(0), Block::Quote, Block::Code] {
+        let d = ParagraphAttrs::default();
+        let mut e = TextEdit::from_parts("aa\nTabelle\nbb", vec![], vec![Block::Paragraph, blk, Block::Paragraph]);
+        e.set_paragraph_attrs(vec![d.id(1), d.id(2).atom(40.0), d.id(3)]);
+        e.set_selection(0, e.text.len());
+        let html = e.selected_html();
+        let frag = e.html_fragment(&html);
+        assert_eq!(frag.text, "aa\nTabelle\nbb", "{blk:?}: {html}");
+        assert_eq!((frag.paragraph(1).atom, frag.paragraph(1).id, frag.blocks()[1]), (Some(40.0), 2, blk), "{blk:?}: {html}");
+        assert!(frag.paragraph(0).atom.is_none() && frag.paragraph(2).atom.is_none(), "{blk:?}: {html}");
+        // and pasted into another field it is an atom of that block under an id of its own
+        let mut t = TextEdit::from_parts("x\n\ny", vec![], vec![Block::Paragraph; 3]);
+        t.set_paragraph_attrs(vec![d.id(1), d.id(2), d.id(3)]);
+        t.set_paragraph_ids(10);
+        t.set_caret(2);
+        t.paste_fragment(frag, "");
+        let at = (0..t.blocks().len()).find(|&i| t.paragraph(i).atom.is_some()).expect("an atom");
+        assert_eq!((t.text.split('\n').nth(at), t.blocks()[at]), (Some("Tabelle"), blk), "{blk:?}");
+        assert!(t.paragraph(at).id >= 10, "{blk:?}: {:?}", t.paragraph_attrs());
+    }
+}
+
+#[test]
+fn a_spaced_rgb_background_keeps_its_highlight() {
+    for css in ["rgb(255, 255, 0)", "rgb(255,255,0)", "RGB( 255 , 255 , 0 )", "#ffff00"] {
+        let mut e = start_field("XYZ", false);
+        e.set_caret(4);
+        e.paste_html(&format!("<p><span style=\"background-color: {css}\">hi</span></p>"), "hi");
+        assert!(e.marks().iter().any(|m| matches!(m.mark, Mark::Highlight(_)) && m.range() == (4..6)), "{css}: {:?}", e.marks());
+    }
+}
+
+#[test]
+fn a_paste_of_what_is_selected_leaves_the_caret_behind_it() {
+    let mut e = start_field("XYZ", false);
+    e.set_selection(4, 7);
+    let mut f = start_fragment("XYZ", false);
+    f.set_paragraph_attrs(vec![ParagraphAttrs::default().id(9).style(3).align(ParagraphAlign::Right).indent(12.0, 4.0)]);
+    e.paste_fragment(f, "XYZ");
+    assert_eq!(e.range(), (7, 7));
+}
+
+#[test]
+fn unformatted_html_pastes_as_unmarked_text_where_the_caret_is_marked() {
+    let mut e = TextEdit::from_parts("abcdef", vec![MarkRange::new(0..6, Mark::Bold)], vec![]);
+    e.set_paragraph_attrs(vec![ParagraphAttrs::default().id(1)]);
+    e.set_caret(3);
+    e.paste_html("<p>x</p>", "");
+    assert_eq!(e.text, "abcxdef");
+    assert!(!e.marks().iter().any(|m| m.start <= 3 && m.end > 3), "{:?}", e.marks());
+}

@@ -11,18 +11,18 @@ use super::fuzz_tests::{check, seen};
 use super::*;
 
 const NEW: u64 = u64::MAX;
-type Row = (String, u64, u16, ParagraphAlign, (f32, f32), Option<f32>, Block);
+type Row = (String, u64, u16, ParagraphAlign, (f32, f32), Option<f32>, Block, bool);
 
 fn rows(e: &TextEdit, orig: &[u64]) -> Vec<Row> {
     let blocks = e.blocks();
     e.text.split('\n').enumerate().map(|(i, t)| {
         let a = e.paragraph(i);
         let id = if orig.contains(&a.id) || a.id == 0 { a.id } else { NEW };
-        (t.to_string(), id, a.style, a.align, (a.indent, a.first_line_indent), a.atom, blocks[i])
+        (t.to_string(), id, a.style, a.align, (a.indent, a.first_line_indent), a.atom, blocks[i], a.page_break_before)
     }).collect()
 }
 fn show(r: &[Row]) -> String {
-    r.iter().map(|r| format!("{:?}#{}{}s{}i{}{:?}{:?}", r.0, if r.1 == NEW { "N".into() } else { r.1.to_string() }, if r.5.is_some() { "@" } else { "" }, r.2, r.4.0, r.6, r.3)).collect::<Vec<_>>().join(" | ")
+    r.iter().map(|r| format!("{:?}#{}{}s{}i{}{:?}{:?}{}", r.0, if r.1 == NEW { "N".into() } else { r.1.to_string() }, if r.5.is_some() { "@" } else { "" }, r.2, r.4.0, r.6, r.3, if r.7 { "PB" } else { "" })).collect::<Vec<_>>().join(" | ")
 }
 fn marked(marks: &[MarkRange], from: usize, to: usize) -> BTreeSet<(usize, String)> {
     marks.iter().flat_map(|m| (m.start.max(from)..m.end.min(to)).map(move |i| (i - from, format!("{:?}", m.mark)))).collect()
@@ -49,6 +49,11 @@ fn docs() -> Vec<(&'static str, TextEdit)> {
     let b = Block::Bullet(0);
     let p = Block::Paragraph;
     let q = Block::Quote;
+    let c = Block::Code;
+    let n = Block::Numbered(1);
+    let mut soft = mk("one\ntwo\nthr", vec![], vec![b, b, p], vec![d.id(1).style(1), d.id(2).style(2), d.id(3).style(3)]);
+    soft.set_soft_breaks(vec![1]);
+    soft.take_changes();
     vec![
         ("list", mk("top\nXYZ\nend", vec![], vec![p, b, p], vec![d.id(1), d.id(2).style(2).indent(10.0, 0.0), d.id(3).style(3)])),
         ("listend", mk("top\nXYZ\nend", vec![], vec![p, p, b], vec![d.id(1), d.id(2).style(2).align(ParagraphAlign::Right), d.id(3).style(3).indent(5.0, 2.0)])),
@@ -66,6 +71,17 @@ fn docs() -> Vec<(&'static str, TextEdit)> {
         // "@pp" 0..3, "Tab" 4..7, "@qq" 8..11
         ("pillatom", mk("@pp\nTab\n@qq", vec![mr(0..3, pill("f1")), mr(8..11, pill("f2"))], vec![p, p, q], vec![d.id(1), d.id(2).atom(40.0), d.id(3).style(3)])),
         ("quoteatoms", mk("Ta\nTb\nxy", vec![], vec![q, b, q], vec![d.id(1).atom(30.0), d.id(2).atom(30.0).style(4), d.id(3).style(3)])),
+        ("code", mk("top\nab\ncd\nend", vec![], vec![p, c, c, b], vec![d.id(1), d.id(2).style(2), d.id(3).style(3), d.id(4).style(4)])),
+        ("codeatom", mk("ab\nTab\ncd", vec![], vec![c, c, c], vec![d.id(1), d.id(2).atom(40.0), d.id(3).style(3)])),
+        ("codepatom", mk("ab\nTab\ncd", vec![], vec![c, p, c], vec![d.id(1).style(1), d.id(2).atom(40.0), d.id(3).style(3)])),
+        ("uni", mk("äé\n日本\nend", vec![mr(0..2, Mark::Bold)], vec![p, n, q], vec![d.id(1), d.id(2).style(2).align(ParagraphAlign::Center), d.id(3).style(3)])),
+        ("empties", mk("\n\n\n", vec![], vec![p, b, q, p], vec![d.id(1).style(1), d.id(2).style(2), d.id(3).style(3), d.id(4).style(4)])),
+        ("soft", soft),
+        ("pagebreak", mk("top\nXYZ\nend", vec![], vec![p, n, p], vec![d.id(1).page_break_before(true), d.id(2).style(2).page_break_before(true).indent(4.0, 1.0), d.id(3).style(3).page_break_before(true)])),
+        ("atomgap", mk("Ta\n\nTb", vec![], vec![b, p, q], vec![d.id(1).atom(30.0).style(1), d.id(2).style(2), d.id(3).atom(30.0)])),
+        ("trail", mk("abc\n", vec![mr(0..3, link())], vec![n, p], vec![d.id(1).style(1), d.id(2)])),
+        ("atomtrail", mk("Tab\n", vec![], vec![p, b], vec![d.id(1).atom(30.0).page_break_before(true), d.id(2).style(2)])),
+        ("threeatoms", mk("Ta\nTb\nTc", vec![], vec![p, b, c], vec![d.id(1).atom(30.0), d.id(2).atom(30.0).style(2), d.id(3).atom(30.0)])),
     ]
 }
 
@@ -99,6 +115,16 @@ fn fragments() -> Vec<Frag> {
         ("A\nB", vec![p, q], vec![d.id(51).style(7).align(c), d.id(52).style(8)], vec![mr(0..1, Mark::Bold)]),
         ("A\nM\nB", vec![p, Block::Bullet(1), q], vec![d.id(51).style(7).align(c), d.id(52).style(8).align(c), d.id(53)], vec![mr(2..3, Mark::Bold)]),
         ("A", vec![p], vec![d.id(51).style(7).align(c)], vec![]),
+        ("Q", vec![p], vec![qa()], vec![]),
+        ("A\nQ\nB", vec![Block::Bullet(0), q, Block::Numbered(0)], vec![d.id(51).style(7), qa(), d.id(52).style(8).align(ParagraphAlign::Right)], vec![mr(0..1, Mark::Bold)]),
+        ("Q\nQ", vec![p, q], vec![qa(), d.id(53).atom(20.0)], vec![]),
+        ("A\nB\n", vec![q, Block::Bullet(1), p], vec![d.id(51).style(7).align(c), d.id(52).style(8), d.id(53)], vec![]),
+        ("A\nB", vec![Block::Numbered(0), q], vec![d.id(51).style(7).align(c), d.id(52).style(8).align(c)], vec![mr(0..1, Mark::Bold)]),
+        ("A\nM\nB", vec![p, Block::Bullet(1), q], vec![d.id(51).style(7).align(c), d.id(52).style(8).align(c), d.id(53).style(9)], vec![mr(2..3, Mark::Bold)]),
+        ("A", vec![q], vec![d.id(51).style(7).align(c)], vec![]),
+        ("\nA", vec![q, Block::Bullet(0)], vec![d.id(51).style(7), d.id(52).style(8)], vec![]),
+        ("A\n\nB", vec![q, Block::Bullet(0), Block::Code], vec![d.id(51).style(7), d.id(52).style(8), d.id(53).style(9)], vec![]),
+        ("é\nQ\n", vec![q, p, Block::Bullet(0)], vec![d.id(51).style(7).indent(3.0, 1.0).page_break_before(true), qa(), d.id(52).style(8)], vec![]),
     ]
 }
 
@@ -119,8 +145,8 @@ fn line_ranges(text: &str) -> Vec<(usize, usize)> {
 fn a_pasted_fragment_follows_the_rules_over_every_selection() {
     let mut fails: BTreeMap<&'static str, Vec<String>> = BTreeMap::new();
     let mut cases = 0usize;
-    let frags = fragments();
-    for (doc, e) in docs() {
+    let frags: Vec<Frag> = fragments().into_iter().take(22).collect();
+    for (doc, e) in docs().into_iter().take(14) {
         let n = e.text.len();
         let olines = line_ranges(&e.text);
         let oattrs = e.paragraph_attrs();
@@ -290,7 +316,7 @@ fn richfrag(s: &str, mark: bool) -> TextEdit {
     f.set_paragraph_attrs((0..lines).map(|i| ParagraphAttrs::default().id(60 + i as u64)).collect());
     f
 }
-const PATHS: [Path; 8] = [
+const PATHS: [Path; 9] = [
     ("typed", |e, s| { e.key(&KeyEvent { key: Key::Text(s.into()), mods: Mods::default() }, None); }),
     ("insert", |e, s| e.insert(s)),
     ("paste", |e, s| { e.paste(s); }),
@@ -299,22 +325,34 @@ const PATHS: [Path; 8] = [
     ("frag", |e, s| { e.paste_fragment(TextEdit::from_parts(s, vec![], vec![]), ""); }),
     ("fragattrs", |e, s| { e.paste_fragment(richfrag(s, false), ""); }),
     ("fragmark", |e, s| { e.paste_fragment(richfrag(s, true), ""); }),
+    ("fragplain", |e, s| { e.paste_fragment(richfrag(s, true), s); }),
 ];
 
 #[test]
 fn every_path_agrees_over_every_selection_of_every_document() {
-    let inputs = ["x", "\n", "A\n", "A\nB", "A\nB\nC", "A\nB\nC\nD\n", "\nA", "\n\n"];
+    let inputs = ["x", "é", "\n", "A\n", "A\nB", "A\n\nB", "A\nB\nC\nD\n", "\nA", "\n\n", "\nA\n"];
     let mut fails: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut cases = 0;
-    for (doc, e) in docs() {
+    let mut all = docs();
+    // Paragraph ids off: nothing gets an id, and nothing needs one.
+    for (_, mut e) in docs().into_iter().take(4) {
+        let attrs: Vec<ParagraphAttrs> = e.paragraph_attrs().into_iter().map(|a| a.id(0)).collect();
+        e.set_paragraph_ids(0);
+        e.set_paragraph_attrs(attrs);
+        e.take_changes();
+        all.push(("idsoff", e));
+    }
+    for (doc, e) in all {
         let n = e.text.len();
         let orig: Vec<u64> = e.paragraph_attrs().iter().map(|a| a.id).collect();
+        let idsoff = doc == "idsoff";
         for a0 in 0..=n { for b0 in a0..=n {
             let mut pr = e.clone(); pr.set_selection(a0, b0);
             if pr.range() != (a0, b0) { continue; }
+            let code = e.blocks()[e.line_of_byte(a0)] == Block::Code;
             for s in inputs {
                 cases += 1;
-                let mut res: Vec<(&str, Vec<Row>)> = Vec::new();
+                let mut res: Vec<(&str, Vec<Row>, Vec<u32>)> = Vec::new();
                 for p in PATHS.iter() {
                     let mut x = e.clone();
                     x.set_selection(a0, b0);
@@ -322,14 +360,14 @@ fn every_path_agrees_over_every_selection_of_every_document() {
                     (p.1)(&mut x, s);
                     let ch = x.take_changes();
                     let r = rows(&x, &orig);
-                    if let Err(w) = check(&before, &x, &ch) { fails.entry(format!("report/{}", p.0)).or_default().push(format!("{doc} {a0}..{b0} {s:?}: {w}")); }
+                    if !idsoff { if let Err(w) = check(&before, &x, &ch) { fails.entry(format!("report/{}", p.0)).or_default().push(format!("{doc} {a0}..{b0} {s:?}: {w}")); } }
                     let ids: Vec<u64> = x.paragraph_attrs().iter().map(|a| a.id).collect();
                     let mut u = ids.clone(); u.sort(); u.dedup();
-                    if u.len() != ids.len() { fails.entry(format!("dup/{}", p.0)).or_default().push(format!("{doc} {a0}..{b0} {s:?}: {ids:?}")); }
-                    for (i, a) in x.paragraph_attrs().iter().enumerate() {
+                    if !idsoff && u.len() != ids.len() { fails.entry(format!("dup/{}", p.0)).or_default().push(format!("{doc} {a0}..{b0} {s:?}: {ids:?}")); }
+                    if idsoff && ids.iter().any(|&i| i != 0) { fails.entry(format!("idsoff-id/{}", p.0)).or_default().push(format!("{doc} {a0}..{b0} {s:?}: {ids:?}")); }
+                    if !idsoff { for (i, a) in x.paragraph_attrs().iter().enumerate() {
                         if a.atom.is_none() && e.paragraph_attrs().iter().any(|o| o.atom.is_some() && o.id == a.id) { fails.entry(format!("atomid/{}", p.0)).or_default().push(format!("{doc} {a0}..{b0} {s:?}: line {i}")); }
-                    }
-                    // field atoms the selection leaves keep attrs and block
+                    } }
                     let ol = line_ranges(&e.text);
                     for (i, o) in e.paragraph_attrs().iter().enumerate() {
                         if o.atom.is_none() || (a0 < b0 && a0 < ol[i].1 && b0 > ol[i].0) { continue; }
@@ -339,7 +377,7 @@ fn every_path_agrees_over_every_selection_of_every_document() {
                     let mut y = e.clone();
                     y.set_history(true);
                     y.set_selection(a0, b0);
-                    let snap = |y: &TextEdit| (y.text.clone(), y.paragraph_attrs(), y.blocks().to_vec(), marked(y.marks(), 0, y.text.len()));
+                    let snap = |y: &TextEdit| (y.text.clone(), y.paragraph_attrs(), y.blocks().to_vec(), marked(y.marks(), 0, y.text.len()), y.soft_breaks().to_vec());
                     let st = snap(&y);
                     (p.1)(&mut y, s);
                     let done = snap(&y);
@@ -347,13 +385,16 @@ fn every_path_agrees_over_every_selection_of_every_document() {
                     if snap(&y) != st { fails.entry(format!("undo/{}", p.0)).or_default().push(format!("{doc} {a0}..{b0} {s:?}")); }
                     y.redo();
                     if snap(&y) != done { fails.entry(format!("redo/{}", p.0)).or_default().push(format!("{doc} {a0}..{b0} {s:?}")); }
-                    res.push((p.0, r));
+                    res.push((p.0, r, x.soft_breaks().to_vec()));
                 }
-                for (name, r) in &res[1..] {
+                for (name, r, sb) in &res[1..] {
+                    let same = a0 < b0 && &e.text[a0..b0] == s;
                     // A fragment with attributes that holds what is selected is a no-op only when its
                     // attributes are the selection's; otherwise it restyles, as the rules say.
-                    if name.starts_with("frag") && *name != "frag" && a0 < b0 && &e.text[a0..b0] == s { continue; }
-                    if *r != res[0].1 { fails.entry(format!("disagree/{name}")).or_default().push(format!("{doc} {a0}..{b0} {:?} {s:?}\n      typed: {}\n      {name}: {}", &e.text[a0..b0], show(&res[0].1), show(r))); }
+                    if same && name.starts_with("frag") && *name != "frag" { continue; }
+                    let key = format!("disagree/{name}{}{}", if same { "/SAME" } else { "" }, if code { "/code" } else { "" });
+                    if *r != res[0].1 { fails.entry(key).or_default().push(format!("{doc} {a0}..{b0} {:?} {s:?}\n      typed: {}\n      {name}: {}", &e.text[a0..b0], show(&res[0].1), show(r))); }
+                    else if *sb != res[0].2 { fails.entry(format!("soft/{name}")).or_default().push(format!("{doc} {a0}..{b0} {:?} {s:?} typed {:?} got {:?}", &e.text[a0..b0], res[0].2, sb)); }
                 }
             }
         }}
@@ -368,34 +409,215 @@ fn return_gives_the_result_of_a_typed_break_over_every_selection() {
     let mut cases = 0;
     for (doc, e) in docs() {
         let len = e.text.len();
+        let orig: Vec<u64> = e.paragraph_attrs().iter().map(|a| a.id).collect();
+        let ol = line_ranges(&e.text);
         for a in 0..=len { for b in a..=len {
             let mut pr = e.clone();
             pr.set_selection(a, b);
             if pr.range() != (a, b) { continue; }
-            // Return over a selected break restyles, where typing the same break changes nothing;
             // Return in an empty list item, quote or code line ends the block.
             let line = e.line_of_byte(a);
-            if (a < b && &e.text[a..b] == "\n") || (a == b && e.line_range(line).is_empty() && e.blocks()[line] != Block::Paragraph) { continue; }
+            if a == b && e.line_range(line).is_empty() && e.blocks()[line] != Block::Paragraph { continue; }
             cases += 1;
             let mut r = e.clone();
             r.set_selection(a, b);
+            let before = seen(&r);
             r.key(&KeyEvent { key: Key::Enter, mods: Mods::default() }, None);
+            let ch = r.take_changes();
             let mut t = e.clone();
             t.set_selection(a, b);
             t.insert("\n");
             let key = |x: &TextEdit| x.text.split('\n').enumerate().map(|(i, s)| (s.to_string(), { let id = x.paragraph(i).id; if id >= 100 { NEW } else { id } }, x.paragraph(i).atom)).collect::<Vec<_>>();
+            let (rr, tr) = (rows(&r, &orig), rows(&t, &orig));
+            let msg = format!("{doc} {a}..{b} {:?}\n   return: {}\n   break:  {}", &e.text[a..b], show(&rr), show(&tr));
+            if let Err(w) = check(&before, &r, &ch) { fails.push(format!("{msg}\n   report {w}")); }
+            if key(&r) != key(&t) { fails.push(format!("{msg}\n   differs")); }
             let ids: Vec<u64> = r.paragraph_attrs().iter().map(|a| a.id).collect();
             let mut u = ids.clone();
             u.sort();
             u.dedup();
-            let ol = line_ranges(&e.text);
-            let mut bad = u.len() != ids.len();
+            if u.len() != ids.len() { fails.push(format!("{msg}\n   duplicate ids")); }
             for (i, o) in e.paragraph_attrs().iter().enumerate() {
                 if o.atom.is_none() || (a < b && a < ol[i].1 && b > ol[i].0) { continue; }
                 let label = &e.text[ol[i].0..ol[i].1];
-                if !r.text.split('\n').enumerate().any(|(j, s)| s == label && r.paragraph(j) == *o && r.blocks()[j] == e.blocks()[i]) { bad = true; }
+                if !r.text.split('\n').enumerate().any(|(j, s)| s == label && r.paragraph(j) == *o && r.blocks()[j] == e.blocks()[i]) { fails.push(format!("{msg}\n   atom {} lost", o.id)); }
             }
-            if key(&r) != key(&t) || bad { fails.push(format!("{doc} {a}..{b} {:?} bad={bad}\n   return: {}\n   break:  {}", &e.text[a..b], show(&rows(&r, &[1, 2, 3, 4])), show(&rows(&t, &[1, 2, 3, 4])))); }
+            // The new paragraph is a copy of the line the selection starts on: its style, alignment,
+            // indents and block, never a mix of two lines'.
+            let want = |l: usize| { let o = e.paragraph(l); (o.style, o.align, (o.indent, o.first_line_indent), e.blocks()[l]) };
+            for (i, x) in rr.iter().enumerate() {
+                if x.1 == NEW && x.5.is_none() && (x.2, x.3, x.4, x.6) != want(line) { fails.push(format!("{msg}\n   new paragraph {i} is not a copy of line {line}")); }
+            }
+            // undo and redo
+            let mut y = e.clone();
+            y.set_history(true);
+            y.set_selection(a, b);
+            let snap = |y: &TextEdit| (y.text.clone(), y.paragraph_attrs(), y.blocks().to_vec(), marked(y.marks(), 0, y.text.len()), y.soft_breaks().to_vec());
+            let st = snap(&y);
+            y.key(&KeyEvent { key: Key::Enter, mods: Mods::default() }, None);
+            let done = snap(&y);
+            y.undo();
+            if snap(&y) != st { fails.push(format!("{msg}\n   undo")); }
+            y.redo();
+            if snap(&y) != done { fails.push(format!("{msg}\n   redo")); }
+        }}
+    }
+    assert!(fails.is_empty(), "{cases} cases, {} failures, the first:\n{}", fails.len(), fails.iter().take(12).cloned().collect::<Vec<_>>().join("\n"));
+}
+
+#[test]
+fn a_pasted_fragment_follows_the_rules_in_code_and_around_every_document() {
+    let mut fails: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut cases = 0usize;
+    let frags: Vec<Frag> = fragments().into_iter().skip(22).collect();
+    for (doc, e) in docs() {
+        let n = e.text.len();
+        let olines = line_ranges(&e.text);
+        let oattrs = e.paragraph_attrs();
+        let oblocks = e.blocks().to_vec();
+        let orig: Vec<u64> = oattrs.iter().map(|a| a.id).collect();
+        for a0 in 0..=n { for b0 in a0..=n {
+            let mut probe = e.clone();
+            probe.set_selection(a0, b0);
+            let (a, b) = probe.range();
+            if (a, b) != (a0, b0) { continue; }
+            let (la, lb) = (olines.iter().position(|r| r.0 <= a && a <= r.1).unwrap(), olines.iter().position(|r| r.0 <= b && b <= r.1).unwrap());
+            let in_code = oblocks[la] == Block::Code;
+            for (fi, fr) in frags.iter().enumerate() {
+                cases += 1;
+                let f = mkfrag(fr);
+                let (ft, fb, fa, _) = fr;
+                let fmarks = f.marks().to_vec();
+                let mut x = e.clone();
+                x.set_selection(a, b);
+                let before = seen(&x);
+                x.paste_fragment(f.clone(), "");
+                let ch = x.take_changes();
+                let now = rows(&x, &orig);
+                let why = |m: String| format!("{doc} {a}..{b} {:?} frag#{fi} {ft:?}: {m}\n      => {}", &e.text[a..b], show(&now));
+                let mut fail = |k: &str, m: String| fails.entry(format!("{k}{}", if in_code { "/code" } else { "" })).or_default().push(why(m));
+                if let Err(w) = check(&before, &x, &ch) { fail("report", w); }
+                if !(x.text.starts_with(&e.text[..a]) && x.text.ends_with(&e.text[b..]) && x.text.len() >= a + (n - b)) { fail("text-shape", "edges moved".into()); continue; }
+                let mid = &x.text[a..x.text.len() - (n - b)];
+                let off = mid.len() - mid.trim_start_matches('\n').len();
+                let off = if ft.starts_with('\n') { off.saturating_sub(1) } else { off };
+                if !mid[off..].starts_with(ft) || !mid[off + ft.len()..].chars().all(|c| c == '\n') || off > 1 || mid.len() - off - ft.len() > 1 { fail("text-shape", format!("mid {mid:?}")); continue; }
+                if !in_code {
+                    let want: BTreeSet<(usize, String)> = fmarks.iter().flat_map(|m| (m.start..m.end).map(move |i| (off + i, format!("{:?}", m.mark)))).collect();
+                    let got = marked(x.marks(), a, a + mid.len());
+                    if want != got { fail("marks", format!("want {want:?} got {got:?}")); }
+                }
+                let ids: Vec<u64> = x.paragraph_attrs().iter().map(|a| a.id).collect();
+                let mut u = ids.clone(); u.sort(); u.dedup();
+                if u.len() != ids.len() || ids.contains(&0) { fail("ids", format!("{ids:?}")); }
+                let xl = line_ranges(&x.text);
+                let lines: Vec<(&str, ParagraphAttrs, Block)> = x.text.split('\n').enumerate().map(|(i, t)| (t, x.paragraph(i), x.blocks()[i])).collect();
+                let l0 = xl.iter().position(|r| r.0 <= a + off && a + off <= r.1).unwrap();
+                let flines: Vec<&str> = ft.split('\n').collect();
+                let last = flines.len() - 1;
+                let atom_touch = oattrs[la].atom.is_some() || oattrs[lb].atom.is_some();
+                for k in 0..flines.len() {
+                    let (t, at, bl) = lines[l0 + k];
+                    let from = fa[k];
+                    if from.atom.is_some() {
+                        if t != flines[k] || at.atom != Some(20.0) { fail("ATOM-LOST", format!("frag line {k} is {t:?} atom {:?}", at.atom)); continue; }
+                        if at.id < 100 { fail("atom-id", format!("pasted atom id {}", at.id)); }
+                        if bl != fb[k] { fail("atom-block", format!("pasted atom block {bl:?} want {:?}", fb[k])); }
+                        if (at.style, at.align) != (from.style, from.align) { fail("atom-style", format!("pasted atom style {}", at.style)); }
+                        if (at.indent, at.first_line_indent, at.page_break_before) != (0.0, 0.0, false) { fail("atom-indent", format!("{at:?}")); }
+                    } else {
+                        if at.atom.is_some() && !flines[k].is_empty() { fail("text-is-atom", format!("frag line {k} {t:?} is an atom")); }
+                        // A line that is wholly the fragment's and carries a new id is a new paragraph.
+                        if at.id >= 100 && t == flines[k] && at.atom.is_none() && !in_code && !atom_touch {
+                            if (at.style, at.align) != (from.style, from.align) || bl != fb[k] || at.indent != 0.0 || at.first_line_indent != 0.0 || at.page_break_before {
+                                fail(&format!("new-para-k{}{}", if k == 0 { "first" } else if k == last { "last" } else { "mid" }, if atom_touch { "/atomtouch" } else { "" }), format!("frag line {k}: {at:?} {bl:?}"));
+                            }
+                        }
+                        if in_code && at.id >= 100 && t == flines[k] && k > 0 && k < last && (bl != Block::Code) { fail("code-mid-block", format!("{bl:?}")); }
+                    }
+                }
+                let survivors: Vec<usize> = (0..olines.len()).filter(|&i| oattrs[i].atom.is_some() && !(a < b && a < olines[i].1 && b > olines[i].0)).collect();
+                let fatoms = fa.iter().filter(|a| a.atom.is_some()).count();
+                let nowatoms = lines.iter().filter(|l| l.1.atom.is_some()).count();
+                if nowatoms != survivors.len() + fatoms { fail("ATOM-COUNT", format!("{nowatoms} atoms want {}+{fatoms}", survivors.len())); }
+                for &i in &survivors {
+                    let label = &e.text[olines[i].0..olines[i].1];
+                    if !lines.iter().any(|l| l.0 == label && l.1 == oattrs[i] && l.2 == oblocks[i]) { fail("survivor", format!("atom {} changed", oattrs[i].id)); }
+                }
+                for (i, l) in lines.iter().enumerate() {
+                    if l.1.atom.is_none() && l.1.id != 0 && oattrs.iter().any(|o| o.atom.is_some() && o.id == l.1.id) { fail("atom-id-on-text", format!("line {i}")); }
+                    // a text line that is not the atom's label never an atom
+                    if l.1.atom == Some(20.0) && l.0 != "Q" { fail("atom-holds-text", format!("line {i} {:?}", l.0)); }
+                    if l.1.atom.is_some() && l.1.atom != Some(20.0) && !oattrs.iter().enumerate().any(|(j, o)| o.id == l.1.id && o.atom.is_some() && &e.text[olines[j].0..olines[j].1] == l.0) { fail("field-atom-text", format!("line {i} {:?}", l.0)); }
+                }
+                // every original paragraph id that survives sits on a line holding some of its paragraph's rule position: no id on two lines (checked), and
+                // ids of untouched lines unchanged (check() covers). Stray empty lines:
+                let added = mid.matches('\n').count();
+                if added > ft.matches('\n').count() + 2 { fail("extra-breaks", format!("{mid:?}")); }
+                // undo / redo
+                let mut y = e.clone();
+                y.set_history(true);
+                y.set_selection(a, b);
+                let snap = |y: &TextEdit| (y.text.clone(), y.paragraph_attrs(), y.blocks().to_vec(), marked(y.marks(), 0, y.text.len()), y.soft_breaks().to_vec());
+                let st = snap(&y);
+                y.paste_fragment(f.clone(), "");
+                let done = snap(&y);
+                if done != snap(&x) { fail("history-differs", String::new()); }
+                y.undo();
+                if snap(&y) != st { fail("undo", format!("{:?}", snap(&y))); }
+                y.redo();
+                if snap(&y) != done { fail("redo", format!("{:?}", snap(&y))); }
+            }
+        }}
+    }
+    let fails: BTreeMap<&str, Vec<String>> = fails.iter().map(|(k, v)| (k.as_str(), v.clone())).collect();
+    assert!(fails.is_empty(), "{}", summary(cases, &fails));
+}
+
+
+/// Shift+Return puts a soft break in the text: over a selection it is the deletion of the
+/// selection, by the rules for text, and then a soft line in the paragraph that is left, in that
+/// paragraph's block.
+#[test]
+fn shift_return_over_a_selection_deletes_it_and_puts_a_soft_line_in_the_paragraph_left() {
+    let shift = KeyEvent { key: Key::Enter, mods: Mods { shift: true, ..Mods::default() } };
+    let mut fails: Vec<String> = Vec::new();
+    let mut cases = 0;
+    for (doc, e) in docs() {
+        let len = e.text.len();
+        for a in 0..=len { for b in a + 1..=len {
+            let mut pr = e.clone();
+            pr.set_selection(a, b);
+            if pr.range() != (a, b) { continue; }
+            cases += 1;
+            let mut s = e.clone();
+            s.set_selection(a, b);
+            let before = seen(&s);
+            s.key(&shift, None);
+            let ch = s.take_changes();
+            let mut d = e.clone();
+            d.set_selection(a, b);
+            d.key(&KeyEvent { key: Key::Backspace, mods: Mods::default() }, None);
+            d.key(&shift, None);
+            let snap = |y: &TextEdit| (y.text.clone(), y.paragraph_attrs().iter().map(|a| a.id.min(99)).collect::<Vec<_>>(), y.blocks().to_vec(), y.soft_breaks().to_vec());
+            let msg = format!("{doc} {a}..{b} {:?}", &e.text[a..b]);
+            if let Err(w) = check(&before, &s, &ch) { fails.push(format!("{msg}: report {w}")); }
+            if snap(&s) != snap(&d) { fails.push(format!("{msg}: {:?} but delete and soft break give {:?}", snap(&s), snap(&d))); }
+            // the soft line has its paragraph's block
+            for &line in s.soft_breaks() {
+                let line = line as usize;
+                if line > 0 && s.blocks()[line] != s.blocks()[line - 1] { fails.push(format!("{msg}: soft line {line} is {:?} in {:?}", s.blocks()[line], s.blocks()[line - 1])); }
+            }
+            let mut y = e.clone();
+            y.set_history(true);
+            y.set_selection(a, b);
+            let st = (y.text.clone(), y.paragraph_attrs(), y.blocks().to_vec(), y.soft_breaks().to_vec());
+            y.key(&shift, None);
+            let done = (y.text.clone(), y.paragraph_attrs(), y.blocks().to_vec(), y.soft_breaks().to_vec());
+            y.undo();
+            if (y.text.clone(), y.paragraph_attrs(), y.blocks().to_vec(), y.soft_breaks().to_vec()) != st { fails.push(format!("{msg}: undo")); }
+            y.redo();
+            if (y.text.clone(), y.paragraph_attrs(), y.blocks().to_vec(), y.soft_breaks().to_vec()) != done { fails.push(format!("{msg}: redo")); }
         }}
     }
     assert!(fails.is_empty(), "{cases} cases, {} failures, the first:\n{}", fails.len(), fails.iter().take(12).cloned().collect::<Vec<_>>().join("\n"));
