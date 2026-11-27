@@ -854,3 +854,31 @@ fn an_atoms_label_selected_without_its_break_leaves_its_paragraph_as_text_on_eve
         assert_eq!(leaves(atom_between(), (4, 11), name, edit), vec![aaa(), text("x"), end.clone()], "{name}");
     }
 }
+
+// An edit that starts in the middle of a line, ends in a later one and inserts a line break
+// leaves the first line its own and ends in the later paragraph: its id, attributes and block.
+
+#[test]
+fn text_with_a_break_from_the_middle_of_a_line_to_the_middle_of_a_later_one_ends_in_the_later_paragraph() {
+    let top = row("top", 1, 0, 0.0, None, Block::Paragraph);
+    let item = row("XA", 2, 2, 10.0, None, bullet());
+    let later = |t: &str| row(t, 3, 3, 0.0, None, Block::Paragraph);
+    for (name, edit) in BREAK {
+        assert_eq!(leaves(list_before_plain(), (5, 9), name, edit), vec![top.clone(), item.clone(), later("nd")], "{name}");
+    }
+    for (name, edit) in OPEN {
+        assert_eq!(leaves(list_before_plain(), (5, 9), name, edit), vec![top.clone(), item.clone(), later("Bnd")], "{name}");
+    }
+    for (name, edit) in THREE {
+        let got = leaves(list_before_plain(), (5, 9), name, edit);
+        assert_eq!(got, vec![top.clone(), item.clone(), plain_row("B"), later("Cnd")], "{name}");
+    }
+    // The same in a field without attributes: the later paragraph's block.
+    let blocks = [Block::Paragraph, bullet(), Block::Paragraph];
+    for (name, edit) in OPEN {
+        let mut e = TextEdit::from_parts("top\nXYZ\nend", vec![], blocks.to_vec());
+        e.set_selection(5, 9);
+        edit(&mut e);
+        assert_eq!((lines(&e), e.blocks().to_vec()), (vec!["top", "XA", "Bnd"], blocks.to_vec()), "{name}");
+    }
+}
