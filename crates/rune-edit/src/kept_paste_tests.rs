@@ -616,3 +616,153 @@ fn text_with_a_break_pasted_mid_line_leaves_the_tail_in_the_lines_block_with_or_
         assert_eq!((got[2].0.ends_with("YZ"), got[2].6), (true, bullet()), "{name}: {got:?}");
     }
 }
+
+// Every path an edit can take gives one result: Return, `insert`, `paste`, `paste_html`
+// without a mark and `paste_html` with one. Each case below names the document, the
+// selection and what each path leaves, and checks undo and redo of each.
+
+type Path = (&'static str, fn(&mut TextEdit));
+
+/// The paths that put `A` and a line break over a selection.
+const BREAK: [Path; 5] = [
+    ("insert", |e| e.insert("A\n")),
+    ("paste", |e| { e.paste("A\n"); }),
+    ("paste_html unmarked", |e| { e.paste_html("<p>A</p><p></p>", "A\n"); }),
+    ("paste_html marked", |e| { e.paste_html("<p><b>A</b></p><p></p>", "A\n"); }),
+    ("paste_fragment", |e| { e.paste_fragment(start_fragment("A\n", false), ""); }),
+];
+
+/// The paths that put `A`, a line break and `B` over a selection.
+const OPEN: [Path; 5] = [
+    ("insert", |e| e.insert("A\nB")),
+    ("paste", |e| { e.paste("A\nB"); }),
+    ("paste_html unmarked", |e| { e.paste_html("<p>A</p><p>B</p>", "A\nB"); }),
+    ("paste_html marked", |e| { e.paste_html("<p><b>A</b></p><p>B</p>", "A\nB"); }),
+    ("paste_fragment", |e| { e.paste_fragment(start_fragment("A\nB", false), ""); }),
+];
+
+fn return_key(e: &mut TextEdit) {
+    e.key(&enter(), None);
+}
+
+/// `AAA`, a locked atom `Tabelle`, then `end`: ids 1, 2, 3, `end` in style 3 and a bullet.
+fn atom_between() -> TextEdit {
+    let d = ParagraphAttrs::default();
+    let mut e = TextEdit::from_parts("AAA\nTabelle\nend", vec![], vec![Block::Paragraph, Block::Paragraph, bullet()]);
+    e.set_paragraph_attrs(vec![d.id(1), d.id(2).style(2).atom(40.0), d.id(3).style(3)]);
+    e.set_paragraph_ids(10);
+    e.set_history(false);
+    e.take_changes();
+    e
+}
+
+/// `top`, a list item `XYZ` (id 2, style 2, indented), then a plain `end` (id 3, style 3).
+fn list_before_plain() -> TextEdit {
+    let d = ParagraphAttrs::default();
+    let mut e = TextEdit::from_parts("top\nXYZ\nend", vec![], vec![Block::Paragraph, bullet(), Block::Paragraph]);
+    e.set_paragraph_attrs(vec![d.id(1), d.id(2).style(2).indent(10.0, 0.0), d.id(3).style(3)]);
+    e.set_paragraph_ids(10);
+    e.set_history(false);
+    e.take_changes();
+    e
+}
+
+fn row(text: &str, id: u64, style: u16, indent: f32, atom: Option<f32>, block: Block) -> Row {
+    (text.into(), id, style, ParagraphAlign::Left, (indent, 0.0), atom, block)
+}
+
+fn aaa() -> Row { row("AAA", 1, 0, 0.0, None, Block::Paragraph) }
+
+/// What `edit` leaves of `e` with `from..to` selected, and the same after undo and redo.
+fn leaves(e: TextEdit, (from, to): (usize, usize), name: &str, edit: fn(&mut TextEdit)) -> Vec<Row> {
+    let got = all_rows(e.clone(), |e| {
+        e.set_selection(from, to);
+        edit(e);
+    });
+    let mut e = e;
+    e.set_history(true);
+    e.set_selection(from, to);
+    let (text, attrs, blocks) = (e.text.clone(), e.paragraph_attrs().to_vec(), e.blocks().to_vec());
+    edit(&mut e);
+    let (done, done_attrs, done_blocks) = (e.text.clone(), e.paragraph_attrs().to_vec(), e.blocks().to_vec());
+    e.undo();
+    assert_eq!((e.text.clone(), e.paragraph_attrs().to_vec(), e.blocks().to_vec()), (text, attrs, blocks), "{name}: undo");
+    e.redo();
+    assert_eq!((e.text.clone(), e.paragraph_attrs().to_vec(), e.blocks().to_vec()), (done, done_attrs, done_blocks), "{name}: redo");
+    got
+}
+
+#[test]
+fn over_a_whole_atom_every_path_leaves_the_next_paragraph_its_id() {
+    let end = |t: &str| row(t, 3, 3, 0.0, None, bullet());
+    // The atom and its break (4..12), and the atom and the start of `end` (4..14).
+    for (to, tail) in [(12, "end"), (14, "d")] {
+        let sel = (4, to);
+        for (name, edit) in BREAK {
+            assert_eq!(leaves(atom_between(), sel, name, edit), vec![aaa(), plain_row("A"), end(tail)], "{name} over {sel:?}");
+        }
+        for (name, edit) in OPEN {
+            let joined = format!("B{tail}");
+            assert_eq!(leaves(atom_between(), sel, name, edit), vec![aaa(), plain_row("A"), end(&joined)], "{name} over {sel:?}");
+        }
+        let got = leaves(atom_between(), sel, "Return", return_key);
+        assert_eq!(got, vec![aaa(), ("".into(), NEW, 3, ParagraphAlign::Left, (0.0, 0.0), None, Block::Paragraph), end(tail)], "Return over {sel:?}");
+    }
+}
+
+#[test]
+fn a_selection_that_ends_at_a_later_lines_start_leaves_that_line_whole() {
+    let item = |t: &str| row(t, 2, 2, 10.0, None, bullet());
+    let end = |t: &str| row(t, 3, 3, 0.0, None, Block::Paragraph);
+    for (name, edit) in BREAK {
+        assert_eq!(leaves(list_before_plain(), (5, 8), name, edit), vec![row("top", 1, 0, 0.0, None, Block::Paragraph), item("XA"), end("end")], "{name}");
+    }
+    for (name, edit) in OPEN {
+        assert_eq!(leaves(list_before_plain(), (5, 8), name, edit), vec![row("top", 1, 0, 0.0, None, Block::Paragraph), item("XA"), end("Bend")], "{name}");
+    }
+    let got = leaves(list_before_plain(), (5, 8), "Return", return_key);
+    assert_eq!(got, vec![row("top", 1, 0, 0.0, None, Block::Paragraph), item("X"), end("end")], "Return");
+}
+
+#[test]
+fn without_attributes_a_selection_that_ends_at_a_later_lines_start_leaves_its_block() {
+    let plain = || TextEdit::from_parts("top\nXYZ\nend", vec![], vec![Block::Paragraph, bullet(), Block::Paragraph]);
+    let blocks = [Block::Paragraph, bullet(), Block::Paragraph];
+    let edits: [Path; 8] = [
+        ("insert", |e| e.insert("A\n")),
+        ("paste", |e| { e.paste("A\n"); }),
+        ("paste_html unmarked", |e| { e.paste_html("<p>A</p><p></p>", "A\n"); }),
+        ("paste_html marked", |e| { e.paste_html("<p><b>A</b></p><p></p>", "A\n"); }),
+        ("insert open", |e| e.insert("A\nB")),
+        ("paste open", |e| { e.paste("A\nB"); }),
+        ("paste_html open unmarked", |e| { e.paste_html("<p>A</p><p>B</p>", "A\nB"); }),
+        ("paste_html open marked", |e| { e.paste_html("<p><b>A</b></p><p>B</p>", "A\nB"); }),
+    ];
+    for (name, edit) in edits.into_iter().chain([("Return", return_key as fn(&mut TextEdit))]) {
+        let mut e = plain();
+        e.set_selection(5, 8);
+        edit(&mut e);
+        assert_eq!(e.blocks(), blocks, "{name}: {:?}", lines(&e));
+    }
+}
+
+#[test]
+fn a_bare_line_break_at_a_lines_start_copies_nothing_of_the_line_but_return_does() {
+    for (name, edit) in [("insert", (|e: &mut TextEdit| e.insert("\n")) as fn(&mut TextEdit)), ("paste", |e| { e.paste("\n"); })] {
+        let got = at_start(start_field("XYZ", false), edit);
+        assert_eq!(got, vec![new_row("", 0, ParagraphAlign::Left, None, Block::Paragraph), kept_row("XYZ", None, bullet())], "{name}");
+    }
+    let got = at_start(start_field("XYZ", false), |e| { e.key(&enter(), None); });
+    assert_eq!(got, vec![above("", false), kept_row("XYZ", None, bullet())]);
+}
+
+#[test]
+fn a_single_line_pasted_into_an_empty_line_with_only_an_id_gives_it_the_pasted_attributes() {
+    let mut e = TextEdit::from_parts("top\n\nend", vec![], vec![]);
+    let d = ParagraphAttrs::default();
+    e.set_paragraph_attrs(vec![d.id(1), d.id(2), d.id(3)]);
+    e.set_paragraph_ids(10);
+    e.set_history(false);
+    let got = pasted_between(e, start_fragment("A", false));
+    assert_eq!(got, vec![("A".into(), 2, 5, ParagraphAlign::Center, (0.0, 0.0), None, bullet())]);
+}

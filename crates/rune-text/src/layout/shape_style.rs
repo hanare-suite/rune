@@ -61,3 +61,7 @@ pub(super) fn push_baselines(b: &mut RangedBuilder<'_, Ink>, spans: &[Span], siz
         b.push(StyleProperty::VerticalAlign(VerticalAlign::length(if baseline == Baseline::Super { shift } else { -shift })), r);
     }
 }
+
+#[cfg(test)]
+#[path = "shape_style_tests.rs"]
+mod tests;
