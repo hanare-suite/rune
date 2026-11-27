@@ -187,7 +187,7 @@ impl TextEdit {
             if del_len + ins_len > 0 { self.note_text(a..b, ins_len); }
             return Vec::new();
         }
-        let Plan { line_a, line_b, line_a_range, line_b_range, added_lines, kept, take_b, front, tail_whole, block_b, edge } = self.edit_plan((a, b), s, new_line_block, mark_new_lines_soft);
+        let Plan { line_a, line_b, line_a_range: _, line_b_range, added_lines, kept, take_b, front, tail_whole, block_b, edge } = self.edit_plan((a, b), s, new_line_block, mark_new_lines_soft);
         let removed_lines = line_b - line_a;
         let new_lines = if want { new_lines(added_lines, kept, edge, line_a == line_b) } else { Vec::new() };
         self.splice_attrs(line_a, line_b, added_lines, take_b, kept, edge);
@@ -197,11 +197,9 @@ impl TextEdit {
         } else {
             self.blocks.get(line_a).copied().unwrap_or(Block::Paragraph)
         };
-        let merged_soft = if line_a < line_b
-            && line_a_range.is_empty()
-            && a == line_a_range.start
-            && b == line_b_range.start
-        {
+        // The merged line is as soft as the paragraph that stays: the later one's when it is the later
+        // one that stays.
+        let merged_soft = if take_b {
             self.soft_breaks.binary_search(&(line_b as u32)).is_ok() && line_a > 0
         } else {
             self.soft_breaks.binary_search(&(line_a as u32)).is_ok()

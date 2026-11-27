@@ -25,6 +25,16 @@ impl TextEdit {
         })
     }
 
+    /// The line a paste over the selection lands in, the one what is left of the selection's lines
+    /// joins: the later line when the selection takes the earlier one whole, from its start into a
+    /// later line (an atom, or paragraphs up to a line's start), the first otherwise.
+    fn landing_line(&self) -> usize {
+        let (a, b) = self.range();
+        let (la, lb) = (self.line_of_byte(a), self.line_of_byte(b));
+        let (ra, rb) = (self.line_range(la), self.line_range(lb));
+        if la < lb && a == ra.start && (b == rb.start || self.paragraph(la).atom.is_some()) { lb } else { la }
+    }
+
     /// Inserts `s` at `at` as no one's text: it inherits no marks.
     fn insert_plain_at(&mut self, at: usize, s: &str) {
         self.apply_text_and_attr_replace((at, at), s, &[], None, false);
@@ -37,6 +47,28 @@ impl TextEdit {
         self.sync_invariants();
         let before = self.snapshot();
         let (a, b) = self.range();
+        // Return over a selected break changes nothing, as typing the break does not.
+        if !soft && a < b && &self.text[a..b] == "\n" {
+            self.anchor = b;
+            self.focus = b;
+            self.cancel_composition();
+            self.mark_edited();
+            return;
+        }
+        // A soft break is text, not a paragraph break: over a selection it goes in behind the
+        // deletion, by the rules for text, in what is left of the paragraphs.
+        if soft && a < b {
+            let f = self.fence(a, b, "");
+            let gap = f.text.as_deref().unwrap_or("");
+            if self.text[f.a..f.b] == *gap {
+                self.anchor = f.a + gap.len() - f.back;
+                self.focus = self.anchor;
+            } else {
+                self.apply_fenced((f.a, f.b), gap, &[], None, false, f.back);
+            }
+        }
+        let (a, b) = self.range();
+        let block_for_new_line = if soft { self.blocks.get(self.line_of_byte(a)).copied().unwrap_or(Block::Paragraph) } else { block_for_new_line };
         let inserted_marks = self.typing.take_at((self.anchor, self.focus)).unwrap_or_else(|| self.inherited_marks_at(a));
         self.apply_text_and_attr_replace((a, b), "\n", &inserted_marks, Some(block_for_new_line), soft);
         self.note_kind(EditKind::LineBreak);
@@ -554,6 +586,12 @@ impl TextEdit {
         }
         // A fragment with nothing to keep is the text it holds.
         if plain.is_empty() && unformatted {
+            // The text is no one's: it takes no marks from the caret (pasting what is selected
+            // changes nothing, marks included).
+            let (a, b) = self.range();
+            if self.text[a..b] != frag.text {
+                self.typing = Typing::Armed { at: (self.anchor, self.focus), marks: Vec::new() };
+            }
             return self.paste(&frag.text);
         }
         if !self.rich {
@@ -564,12 +602,17 @@ impl TextEdit {
         // fragment's atoms still go in as atoms, on lines of their own, and the code line splits
         // around them.
         let atoms = frag.attrs.iter().any(|a| a.atom.is_some());
-        let in_code = !self.is_single_line() && self.blocks.get(self.line_of_byte(self.range().0)) == Some(&Block::Code);
+        let landing = self.landing_line();
+        let in_code = !self.is_single_line() && self.blocks.get(landing) == Some(&Block::Code) && self.paragraph(landing).atom.is_none();
         if in_code && !atoms {
             return self.paste(if plain.is_empty() { frag.text.as_str() } else { plain });
         }
         // A paste that holds what the selection holds changes nothing, as typing it does not.
         if self.holds_selection(&frag) {
+            self.anchor = self.range().1;
+            self.focus = self.anchor;
+            self.cancel_composition();
+            self.mark_edited();
             return EditOutcome::default();
         }
         self.break_history_group();
@@ -613,8 +656,7 @@ impl TextEdit {
         // does not join: a fragment atom first in the paste takes its place.
         let consumed_first = la < lb && recv_start;
         let empty_line = recv_start && b == rb.end;
-        // An atom the selection takes whole, and paragraphs it takes whole, leave the next one.
-        let recv_line = if la < lb && recv_start && (b == rb.start || self.paragraph(la).atom.is_some()) { lb } else { la };
+        let recv_line = self.landing_line();
         let recv = (self.paragraph(recv_line), self.blocks.get(recv_line).copied().unwrap_or(Block::Paragraph));
         let mut without_id = recv.0;
         without_id.id = 0;
@@ -663,8 +705,9 @@ impl TextEdit {
             let consumes = consumed_first && k == 0 && from.atom.is_some() && fenced.lead == 0 && !is_new(j);
             let single = (plain_single && k == 0 && !is_new(j)) || consumes;
             if !is_new(j) && !single { continue; }
-            // Text of a fragment goes into a code block as plain text.
-            if in_code && from.atom.is_none() { continue; }
+            // Text of a fragment goes into a code block as plain text: a line the edit made in one
+            // stays a code line, with no style of the fragment's.
+            if self.blocks.get(line) == Some(&Block::Code) && from.atom.is_none() { continue; }
             // A pasted atom that takes an empty line gets a new id: its id never named text.
             let atom_id = if single && from.atom.is_some() { self.fresh_id() } else { 0 };
             if self.attributed() {

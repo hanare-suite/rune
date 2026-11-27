@@ -42,10 +42,13 @@ pub(crate) fn serialize_html(edit: &TextEdit, range: Range<usize>) -> String {
         match block {
             Block::Code => {
                 out.push_str("<pre");
+                out.push_str(&atom_attrs(edit, paras[idx].0, &paras[idx].1));
                 out.push_str(dirs[idx]);
                 out.push_str("><code>");
                 let mut first = true;
-                while idx < paras.len() && paras[idx].2 == Block::Code {
+                // An atom is a `<pre>` of its own, so it says so; text lines go in one block.
+                let alone = edit.paragraph(paras[idx].0).atom.is_some();
+                while idx < paras.len() && paras[idx].2 == Block::Code && (first || (!alone && edit.paragraph(paras[idx].0).atom.is_none())) {
                     if !first {
                         out.push('\n');
                     }
@@ -91,6 +94,7 @@ pub(crate) fn serialize_html(edit: &TextEdit, range: Range<usize>) -> String {
                         open_lists.push(k);
                     }
                     out.push_str("<li");
+                    out.push_str(&atom_attrs(edit, paras[idx].0, r));
                     out.push_str(dirs[idx]);
                     out.push_str(align_css(edit.paragraph(paras[idx].0).align));
                     out.push('>');
@@ -112,6 +116,7 @@ pub(crate) fn serialize_html(edit: &TextEdit, range: Range<usize>) -> String {
             }
             Block::Quote => {
                 out.push_str("<blockquote");
+                out.push_str(&atom_attrs(edit, paras[idx].0, &paras[idx].1));
                 out.push_str(dirs[idx]);
                 out.push('>');
                 serialize_inline(edit, paras[idx].1.clone(), &mut out);
@@ -135,9 +140,7 @@ pub(crate) fn serialize_html(edit: &TextEdit, range: Range<usize>) -> String {
                     out.push('"');
                 }
                 // An atom copied whole says so, with the id the app keeps its content under.
-                if let Some(height) = attrs.atom.filter(|_| paras[idx].1 == edit.line_range(paras[idx].0)) {
-                    out.push_str(&format!(" data-atom=\"{}\" data-atom-height=\"{height}\"", attrs.id));
-                }
+                out.push_str(&atom_attrs(edit, paras[idx].0, &paras[idx].1));
                 out.push_str(dirs[idx]);
                 out.push_str(align_css(attrs.align));
                 out.push('>');
@@ -158,6 +161,16 @@ pub(crate) fn serialize_html(edit: &TextEdit, range: Range<usize>) -> String {
         out.push_str("<p></p>");
     }
     out
+}
+
+/// ` data-atom` and ` data-atom-height` for a paragraph that is an atom copied whole, with the id the
+/// app keeps its content under: they go on its `<p>`, `<li>`, `<blockquote>` or `<pre>`.
+fn atom_attrs(edit: &TextEdit, line: usize, copied: &std::ops::Range<usize>) -> String {
+    let attrs = edit.paragraph(line);
+    match attrs.atom.filter(|_| *copied == edit.line_range(line)) {
+        Some(height) => format!(" data-atom=\"{}\" data-atom-height=\"{height}\"", attrs.id),
+        None => String::new(),
+    }
 }
 
 /// A block's ` style` attribute for its alignment, empty when it is left-aligned.

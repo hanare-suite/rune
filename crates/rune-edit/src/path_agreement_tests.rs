@@ -445,7 +445,9 @@ fn return_gives_the_result_of_a_typed_break_over_every_selection() {
             // The new paragraph is a copy of the line the selection starts on: its style, alignment,
             // indents and block, never a mix of two lines'.
             let want = |l: usize| { let o = e.paragraph(l); (o.style, o.align, (o.indent, o.first_line_indent), e.blocks()[l]) };
-            for (i, x) in rr.iter().enumerate() {
+            // (An atom the selection takes becomes text under a new id; that is no new paragraph.)
+            let touches_atom = (e.line_of_byte(a)..=e.line_of_byte(b)).any(|l| e.paragraph(l).atom.is_some());
+            for (i, x) in rr.iter().enumerate().filter(|_| !touches_atom) {
                 if x.1 == NEW && x.5.is_none() && (x.2, x.3, x.4, x.6) != want(line) { fails.push(format!("{msg}\n   new paragraph {i} is not a copy of line {line}")); }
             }
             // undo and redo
@@ -482,7 +484,9 @@ fn a_pasted_fragment_follows_the_rules_in_code_and_around_every_document() {
             let (a, b) = probe.range();
             if (a, b) != (a0, b0) { continue; }
             let (la, lb) = (olines.iter().position(|r| r.0 <= a && a <= r.1).unwrap(), olines.iter().position(|r| r.0 <= b && b <= r.1).unwrap());
-            let in_code = oblocks[la] == Block::Code;
+            // The line what is left of the selection joins decides whether the paste goes into code.
+            let landing = if la < lb && a == olines[la].0 && (b == olines[lb].0 || oattrs[la].atom.is_some()) { lb } else { la };
+            let in_code = oblocks[landing] == Block::Code && oattrs[landing].atom.is_none();
             for (fi, fr) in frags.iter().enumerate() {
                 cases += 1;
                 let f = mkfrag(fr);
@@ -503,8 +507,10 @@ fn a_pasted_fragment_follows_the_rules_in_code_and_around_every_document() {
                 let off = if ft.starts_with('\n') { off.saturating_sub(1) } else { off };
                 if !mid[off..].starts_with(ft) || !mid[off + ft.len()..].chars().all(|c| c == '\n') || off > 1 || mid.len() - off - ft.len() > 1 { fail("text-shape", format!("mid {mid:?}")); continue; }
                 if !in_code {
-                    let want: BTreeSet<(usize, String)> = fmarks.iter().flat_map(|m| (m.start..m.end).map(move |i| (off + i, format!("{:?}", m.mark)))).collect();
-                    let got = marked(x.marks(), a, a + mid.len());
+                    // (A code line holds no marks, wherever the text of the paste ends up.)
+                    let plain_line = |i: &usize| x.blocks()[x.line_of_byte(a + *i)] != Block::Code;
+                    let want: BTreeSet<(usize, String)> = fmarks.iter().flat_map(|m| (m.start..m.end).map(move |i| (off + i, format!("{:?}", m.mark)))).filter(|(i, _)| plain_line(i)).collect();
+                    let got: BTreeSet<(usize, String)> = marked(x.marks(), a, a + mid.len()).into_iter().filter(|(i, _)| plain_line(i)).collect();
                     if want != got { fail("marks", format!("want {want:?} got {got:?}")); }
                 }
                 let ids: Vec<u64> = x.paragraph_attrs().iter().map(|a| a.id).collect();

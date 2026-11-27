@@ -228,6 +228,25 @@ fn block_style(styles: &[HtmlStyle], tag: &str, attrs: &str) -> Option<u16> {
     styles.iter().find(|s| s.tag == tag && s.class.is_some_and(has)).or_else(|| styles.iter().find(|s| s.tag == tag && s.class.is_none())).map(|s| s.style)
 }
 
+/// The whitespace-separated tokens of a CSS value, a function's arguments (`rgb(1, 2, 3)`) staying one.
+fn css_tokens(val: &str) -> Vec<&str> {
+    let (mut out, mut depth, mut start) = (Vec::new(), 0usize, None);
+    for (i, c) in val.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            c if c.is_whitespace() && depth == 0 => {
+                if let Some(s) = start.take() { out.push(&val[s..i]); }
+                continue;
+            }
+            _ => {}
+        }
+        start.get_or_insert(i);
+    }
+    if let Some(s) = start { out.push(&val[s..]); }
+    out
+}
+
 /// Parses inline CSS `style="..."` for the marks this model keeps: `font-weight`, `font-style`,
 /// `text-decoration`, `color`, `font-family`, `font-size`, `background-color` and `vertical-align`.
 fn parse_style_marks(style: &str, add: &mut Vec<Mark>, remove: &mut Vec<Mark>) {
@@ -277,7 +296,9 @@ fn parse_style_marks(style: &str, add: &mut Vec<Mark>, remove: &mut Vec<Mark>) {
         } else if prop.eq_ignore_ascii_case("font-size") {
             if let Some(points) = css_points(val) { add.push(Mark::Size(MarkSize::pt(points))); }
         } else if prop.eq_ignore_ascii_case("background-color") || prop.eq_ignore_ascii_case("background") || prop.eq_ignore_ascii_case("mso-highlight") {
-            let highlight = val.split_whitespace().find_map(color::parse_css_color).and_then(|hex| rune_core::color::hex(&hex));
+            // The whole value first (`rgb(255, 255, 0)` has spaces in it), then its tokens (`yellow no-repeat`).
+            let hex = color::parse_css_color(val).or_else(|| css_tokens(val).into_iter().find_map(color::parse_css_color));
+            let highlight = hex.and_then(|hex| rune_core::color::hex(&hex));
             if let Some(c) = highlight { add.push(Mark::Highlight(MarkColor::new(c))); }
         } else if prop.eq_ignore_ascii_case("vertical-align") {
             if val.eq_ignore_ascii_case("super") { add.push(Mark::Baseline(Baseline::Super)); }

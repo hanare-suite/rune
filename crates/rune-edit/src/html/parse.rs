@@ -1,7 +1,7 @@
 //! Safe HTML fragment parser into [`TextEdit`].
 
 use super::{ListKind, block_align, block_atom, block_style, color::parse_font_color, decode_entities, extract_attr, is_safe_href, parse_style_marks};
-use crate::{Baseline, Block, HtmlStyle, MAX_LIST_LEVEL, Mark, MarkRange, ParagraphAttrs, TextEdit};
+use crate::{Baseline, Block, HtmlStyle, MAX_LIST_LEVEL, Mark, MarkRange, ParagraphAlign, ParagraphAttrs, TextEdit};
 
 const MAX_DEPTH: usize = 512;
 
@@ -253,10 +253,7 @@ pub(crate) fn parse_html(html: &str, styles: &[HtmlStyle]) -> TextEdit {
                             blk,
                             in_pre,
                         );
-                        if let Some(align) = block_align(attrs) {
-                            line_attrs.resize(blocks.len(), ParagraphAttrs::default());
-                            line_attrs[blocks.len() - 1].align = align;
-                        }
+                        mark_block(&mut line_attrs, blocks.len(), block_align(attrs), block_atom(attrs));
                     }
                     "blockquote" => {
                         in_quote += 1;
@@ -272,6 +269,7 @@ pub(crate) fn parse_html(html: &str, styles: &[HtmlStyle]) -> TextEdit {
                             blk,
                             in_pre,
                         );
+                        mark_block(&mut line_attrs, blocks.len(), None, block_atom(attrs));
                     }
                     "pre" => {
                         in_pre += 1;
@@ -286,6 +284,7 @@ pub(crate) fn parse_html(html: &str, styles: &[HtmlStyle]) -> TextEdit {
                             Block::Code,
                             in_pre,
                         );
+                        mark_block(&mut line_attrs, blocks.len(), None, block_atom(attrs));
                     }
                     "p" | "div" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
                         let blk = current_default_block(&list_stack, in_pre, in_quote, in_li);
@@ -605,4 +604,16 @@ pub(crate) fn parse_html(html: &str, styles: &[HtmlStyle]) -> TextEdit {
         edit.set_paragraph_attrs(line_attrs);
     }
     edit
+}
+
+/// What a `<li>`, `<blockquote>` or `<pre>` says of its line: its alignment, and the atom (its id and
+/// height) it is, as the app's own copy writes it.
+fn mark_block(line_attrs: &mut Vec<ParagraphAttrs>, lines: usize, align: Option<ParagraphAlign>, atom: Option<(u64, f32)>) {
+    if align.is_none() && atom.is_none() { return; }
+    line_attrs.resize(lines, ParagraphAttrs::default());
+    let slot = &mut line_attrs[lines - 1];
+    slot.align = align.unwrap_or(slot.align);
+    if let Some((id, height)) = atom {
+        *slot = slot.atom(height).id(id);
+    }
 }

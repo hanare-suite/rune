@@ -353,7 +353,8 @@ impl TextEdit {
             let mut lines = Vec::with_capacity(added + 1);
             for _ in 0..added {
                 let id = self.fresh_id();
-                lines.push(if copy { split_attrs(line, id) } else { ParagraphAttrs::default().id(id) });
+                // Return copies the line the selection starts on, whole, not a mix of two lines'.
+                lines.push(if copy { split_attrs(first, id) } else { ParagraphAttrs::default().id(id) });
             }
             // An atom the edit took gives its line to text, under a new id.
             lines.push(self.as_text(line));

@@ -706,7 +706,7 @@ fn over_a_whole_atom_every_path_leaves_the_next_paragraph_its_id() {
             assert_eq!(leaves(atom_between(), sel, name, edit), vec![aaa(), plain_row("A"), end(&joined)], "{name} over {sel:?}");
         }
         let got = leaves(atom_between(), sel, "Return", return_key);
-        assert_eq!(got, vec![aaa(), ("".into(), NEW, 3, ParagraphAlign::Left, (0.0, 0.0), None, Block::Paragraph), end(tail)], "Return over {sel:?}");
+        assert_eq!(got, vec![aaa(), ("".into(), NEW, 2, ParagraphAlign::Left, (0.0, 0.0), None, Block::Paragraph), end(tail)], "Return over {sel:?}");
     }
 }
 
