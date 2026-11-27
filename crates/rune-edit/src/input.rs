@@ -568,7 +568,9 @@ impl TextEdit {
     /// the plain text, but a fragment's atoms still go in as atoms on lines of their own: the code
     /// line splits around them and its parts keep the Code block. A fragment that holds what the
     /// selection holds (its text, marks, and for the lines it covers whole their blocks and
-    /// attributes, ids aside) changes nothing.
+    /// attributes, ids aside) changes nothing. A copy through [`selected_html`](Self::selected_html) holds the
+    /// selection exactly where the HTML can say it; it cannot say an indent, a page break, a paragraph style on
+    /// a list item, quote or code line, so a paste of such a copy follows the rules instead.
     pub fn paste_fragment(&mut self, mut frag: TextEdit, plain: &str) -> EditOutcome {
         if self.secure {
             return self.paste(plain);
@@ -665,12 +667,6 @@ impl TextEdit {
         without_id.id = 0;
         // Only a single line pasted into an empty plain line gives it the pasted paragraph's
         // attributes; every other line the paste lands in keeps its own.
-        // A fragment that ends in an atom pasted over an empty line of the defaults (what a cut of paragraphs
-        // up to an atom leaves) puts the atom in that line, so a paste in place restores the document.
-        // (Or one that looks as the atom does: its paragraph, emptied, as a cut leaves it.)
-        let look = |x: &ParagraphAttrs| (x.style, x.align, x.indent.to_bits(), x.first_line_indent.to_bits());
-        let atom_takes_line = empty_line
-            && frag.attrs.get(frag.blocks.len() - 1).is_some_and(|x| x.atom.is_some() && (without_id == ParagraphAttrs::default() || look(x) == look(&recv.0)));
         let plain_single = frag.blocks.len() == 1 && empty_line && without_id == ParagraphAttrs::default() && recv.1 == Block::Paragraph;
         // A fragment's atom is an atom on a line of its own, never an existing paragraph's text:
         // where its line would join what is left of a line (the first or the last the paste
@@ -688,7 +684,7 @@ impl TextEdit {
                 if frag_atom(&frag, 0) && joined(0) && !plain_single && !consumed_first && (before || last > 0) {
                     // Without marks, whatever the caret inherits: the break is no one's text.
                     frag.insert_plain_at(0, "\n");
-                } else if frag_atom(&frag, last) && (joined(last) || (last == 0 && joined(0))) && !plain_single && !atom_takes_line {
+                } else if frag_atom(&frag, last) && (joined(last) || (last == 0 && joined(0))) && !plain_single {
                     frag.insert_plain_at(frag.text.len(), "\n");
                 } else {
                     break;
@@ -711,7 +707,7 @@ impl TextEdit {
         for k in 0..frag_lines {
             let (j, line) = (fenced.lead + k, line_idx + k);
             let from = frag.paragraph(k);
-            let consumes = ((consumed_first && k == 0) || (atom_takes_line && k + 1 == frag_lines)) && from.atom.is_some() && fenced.lead == 0 && !is_new(j);
+            let consumes = consumed_first && k == 0 && from.atom.is_some() && fenced.lead == 0 && !is_new(j);
             let single = (plain_single && k == 0 && !is_new(j)) || consumes;
             if !is_new(j) && !single { continue; }
             // Text of a fragment goes into a code block as plain text: a line the edit made in one

@@ -23,7 +23,7 @@ pub(crate) fn serialize_html(edit: &TextEdit, range: Range<usize>) -> String {
             let sub_start = p.range.start.max(start);
             let sub_end = p.range.end.min(end);
             if sub_start <= sub_end
-                && (sub_start < sub_end || start == end || (p.range.start >= start && p.range.end <= end))
+                && (sub_start < sub_end || start == end || (p.range.start >= start && p.range.end <= end) || (start == p.range.end && end > start))
             {
                 paras.push((p.index, sub_start..sub_end, p.block, p.soft_break && p.range.start > start));
             }
@@ -32,7 +32,7 @@ pub(crate) fn serialize_html(edit: &TextEdit, range: Range<usize>) -> String {
 
     // A copy that ends behind a line break, at the start of a paragraph it takes nothing of,
     // ends in an empty paragraph, so a paste breaks the line there as the copy did.
-    let open_end = end > start && edit.text.as_bytes()[end - 1] == b'\n' && paras.last().is_some_and(|p| p.1.end < end && p.2 != Block::Code);
+    let open_end = end > start && edit.text.as_bytes()[end - 1] == b'\n' && paras.last().is_some_and(|p| p.1.end < end);
 
     let dirs = block_dirs(edit, &paras);
     let mut out = String::new();

@@ -52,7 +52,10 @@ impl TextEdit {
         self.sync_attrs(line_count);
         self.soft_breaks.sort_unstable();
         self.soft_breaks.dedup();
-        self.soft_breaks.retain(|&idx| idx > 0 && (idx as usize) < line_count);
+        // An atom is never a soft line and never has one: whatever edit left it beside one.
+        let attrs = &self.attrs;
+        let plain = |i: usize| attrs.get(i).is_none_or(|a| a.atom.is_none());
+        self.soft_breaks.retain(|&idx| idx > 0 && (idx as usize) < line_count && plain(idx as usize) && plain(idx as usize - 1));
         self.normalize_marks();
         self.snap_to_pills();
         let anchor_line = self.line_of_byte(self.anchor);

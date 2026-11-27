@@ -574,7 +574,8 @@ impl TextEdit {
         self.sync_invariants();
     }
 
-    /// Replace the per-line [`Block`] list on `self.text`.
+    /// Replace the per-line [`Block`] list on `self.text`. A code line holds no marks: those on lines
+    /// that become code are dropped, and reported as a change.
     pub fn set_blocks(&mut self, blocks: Vec<Block>) {
         self.blocks = blocks;
         self.clamp_list_levels();

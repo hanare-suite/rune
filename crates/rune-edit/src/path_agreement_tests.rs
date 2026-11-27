@@ -227,7 +227,7 @@ fn a_pasted_fragment_follows_the_rules_over_every_selection() {
                 let (ra, rb) = (olines[la], olines[lb]);
                 let mut wo = oattrs[if la < lb && a == ra.0 && (b == rb.0 || oattrs[la].atom.is_some()) { lb } else { la }]; wo.id = 0;
                 let recv_block = oblocks[if la < lb && a == ra.0 && (b == rb.0 || oattrs[la].atom.is_some()) { lb } else { la }];
-                let plain_single = flines.len() == 1 && a == ra.0 && b == rb.1 && wo == ParagraphAttrs::default() && recv_block == Block::Paragraph || (fa.last().is_some_and(|x| x.atom.is_some()) && a == ra.0 && b == rb.1 && (wo == ParagraphAttrs::default() || { let l = fa.last().unwrap(); (l.style, l.align, l.indent, l.first_line_indent) == (wo.style, wo.align, wo.indent, wo.first_line_indent) }));
+                let plain_single = flines.len() == 1 && a == ra.0 && b == rb.1 && wo == ParagraphAttrs::default() && recv_block == Block::Paragraph;
                 for k in 0..flines.len() {
                     let (t, at, bl) = lines[l0 + k];
                     let from = fa[k];
@@ -468,12 +468,11 @@ fn return_gives_the_result_of_a_typed_break_over_every_selection() {
             // The new paragraph is a copy of the line the selection starts on: its style, alignment,
             // indents and block, never a mix of two lines'.
             let want = |l: usize| { let o = e.paragraph(l); (o.style, o.align, (o.indent, o.first_line_indent), e.blocks()[l]) };
-            // Only two shapes are no copy of that line: an atom's line that became text (under a new id,
-            // in the atom's attributes), and a default line made inside a code block.
+            // Only one shape is no copy of that line: an atom's line that became text (under a new id, in
+            // the atom's attributes).
             let as_text = |x: &Row| (la_line(&e, a)..=e.line_of_byte(b)).any(|l| { let o = e.paragraph(l); o.atom.is_some() && (x.2, x.3, x.4, x.6) == (o.style, o.align, (o.indent, o.first_line_indent), e.blocks()[l]) });
             for (i, x) in rr.iter().enumerate() {
-                let code_default = x.6 == Block::Code && (x.2, x.3, x.4) == (0, ParagraphAlign::Left, (0.0, 0.0));
-                if x.1 == NEW && x.5.is_none() && (x.2, x.3, x.4, x.6) != want(line) && !as_text(x) && !code_default { fails.push(format!("{msg}\n   new paragraph {i} is not a copy of line {line}")); }
+                if x.1 == NEW && x.5.is_none() && (x.2, x.3, x.4, x.6) != want(line) && !as_text(x) { fails.push(format!("{msg}\n   new paragraph {i} is not a copy of line {line}")); }
             }
             // undo and redo
             let mut y = e.clone();
@@ -573,8 +572,7 @@ fn a_pasted_fragment_follows_the_rules_in_code_and_around_every_document() {
                             let code_line = bl == Block::Code;
                             let as_text = |o: ParagraphAttrs| { let mut o = o; o.atom = None; o.id = at.id; o };
                             let kept_atom = atom_touch && (la..=lb).any(|l| oattrs[l].atom.is_some() && (as_text(oattrs[l]) == at || { let mut o = as_text(oattrs[l]); o.page_break_before = false; o == at }));
-                            let code_default = code_line && { let mut o = ParagraphAttrs::default(); o.id = at.id; o == at };
-                            if kept_atom || code_default { continue; }
+                            if kept_atom { continue; }
                             if (at.style, at.align) != (from.style, from.align) || bl != fb[k] || at.indent != 0.0 || at.first_line_indent != 0.0 || at.page_break_before {
                                 fail(&format!("new-para-k{}{}{}", if k == 0 { "first" } else if k == last { "last" } else { "mid" }, if atom_touch { "/atomtouch" } else { "" }, if code_line { "/codeline" } else { "" }), format!("frag line {k}: {at:?} {bl:?}"));
                             }
@@ -605,7 +603,7 @@ fn a_pasted_fragment_follows_the_rules_in_code_and_around_every_document() {
                 let added = mid.matches('\n').count();
                 let end_line = la + added;
                 let mut wo = oattrs[landing]; wo.id = 0;
-                let plain_single = flines.len() == 1 && a == ra.0 && b == rb.1 && wo == ParagraphAttrs::default() && oblocks[landing] == Block::Paragraph || (fa.last().is_some_and(|x| x.atom.is_some()) && a == ra.0 && b == rb.1 && (wo == ParagraphAttrs::default() || { let l = fa.last().unwrap(); (l.style, l.align, l.indent, l.first_line_indent) == (wo.style, wo.align, wo.indent, wo.first_line_indent) }));
+                let plain_single = flines.len() == 1 && a == ra.0 && b == rb.1 && wo == ParagraphAttrs::default() && oblocks[landing] == Block::Paragraph;
                 let takes_block = a == ra.0 && b == rb.1 && oblocks[landing] == Block::Paragraph && flines.len() > 1 && !ft.ends_with('\n');
                 let blk = |orig: Block, got: Block| if takes_block { got == orig || got == fb[last] } else { got == orig };
                 if a == b && a == ra.0 && !plain_single {
