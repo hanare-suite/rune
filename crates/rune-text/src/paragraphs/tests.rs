@@ -23,6 +23,31 @@ fn input<'a>(content: &'a str, blocks: &'a [Block], style: TextStyle, dir: TextD
     }
 }
 
+/// `inp` as a document field's: paragraph attributes, one for each paragraph.
+fn document<'a>(mut inp: TextInput<'a>, attrs: &'a [ParagraphAttrs]) -> TextInput<'a> {
+    inp.flow = Some(Flowed { styles: &[], page: None, attrs, key: 1, styles_key: 1 });
+    inp
+}
+
+#[test]
+fn an_empty_line_stays_at_the_left_in_a_field_without_paragraph_attributes() {
+    let mut ts = TextSystem::default();
+    let style = TextStyle::new(14.0, 400.0);
+    let (scale, max_w, caret_w) = (2.0, 400.0, 3.0);
+    let text = "one\n\ntwo";
+    for align in [Alignment::Center, Alignment::End, Alignment::Right] {
+        let laid = ts.layout_text(&input(text, &[], style, TextDir::Fixed(Flow::Ltr)), true, scale, Some(max_w), align, None);
+        assert_eq!(laid.view().caret(4, Affinity::Downstream, caret_w).x0 as f32, 0.0, "{align:?}: a plain field's empty line starts at its left edge");
+    }
+
+    // A document field places it by the paragraph's own alignment.
+    for (align, want) in [(ParagraphAlign::Center, max_w / 2.0), (ParagraphAlign::Right, max_w - caret_w), (ParagraphAlign::Left, 0.0)] {
+        let attrs = [ParagraphAttrs::default(), ParagraphAttrs::default().align(align), ParagraphAttrs::default()];
+        let laid = ts.layout_text(&document(input(text, &[], style, TextDir::Fixed(Flow::Ltr)), &attrs), true, scale, Some(max_w), Alignment::Start, None);
+        assert_eq!(laid.view().caret(4, Affinity::Downstream, caret_w).x0 as f32, want, "{align:?}");
+    }
+}
+
 #[test]
 fn caret_on_empty_indented_block_matches_filled_block_start() {
     let mut ts = TextSystem::default();
@@ -65,6 +90,11 @@ x", &blocks, style, TextDir::Fixed(Flow::Ltr)), true, scale, Some(max_w), Alignm
         let right_pad = if blk == Block::Code { indent } else { 0.0 };
         assert_eq!(rtl_x, (max_w - right_pad - caret_w).max(indent), "RTL {blk:?}");
     }
+
+    // A centred paragraph of a document field is centred when it reads right to left too.
+    let attrs = [ParagraphAttrs::default(), ParagraphAttrs::default().align(ParagraphAlign::Center)];
+    let centred = ts.layout_text(&document(input("א\n", &[], style, TextDir::Fixed(Flow::Rtl)), &attrs), true, scale, Some(max_w), Alignment::Start, None);
+    assert_eq!(centred.view().caret("א\n".len(), Affinity::Downstream, caret_w).x0 as f32, max_w / 2.0, "RTL centred");
 
     // Each paragraph uses its own block indent rather than the previous paragraph's.
     let to_list = ts.layout_text(&input("one
