@@ -301,13 +301,13 @@ impl<'a> TextFlow<'a> {
     }
 
     /// Where an empty paragraph's caret or newline box, `size` px wide, starts: after its indents
-    /// when reading left to right, and in the middle or at the end of its line when it is
-    /// centred or right-aligned, or inside its right padding from the wrap width when reading
-    /// right to left.
+    /// when reading left to right, and, in a field with paragraph attributes, in the middle or at
+    /// the end of its line when it is centred or right-aligned; or inside its right padding from
+    /// the wrap width when reading right to left, unless it is centred.
     pub(crate) fn blank_start(self, p: &Piece<'_>, size: f32) -> f32 {
         let TextFlow::Paragraphs(pl) = self else { return p.pad[0] };
         let indent = if p.index == 0 { pl.text_indent_px } else { 0.0 };
-        if p.flow == Flow::Rtl {
+        if p.flow == Flow::Rtl && p.shape.align != Alignment::Center {
             return (pl.max_width.unwrap_or(pl.width) - p.pad[1] - indent - size).max(p.pad[0]);
         }
         // Where line breaking starts its first line, and how much room it leaves it.
@@ -885,7 +885,9 @@ impl TextSystem {
                 (height, widths) = (if a == b { layout.height().max(line) } else { layout.height() }, [layout.width(), layout.full_width()]);
             }
             (width, full_width) = (width.max(widths[0]), full_width.max(widths[1]));
-            let placed = self.place_on_page(&pager, y, k == 0, &own, shape, layout, height, kept, again.is_some(), blocks, (para_indent, style.size), scale, max_width);
+            let mut placed = self.place_on_page(&pager, y, k == 0, &own, shape, layout, height, kept, again.is_some(), blocks, (para_indent, style.size), scale, max_width);
+            // Without paragraph attributes an empty line's caret stays at its left edge, whatever the field's alignment.
+            if spec.flow.is_none() { placed.paged.shape = paged::Shape::NONE; }
             let py = if spec.flow.is_some() { (placed.top + placed.lead).round() as f32 } else if want_frac != 0.0 { y.floor() as f32 } else { y.round() as f32 };
             paragraphs.push(Paragraph { start: a, end: b, y: py, y_frac: want_frac, height: placed.height, widths, pad, flow, key, isolates, layout: placed.layout, shaped: true, lines: 1, run: false, paged: placed.paged });
             y = pager.end(placed.top, placed.extent, own.after);

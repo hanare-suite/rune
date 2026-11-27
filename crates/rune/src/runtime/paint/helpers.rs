@@ -156,11 +156,11 @@ pub(in crate::runtime) fn emit_block_decorations(
             Block::Code => code_run = Some((top, bot)),
             Block::Quote => quote_run = Some((top, bot)),
             Block::Bullet(_) => {
-                let indent = marker_x((blk.indent_pt(para_size(spec, 0)) * s).round(), spec.cold.attrs.first(), s);
+                let indent = (blk.indent_pt(spec.style.size) * s).round();
                 markers.push((indent, baseline, blk, 0));
             }
             Block::Numbered(_) => {
-                let indent = marker_x((blk.indent_pt(para_size(spec, 0)) * s).round(), spec.cold.attrs.first(), s);
+                let indent = (blk.indent_pt(spec.style.size) * s).round();
                 markers.push((indent, baseline, blk, 1));
             }
             Block::Paragraph => {}
