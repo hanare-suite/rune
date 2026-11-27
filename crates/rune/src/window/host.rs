@@ -22,6 +22,7 @@ use crate::windows::{WindowOptions, WindowSpec};
 
 pub(in crate::window) mod any_host;
 pub(in crate::window) mod app;
+pub(in crate::window) mod close_guard;
 pub(in crate::window) mod create;
 pub(in crate::window) mod draw;
 pub(in crate::window) mod events;
@@ -91,6 +92,12 @@ pub(in crate::window) struct Host {
     pub(in crate::window) chores: super::win32::post_frame::Chores,
     /// Its close ends the app (`Windows::window_event`): the last window of a fast-exiting app.
     pub(in crate::window) ends_app: bool,
+    /// A quit asked `App::on_close_guard` and the window has not yet settled (`settle_open`).
+    pub(in crate::window) settle_due: bool,
+    /// The guard held back closes at the last handler (`Host::note_guard`).
+    pub(in crate::window) guarded: bool,
+    /// The window was an open main window at the last handler, counted in `crate::quit`.
+    pub(in crate::window) main: bool,
     /// Whether a turn is inside `App::turn_scope` now.
     pub(in crate::window) turn: any_host::Turn,
     /// Its place among the windows receiving links (`App::on_open_url`) and files (`App::on_open_files`).
@@ -467,6 +474,8 @@ impl Host {
             native_handle.native.no_activate.store(windows_window.no_activate, Ordering::Release);
             native_handle.native.tool_window.store(windows_window.tool_window, Ordering::Release);
         }
+        // Counted from here: another main window closing meets it, however early.
+        if keeps_loop { crate::quit::main_open(true); }
         Host {
             app_woken,
             chrome,
@@ -496,6 +505,9 @@ impl Host {
             #[cfg(target_os = "windows")]
             chores: Default::default(),
             ends_app: false,
+            settle_due: false,
+            guarded: false,
+            main: keeps_loop,
             turn: any_host::Turn::Between,
             _incoming: incoming,
             release_gpu,

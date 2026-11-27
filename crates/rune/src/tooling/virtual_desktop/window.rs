@@ -102,6 +102,8 @@ trait DesktopApp {
     fn rt_mut(&mut self) -> &mut RuntimeCore;
     fn with_driver(&mut self, f: &mut dyn FnMut(&mut RuntimeCore, &mut dyn AppDriver));
     fn run_on_close_request(&mut self) -> Option<crate::CloseResponse>;
+    /// Asks `App::on_close_guard`: while it holds the close, runs its `ask`. True when it held.
+    fn hold_close(&mut self) -> bool;
     fn run_on_close(&mut self);
     fn run_on_reopen(&mut self, has_visible_windows: bool) -> bool;
     fn drain_updates(&mut self, menus: &mut crate::native_menu::MenuGuard) -> WindowRequests;
@@ -160,6 +162,9 @@ impl<S: 'static> DesktopApp for TypedDesktopApp<S> {
         let mut resp = crate::CloseResponse::Close;
         self.rt.update(|s, tx| resp = f(s, tx));
         Some(resp)
+    }
+    fn hold_close(&mut self) -> bool {
+        self.shared.close_guard.get().is_some_and(|guard| guard.holds(&mut self.rt))
     }
     fn run_on_close(&mut self) {
         if let Some(f) = self.on_close { self.rt.update(f); }
@@ -434,6 +439,7 @@ impl Window {
     /// As the native host closes (`Life::closes`): a headless window always exists.
     fn close(&mut self) {
         if !self.life.closes(self.keep_running, true) { return; }
+        if self.app.hold_close() { return; }
         self.app.run_on_close();
         self.hide();
         if !self.keep_running {

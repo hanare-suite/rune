@@ -36,6 +36,12 @@ pub(super) fn quit_hosts(
     exit
 }
 
+/// A macOS Quit, or the close of the last main window held for another window's guard, asks the
+/// windows that hold back their close (`App::on_close_guard`), each time. True when a window holds.
+pub(super) fn hold_quit(hosts: &mut [Option<Box<dyn AnyHost>>]) -> bool {
+    hosts.iter_mut().flatten().fold(false, |held, host| host.hold_quit() | held)
+}
+
 /// Runs every registered `App::on_display_close` hook once on the UI thread, in registration
 /// order, draining them so later exit steps never invoke them again.
 pub(super) fn run_display_close(hooks: &mut Vec<crate::app::OnDisplayClose>) {
@@ -211,3 +217,6 @@ impl Windows {
 #[cfg(test)]
 #[path = "app_events_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "close_guard_tests.rs"]
+mod close_guard_tests;

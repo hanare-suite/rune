@@ -7,6 +7,7 @@ compile_error!("web does not support Rune's hot or native-file-dialog features; 
 
 mod a11y;
 mod app;
+mod close_guard;
 mod flight;
 mod frame;
 mod haptics;

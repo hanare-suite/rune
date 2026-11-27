@@ -37,6 +37,12 @@ pub(crate) trait WindowApp {
     fn enter_turn(&mut self) -> bool;
     fn leave_turn(&mut self);
     fn run_on_close_request(&mut self) -> Option<crate::CloseResponse>;
+    /// Whether the app set `App::on_close_guard`.
+    fn has_close_guard(&self) -> bool;
+    /// Whether `App::on_close_guard` says now that a close is held back. False without the hook.
+    fn close_guarded(&self) -> bool;
+    /// Asks `App::on_close_guard`: while it holds the close, runs its `ask`. True when it held.
+    fn hold_close(&mut self) -> bool;
     fn run_on_close(&mut self);
     fn run_on_quit(&mut self) -> bool;
     fn run_on_rest(&mut self);
@@ -203,9 +209,22 @@ pub(in crate::window) fn test_app_with_close_request<S: 'static>(
     on_close: Option<fn(&mut S, &mut Tx)>,
     on_quit: Option<fn(&mut S, &mut Tx)>,
 ) -> Box<dyn WindowApp> {
+    test_app_with_close_guard(rt, on_close_request, None, on_close, on_quit)
+}
+
+#[cfg(test)]
+pub(in crate::window) fn test_app_with_close_guard<S: 'static>(
+    rt: Runtime<S>,
+    on_close_request: Option<fn(&mut S, &mut Tx) -> crate::CloseResponse>,
+    close_guard: Option<crate::close_guard::CloseGuard<S>>,
+    on_close: Option<fn(&mut S, &mut Tx)>,
+    on_quit: Option<fn(&mut S, &mut Tx)>,
+) -> Box<dyn WindowApp> {
+    let shared = Arc::new(Shared::default());
+    if let Some(guard) = close_guard { shared.close_guard.set(guard); }
     Box::new(TypedWindowApp {
         rt,
-        shared: Arc::new(Shared::default()),
+        shared,
         comp: None,
         on_frame_drawn: None,
         on_close_request,
@@ -305,6 +324,16 @@ impl<S: 'static> WindowApp for TypedWindowApp<S> {
             { response = f(s, tx); }
         });
         Some(response)
+    }
+
+    fn has_close_guard(&self) -> bool { self.shared.close_guard.get().is_some() }
+
+    fn close_guarded(&self) -> bool {
+        self.shared.close_guard.get().is_some_and(|guard| guard.is_guarded(&self.rt.state))
+    }
+
+    fn hold_close(&mut self) -> bool {
+        self.shared.close_guard.get().is_some_and(|guard| guard.holds(&mut self.rt))
     }
 
     fn run_on_close(&mut self) {

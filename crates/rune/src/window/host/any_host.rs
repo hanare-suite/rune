@@ -25,6 +25,10 @@ impl AnyHost for Host {
     fn take_startup_error(&mut self) -> Option<String> { self.startup_error.take() }
     fn keeps_loop(&self) -> bool { self.keeps_loop }
     fn closing_ends_app(&mut self) { self.ends_app = true; }
+    fn hold_quit(&mut self) -> bool {
+        if !self.app.has_close_guard() { return false; }
+        self.in_turn(Host::holds_quit)
+    }
     fn key(&self) -> Option<&str> { Some(self.native_handle.key()) }
     fn reopen_candidate(&self) -> crate::platform::reopen::Candidate {
         let shown = self.shown_win();
@@ -149,6 +153,7 @@ impl Host {
     /// The loop's turn ends: the frame the window wants next is asked for, and on Windows a
     /// window whose paint the system keeps putting off behind another's paints now (`Redraw`).
     fn turn_ends_in_turn(&mut self, event_loop: &ActiveEventLoop, now: Instant) {
+        if self.settle_due { self.settle_open(event_loop); }
         let Some(w) = &self.win else { return };
         let paints = cfg!(target_os = "windows") && self.life.uncovered() && !w.minimized();
         let (next, effect) = w.redraw.get().step(RedrawEvent::TurnEnds { now, paints });
@@ -212,11 +217,15 @@ impl Host {
 
     /// Runs `f` inside the app's turn scope, entered once however deep the turn's calls go.
     fn in_turn<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
-        if self.turn != Turn::Between || !self.app.enter_turn() { return f(self); }
-        self.turn = Turn::Within;
+        if self.turn != Turn::Between { return f(self); }
+        let entered = self.app.enter_turn();
+        if entered { self.turn = Turn::Within; }
         let result = f(self);
-        self.app.leave_turn();
-        self.turn = Turn::Between;
+        self.note_guard();
+        if entered {
+            self.app.leave_turn();
+            self.turn = Turn::Between;
+        }
         result
     }
 

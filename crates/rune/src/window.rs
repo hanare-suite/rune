@@ -241,6 +241,7 @@ pub(crate) trait AnyHost {
     fn vanish(&mut self) {}
     /// The close about to come ends the app (`Host::close`).
     fn closing_ends_app(&mut self) {}
+    fn hold_quit(&mut self) -> bool { false }
     /// Ends a tracking pop-up menu and answers waiting ones `None`, before the host drops or
     /// the loop exits.
     fn cancel_menus(&mut self) {}
@@ -518,8 +519,7 @@ impl ApplicationHandler<WakeEvent> for Windows {
                 let proxy = this.proxy.clone();
                 crate::open_url::instance::on_relaunch(move || proxy.send_event(WakeEvent::Reopen).is_ok());
             }
-            let proxy = this.proxy.clone();
-            crate::quit::install(move |ending| proxy.send_event(WakeEvent::Quit(ending)).is_ok());
+            crate::quit::install({ let proxy = this.proxy.clone(); move |ending| proxy.send_event(WakeEvent::Quit(ending)).is_ok() }, { let proxy = this.proxy.clone(); move || { let _ = proxy.send_event(WakeEvent::Turn); } });
             crate::open_url::incoming::settle();
             // A window opened at launch took it; a GPU kept for a later one would sit idle until then.
             crate::render::discard_prewarm();
@@ -568,7 +568,7 @@ impl ApplicationHandler<WakeEvent> for Windows {
             let _handling = crate::quit::handling();
             // The last window's close ends a fast-exiting app: the window can go at once.
             #[cfg(not(target_arch = "wasm32"))]
-            if matches!(event, WindowEvent::CloseRequested) && crate::quit::fast_exit_hook().is_some()
+            if matches!(event, WindowEvent::CloseRequested) && crate::quit::fast_exit_hook().is_some() && !crate::quit::any_guarded()
                 && !this.hosts.iter().flatten().any(|h| !h.owns(id) && !h.finished() && h.keeps_loop())
                 && let Some(host) = this.hosts.iter_mut().flatten().find(|h| h.owns(id) && h.keeps_loop())
             {

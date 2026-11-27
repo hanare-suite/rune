@@ -79,6 +79,9 @@ pub(super) struct HeadlessLoop<'a> {
     pub(super) snap_crop: &'a Cell<Option<[u32; 4]>>,
     pub(super) cpu_boot: &'a RefCell<Option<crate::render::cpu_boot::tool::Tool>>,
     pub(super) loop_check: loop_check::Tally,
+    /// The window closed (`{"close": true}`, `Tx::close_window`): the headless run has no window to
+    /// take away, so it only shows in the tree, as `"closed": true`.
+    pub(super) closed: bool,
     pub(super) cpu_ms: Vec<f64>,
     pub(super) anim_ms: Vec<f64>,
     pub(super) rest_ms: Vec<f64>,
@@ -87,6 +90,15 @@ pub(super) struct HeadlessLoop<'a> {
 }
 
 impl HeadlessLoop<'_> {
+    /// A close as the native window takes it, once: `user` for a user's close request (the close
+    /// button, `{"close_request": true}`: `on_close_request`, then the guard, then `on_close`),
+    /// else `Tx::close_window` (the guard, then `on_close`). The window is closed only when no
+    /// hook held it back.
+    pub(super) fn close(&mut self, app: &mut dyn HeadlessApp, user: bool) {
+        if self.closed { return; }
+        self.closed = if user { app.run_close_request() == crate::CloseResponse::Close } else { app.close_window() };
+    }
+
     #[inline]
     fn reblend_offscreen(&mut self, rt: &mut RuntimeCore) {
         let rt_srgb = rt.srgb_blend();
@@ -172,6 +184,10 @@ impl<F: FnMut(FrameShot, Vec<u8>)> FrameHost for HeadlessFrame<'_, '_, F> {
         let asked = (self.app.rt().loop_check_on() && self.k > 0 && s.frame_anim.is_none())
             .then(|| self.app.rt_mut().loop_step(step));
         let mut animating = self.app.frame(step);
+        if self.app.rt().shell_request == Some(crate::el::Shell::Close) {
+            self.app.rt_mut().shell_request = None;
+            s.close(&mut *self.app, false);
+        }
         if let Some(asked) = asked {
             s.loop_check.add(self.real_t, self.script_had_events, asked, self.app.rt_mut().loop_checked());
         }
@@ -380,6 +396,7 @@ impl<F: FnMut(FrameShot, Vec<u8>)> FrameHost for HeadlessFrame<'_, '_, F> {
         {
             let mut tree = tree_json_core(self.app.rt(), self.real_t);
             if let Some(placed) = &s.placed { tree["placed"] = placed.clone(); }
+            if s.closed { tree["closed"] = true.into(); }
             let text = serde_json::to_string_pretty(&tree).unwrap();
             std::fs::write(p, text).unwrap_or_else(|e| die(&format!("{}: {e}", p.display())));
         }

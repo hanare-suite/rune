@@ -139,6 +139,8 @@ pub enum ScriptEvent {
     Focus(bool),
     /// `{"reopen": true}`: the app reopened, as a click on its macOS Dock icon does.
     Reopen,
+    /// `{"close": true}`: the window's close button pressed.
+    Close,
     /// `{"close_request": true}`: a user-initiated close request (`App::on_close_request`).
     ///
     /// ```

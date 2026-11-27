@@ -26,7 +26,16 @@ unsafe extern "C" {
 /// `NSTerminateNow`.
 const TERMINATE_NOW: usize = 1;
 
+/// `NSTerminateCancel`.
+const TERMINATE_CANCEL: usize = 0;
+
 extern "C" fn should_terminate(_: *mut AnyObject, _: Sel, _: *mut AnyObject) -> usize {
+    // A guarded window (`App::on_close_guard`) holds the quit back, and a logout with it:
+    // the loop has the guarded windows ask.
+    if super::any_guarded() {
+        super::hold();
+        return TERMINATE_CANCEL;
+    }
     // Windows::exiting carries out the quit's effects.
     let _ = super::send(super::Event::Start { ending: false, after: super::After::Exit });
     TERMINATE_NOW

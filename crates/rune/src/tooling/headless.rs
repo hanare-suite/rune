@@ -341,6 +341,7 @@ fn run_headless(prep: HeadlessPrep, config: HeadlessConfig, app: &mut dyn Headle
         snap_crop: &snap_crop,
         cpu_boot: &cpu_boot,
         loop_check: super::loop_check::Tally::default(),
+        closed: false,
         cpu_ms: Vec::new(),
         anim_ms: Vec::new(),
         rest_ms: Vec::new(),
@@ -383,8 +384,9 @@ fn run_headless(prep: HeadlessPrep, config: HeadlessConfig, app: &mut dyn Headle
                 }
                 Kind::Mark(_) => {}
                 // The one window always shows here.
-                Kind::Reopen => app.run_reopen(),
-                Kind::CloseRequest => { let _ = app.run_close_request(); }
+                Kind::Reopen => { app.run_reopen(); state.closed = false; }
+                // The close button asks as a user's close request does.
+                Kind::Close | Kind::CloseRequest => state.close(app, true),
                 Kind::OpenUrl(url) => app.run_open_url(url),
                 Kind::OpenFiles(paths) => app.run_open_files(paths),
                 Kind::Shortcut(shortcut) => shortcuts_core.fire(shortcut).unwrap_or_else(|e| die(&format!("script shortcut: {e}"))),
@@ -436,7 +438,7 @@ fn run_headless(prep: HeadlessPrep, config: HeadlessConfig, app: &mut dyn Headle
         };
         crate::frame::host_step::run(&mut host);
         if app.rt_mut().take_user_close_request() {
-            let _ = app.run_close_request();
+            state.close(app, true);
         }
     }
     for (shot, px) in state.readback.finish(&gpu.device) { deliver(shot, px); }

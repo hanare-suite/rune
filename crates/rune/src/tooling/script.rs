@@ -33,6 +33,10 @@ pub(crate) fn parse_script(list: Value) -> Vec<Ev> {
             out.push(Ev { t, kind: Kind::Reopen, pos: Pos::Rel(0.0, 0.0) });
             continue;
         }
+        if e["close"].as_bool() == Some(true) {
+            out.push(Ev { t, kind: Kind::Close, pos: Pos::Rel(0.0, 0.0) });
+            continue;
+        }
         if e["close_request"].as_bool() == Some(true) {
             out.push(Ev { t, kind: Kind::CloseRequest, pos: Pos::Rel(0.0, 0.0) });
             continue;

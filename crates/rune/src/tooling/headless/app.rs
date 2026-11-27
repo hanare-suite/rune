@@ -27,7 +27,11 @@ pub(super) trait HeadlessApp {
     fn rt_mut(&mut self) -> &mut RuntimeCore;
     fn with_driver(&mut self, f: &mut dyn FnMut(&mut RuntimeCore, &mut dyn AppDriver));
     fn run_reopen(&mut self);
+    /// A user's close request: `on_close_request`, then the guard (`App::on_close_guard`), then
+    /// `on_close`. `Close` when the window closes, `Defer` when a hook held it back.
     fn run_close_request(&mut self) -> crate::CloseResponse;
+    /// `Tx::close_window`: the guard, then `on_close`. True when the window closes.
+    fn close_window(&mut self) -> bool;
     fn run_open_url(&mut self, url: &str);
     fn run_open_files(&mut self, paths: &[std::path::PathBuf]);
     fn drain_updates(&mut self, menus: &mut crate::native_menu::MenuGuard);
@@ -94,10 +98,16 @@ impl<S: 'static> HeadlessApp for TypedHeadlessApp<S> {
             }
             None => crate::CloseResponse::Close,
         };
-        if decision == crate::CloseResponse::Close && let Some(f) = self.on_close {
-            self.rt.update(f);
+        if decision == crate::CloseResponse::Close && !self.close_window() {
+            return crate::CloseResponse::Defer;
         }
         decision
+    }
+    fn close_window(&mut self) -> bool {
+        // As `Host::close`: there is no window to take away, so a close only shows in the tree.
+        if self.shared.close_guard.get().is_some_and(|guard| guard.holds(&mut self.rt)) { return false; }
+        if let Some(f) = self.on_close { self.rt.update(f); }
+        true
     }
     fn run_open_url(&mut self, url: &str) {
         if let Some(f) = self.on_open_url { self.rt.update(|s, tx| f(s, url, tx)); }

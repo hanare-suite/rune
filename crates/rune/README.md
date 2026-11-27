@@ -797,6 +797,7 @@ let app = rune::App::new(spec)
     .standard_menus()              // macOS: Edit, Minimize ⌘M and Close ⌘W (no Quit); regular apps get them anyway
     .on_close_request(|s, tx| CloseResponse::Defer) // optional: intercept native close before hiding
     .on_close(|s, tx| ..)          // runs before every close; tx.quit() quits instead
+    .on_close_guard(|s| s.unsaved, |s, tx| ..) // while the first says true, a close or macOS Quit runs the second instead
     .on_reopen(|s, has_visible, tx| false); // macOS: Dock icon clicked; true skips the default
     // .window_options(WindowOptions { max_size, resizable, .. }) for this window
 let handle = app.handle();     // AppHandle<S>: Clone + Send + Sync, usable before run
@@ -820,6 +821,23 @@ app.run();
   input as usual, but not its view or layout, and draws nothing. The frame that shows it again
   builds once with the latest state, with motion already landed where it would have ended. A
   window any part of which shows draws as usual. Headless runs always see a current tree.
+- `App::on_close_guard(guarded, ask)` lets the window hold back every close and a macOS Quit,
+  for unsaved changes. Before the close button, ⌘W, `Tx::close_window`, `AppHandle::close` and a
+  macOS Quit (⌘Q, the menu, the Dock, logout) take effect, Rune asks `guarded(&state)`. While it
+  says true the window stays (a Quit gets `NSTerminateCancel` from
+  `applicationShouldTerminate:`) and `ask(&mut state, tx)` runs instead, where the app puts its
+  question up. To close after the answer, make `guarded` say false and call `tx.close_window()`;
+  a held quit is not taken up again. `Tx::quit`, `AppHandle::quit` and the end of a Windows
+  session are not held back. Without the hook nothing changes. It sits beside
+  `App::on_close_request` below, which answers the user's own close requests alone and lets the
+  closes the app asks for and a Quit through: on a user's close request that runs first, and a
+  `CloseResponse::Defer` stands on its own, while a `Close` goes on to ask `guarded`. An `ask`
+  that asks to close the window while the guard still holds is asked once, and that close is
+  dropped. When the close of the last main window would end the app and another window holds
+  back its close, that close is held too: the main window stays, the guarded windows ask once, as
+  for a held Quit, and closing the main window again after the answer ends the app (or asks
+  again if a guard still holds). A hidden `keep_running` window whose guard says true counts as
+  guarded for a Quit and for that close: its `ask` runs, and showing the window is the app's job.
 - Handlers ask the shell with `Tx::close_window()`, `Tx::minimize()` and `Tx::quit()` (quit wins,
   and either wins over minimize). On Windows and Linux, resizable borderless windows minimize when
   `WindowButtons::MINIMIZE` is enabled; minimize still does nothing for a hidden window, a panel,
@@ -864,7 +882,7 @@ app.run();
   `CloseResponse::Close` proceeds to close as usual. Programmatic close (`Tx::close_window`,
   `AppHandle::close`, `WindowHandle::close`), quit/relaunch, teardown, and an already-exiting loop
   bypass `on_close_request`, and apps without the hook behave as before. Headless scripts deliver
-  it with `{"close_request": true}`.
+  it with `{"close_request": true}`; a `Close` goes on to `App::on_close_guard`.
 - `App::on_window(|w: &WindowHandle| ..)` runs on the UI thread after every native creation, for
   icons, native styles, or display-bound protocol objects through `WindowHandle::with_raw_handle`
   and `WindowHandle::with_raw_display_handle`. Pair `with_raw_display_handle` with
@@ -3555,6 +3573,11 @@ $L --desktop examples/launcher/backdrop.png --script examples/launcher/scripts/d
   `{"reopen": true}` reopens the app, as a click on its Dock icon (see "App lifetime").
   `{"open_url": "myapp://…"}` hands `App::on_open_url` a link, as the system does when a link
   opens the app.
+  `{"close": true}` presses the window's close button in a single window's run, as a user's close
+  request goes: `App::on_close_request`, then the guard (`App::on_close_guard`), then `on_close`.
+  A guarded window asks and stays; once the window closes, by the button, `{"close_request": true}`
+  or `Tx::close_window` (the guard, then `on_close`), `--tree` carries `"closed": true` (the
+  frames go on).
   `{"open_files": ["a.torrent", "b.torrent"]}` hands `App::on_open_files` a batch of file paths,
   as the system does when files open with the app on macOS.
   `menu-pick` (with an `id`) and `menu-cancel` answer an open pop-up menu, `file-dialog` (with
