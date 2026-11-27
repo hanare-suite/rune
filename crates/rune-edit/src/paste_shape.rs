@@ -144,6 +144,32 @@ impl TextEdit {
         Some(out)
     }
 
+    /// The fragment's soft lines in the paste: never on an atom's line or the line after one, nor in code; the receiving
+    /// paragraph heads a group that lands on it (see below); a line that was there and is a soft line now has an id of its
+    /// own and starts no page, as typed text gives.
+    pub(super) fn put_in_fragment_soft_lines(&mut self, frag: &TextEdit, line_idx: usize, frag_lines: usize, new: &[bool], lead: usize) {
+        let mut kept_soft: Vec<usize> = Vec::new();
+        if frag_lines > 1 {
+            for &sb in &frag.soft_breaks {
+                let target = line_idx + sb as usize;
+                let atom = |l: usize| self.attrs.get(l).is_some_and(|a| a.atom.is_some());
+                if target > 0 && self.blocks.get(target) != Some(&Block::Code) && self.blocks.get(target - 1) != Some(&Block::Code) && !atom(target) && !atom(target - 1) {
+                    self.soft_breaks.push(target as u32);
+                    if !new.get(lead + sb as usize).copied().unwrap_or(false) { kept_soft.push(target); }
+                }
+            }
+        }
+        self.receiving_paragraph_heads_soft_lines(frag, line_idx, frag_lines, new, lead);
+        if self.attributed() {
+            for t in kept_soft {
+                let id = self.fresh_id();
+                let slot = &mut self.attrs_mut()[t];
+                slot.id = id;
+                slot.page_break_before = false;
+            }
+        }
+    }
+
     /// A soft line of the fragment that lands on the line that keeps what was there: where the head of that group of lines
     /// is a new line (the paste is at a paragraph's start), the receiving paragraph is the head. Its first line takes the
     /// receiving line's id, attributes and block, and the soft lines (the landed one with an id of its own) mirror it, as
@@ -151,8 +177,8 @@ impl TextEdit {
     /// paragraph), it stays as it is and mirroring does the rest, as typed text does.
     pub(super) fn receiving_paragraph_heads_soft_lines(&mut self, frag: &TextEdit, line_idx: usize, frag_lines: usize, new: &[bool], lead: usize) {
         let is_new = |j: usize| new.get(j).copied().unwrap_or(false);
-        if frag_lines < 2 || is_new(lead + frag_lines - 1) { return; }
         let last_line = line_idx + frag_lines - 1;
+        if frag_lines < 2 || is_new(lead + frag_lines - 1) || self.attrs.get(last_line).is_some_and(|a| a.atom.is_some()) { return; }
         let mut head_k = frag_lines - 1;
         while head_k > 0 && frag.soft_breaks.contains(&(head_k as u32)) && self.soft_breaks.contains(&((line_idx + head_k) as u32)) { head_k -= 1; }
         let head_line = line_idx + head_k;
@@ -163,6 +189,7 @@ impl TextEdit {
             let slot = self.attrs_mut();
             slot[head_line] = recv;
             slot[last_line] = recv.id(id);
+            slot[last_line].page_break_before = false;
         }
         self.blocks[head_line] = self.blocks[last_line];
     }
@@ -179,10 +206,11 @@ impl TextEdit {
     pub(super) fn holds_selection(&self, frag: &TextEdit) -> bool {
         let (a, b) = self.range();
         if a == b || frag.text != self.text[a..b] { return false; }
-        let bytes = |marks: &[MarkRange], from: usize, to: usize| -> std::collections::BTreeSet<(usize, String)> {
-            marks.iter().flat_map(|m| (m.start.max(from)..m.end.min(to)).map(move |i| (i - from, format!("{:?}", m.mark)))).collect()
+        // (A mark that spans a line break holds the break's byte or not, as the copy says: the breaks are left out.)
+        let bytes = |marks: &[MarkRange], text: &str, from: usize, to: usize| -> std::collections::BTreeSet<(usize, String)> {
+            marks.iter().flat_map(|m| (m.start.max(from)..m.end.min(to)).filter(|&i| text.as_bytes()[i] != b'\n').map(move |i| (i - from, format!("{:?}", m.mark)))).collect()
         };
-        if bytes(&self.marks, a, b) != bytes(&frag.marks, 0, frag.text.len()) { return false; }
+        if bytes(&self.marks, &self.text, a, b) != bytes(&frag.marks, &frag.text, 0, frag.text.len()) { return false; }
         let (la, lb) = (self.line_of_byte(a), self.line_of_byte(b));
         if frag.blocks.len() != lb - la + 1 { return false; }
         if (1..=lb - la).any(|k| self.soft_breaks.contains(&((la + k) as u32)) != frag.soft_breaks.contains(&(k as u32))) { return false; }

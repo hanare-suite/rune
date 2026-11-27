@@ -591,6 +591,14 @@ impl TextEdit {
             return self.paste(if plain.is_empty() { frag.text.as_str() } else { plain });
         }
         self.sync_invariants();
+        // A paste that holds what the selection holds changes nothing, as typing it does not (beside code too).
+        if self.holds_selection(&frag) {
+            self.anchor = self.range().1;
+            self.focus = self.anchor;
+            self.cancel_composition();
+            self.mark_edited();
+            return EditOutcome::default();
+        }
         // A line in a code block is code: plain text, with the whitespace of `plain`, no marks, no style,
         // whatever line of it the paste creates or joins. Where all of the paste's lines are code it is the
         // plain text; where some are, those lines take theirs from `plain` and the others keep the
@@ -625,14 +633,6 @@ impl TextEdit {
             if !takes {
                 return EditOutcome::default();
             }
-        }
-        // A paste that holds what the selection holds changes nothing, as typing it does not.
-        if self.holds_selection(&frag) {
-            self.anchor = self.range().1;
-            self.focus = self.anchor;
-            self.cancel_composition();
-            self.mark_edited();
-            return EditOutcome::default();
         }
         self.break_history_group();
         let before = self.snapshot();
@@ -761,17 +761,7 @@ impl TextEdit {
                 *slot = frag.blocks[frag_lines - 1];
             }
         }
-        if frag_lines > 1 {
-            for &sb in &frag.soft_breaks {
-                let target = line_idx + sb as usize;
-                // (A line of code is no soft line.)
-                if target > 0 && self.blocks.get(target) != Some(&Block::Code) && self.blocks.get(target - 1) != Some(&Block::Code) {
-                    self.soft_breaks.push(target as u32);
-                }
-            }
-        }
-
-        self.receiving_paragraph_heads_soft_lines(&frag, line_idx, frag_lines, &new, fenced.lead);
+        self.put_in_fragment_soft_lines(&frag, line_idx, frag_lines, &new, fenced.lead);
         // Add `frag.marks` shifted by `ins_at`.
         for m in &frag.marks {
             self.marks.push(MarkRange {

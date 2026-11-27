@@ -259,6 +259,8 @@ fn a_pasted_fragment_follows_the_rules_over_every_selection() {
                 let ids: Vec<u64> = x.paragraph_attrs().iter().map(|a| a.id).collect();
                 let mut u = ids.clone(); u.sort(); u.dedup();
                 if u.len() != ids.len() || ids.contains(&0) { fail("ids", format!("{ids:?}")); }
+                // No paste takes the id, the lock or the label of an atom the selection did not take.
+                if !super::soft_line_tests::atoms_kept(&e, &x, a, b).is_empty() { fail("atom-kept", format!("{:?}", x.paragraph_attrs())); }
                 let xl = line_ranges(&x.text);
                 let lines: Vec<(&str, ParagraphAttrs, Block)> = x.text.split('\n').enumerate().map(|(i, t)| (t, x.paragraph(i), x.blocks()[i])).collect();
                 // fragment lines
@@ -614,6 +616,8 @@ fn a_pasted_fragment_follows_the_rules_in_code_and_around_every_document() {
                 let ids: Vec<u64> = x.paragraph_attrs().iter().map(|a| a.id).collect();
                 let mut u = ids.clone(); u.sort(); u.dedup();
                 if u.len() != ids.len() || ids.contains(&0) { fail("ids", format!("{ids:?}")); }
+                // No paste takes the id, the lock or the label of an atom the selection did not take.
+                if !super::soft_line_tests::atoms_kept(&e, &x, a, b).is_empty() { fail("atom-kept", format!("{:?}", x.paragraph_attrs())); }
                 let lines: Vec<(&str, ParagraphAttrs, Block)> = x.text.split('\n').enumerate().map(|(i, t)| (t, x.paragraph(i), x.blocks()[i])).collect();
                 let l0 = xl.iter().position(|r| r.0 <= a + off && a + off <= r.1).unwrap();
                 let flines: Vec<&str> = ft.split('\n').collect();

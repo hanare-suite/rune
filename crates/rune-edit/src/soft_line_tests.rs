@@ -25,7 +25,7 @@ fn formatted_lines(e: &TextEdit, la: usize, lb: usize) -> bool {
 
 /// Every atom line of `before` the selection `a..b` did not take still holds its label, its atom and its id in `after`: no
 /// paste puts text on an atom's line or takes its id and lock.
-fn atoms_kept(before: &TextEdit, after: &TextEdit, a: usize, b: usize) -> String {
+pub(super) fn atoms_kept(before: &TextEdit, after: &TextEdit, a: usize, b: usize) -> String {
     let mut bad = String::new();
     let mut start = 0;
     for (i, label) in before.text.split('\n').enumerate() {
@@ -431,7 +431,7 @@ fn a_fragment_of_soft_lines_pastes_as_the_text_typed_with_shift_return() {
         ("ab\n\nef", vec![p, p, p], vec![1], vec![]),
     ];
     // (html, plain, typed: chars, '~' is Shift+Return)
-    let frags = [("<p>x<br>y</p>", "x\ny", "x~y"), ("<p>x<br>y<br>z</p>", "x\ny\nz", "x~y~z"), ("<p><b>x</b><br>y</p>", "x\ny", "x~y")];
+    let frags = [("<p>x<br>y</p>", "x\ny", "x~y"), ("<p>x<br>y<br>z</p>", "x\ny\nz", "x~y~z"), ("<p><b>x</b><br>y</p>", "x\ny", "x~y"), ("<p>x<br><br></p>", "x\n", "x~"), ("<p><br>y</p>", "\ny", "~y")];
     let mut fails: Vec<String> = Vec::new();
     let mut total = 0;
     for (text, blocks, soft, marks) in &fixtures {
@@ -657,7 +657,11 @@ fn pasting_the_own_copy_is_a_no_op_across_marked_breaks_and_beside_code() {
             ("ab\ncd\nef\ngh", vec![c, u, u, c], vec![2], vec![(3, 9), (3, 8)]),
             ("ab\ncd\nef\ngh", vec![p, q, q, p], vec![2], vec![(3, 9), (3, 8), (0, 9)]),
         ] {
-            let f = doc_with(text, blocks.clone(), &[], &soft, vec![], attributed, false);
+            // (Plain paragraphs: HTML says no alignment of a code line.)
+            let mut f = TextEdit::from_parts(text, vec![], blocks.clone());
+            if attributed { f.set_paragraph_attrs((1..=blocks.len() as u64).map(id).collect()); f.set_paragraph_ids(100); }
+            f.set_soft_breaks(soft.clone());
+            f.take_changes();
             for (a, b) in sels {
                 let mut x = f.clone();
                 x.set_selection(a, b);
