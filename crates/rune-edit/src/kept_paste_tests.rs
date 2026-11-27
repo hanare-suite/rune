@@ -783,15 +783,41 @@ const FOUR: [Path; 5] = [
     ("paste_fragment", |e| { e.paste_fragment(TextEdit::from_parts("A\nB\nC\nD\n", vec![], vec![]), ""); }),
 ];
 
+fn typed(e: &mut TextEdit, s: &str) {
+    e.key(&KeyEvent { key: Key::Text(s.into()), mods: Mods::default() }, None);
+}
+
+/// One character, and a bare line break, on every path including typing.
+const ONE: [Path; 6] = [
+    ("typed", |e| typed(e, "x")),
+    ("insert", |e| e.insert("x")),
+    ("paste", |e| { e.paste("x"); }),
+    ("paste_html unmarked", |e| { e.paste_html("<p>x</p>", "x"); }),
+    ("paste_html marked", |e| { e.paste_html("<p><b>x</b></p>", "x"); }),
+    ("paste_fragment", |e| { e.paste_fragment(TextEdit::from_parts("x", vec![], vec![]), ""); }),
+];
+const NEWLINE: [Path; 6] = [
+    ("typed", |e| typed(e, "\n")),
+    ("insert", |e| e.insert("\n")),
+    ("paste", |e| { e.paste("\n"); }),
+    ("paste_html unmarked", |e| { e.paste_html("<p></p><p></p>", "\n"); }),
+    ("paste_html marked", |e| { e.paste_html("<p></p><p></p>", "\n"); }),
+    ("paste_fragment", |e| { e.paste_fragment(TextEdit::from_parts("\n", vec![], vec![]), ""); }),
+];
+
 #[test]
 fn every_path_agrees_over_every_shape_of_selection() {
     let docs: [(&str, fn() -> TextEdit, Vec<(usize, usize)>); 2] = [
-        ("atom", atom_between, vec![(4, 12), (4, 14), (0, 12), (0, 14), (2, 12), (4, 11)]),
-        ("list", list_before_plain, vec![(4, 8), (4, 10), (5, 8), (5, 10), (0, 8), (0, 10), (2, 8), (4, 4), (5, 5), (7, 7)]),
+        // The atom's line is 4..11. Its start, its end, the break before it, and what
+        // follows it; and from after it to the end of the next line.
+        ("atom", atom_between, vec![(4, 12), (4, 14), (0, 12), (0, 14), (2, 12), (4, 11), (4, 4), (0, 4), (3, 4), (1, 4), (11, 11), (11, 15)]),
+        // Over lines, from the middle of one to the middle of another, and to a line's start.
+        ("list", list_before_plain, vec![(4, 8), (4, 10), (5, 8), (5, 10), (0, 8), (0, 10), (2, 8), (4, 4), (5, 5), (7, 7), (5, 9), (6, 9), (7, 9), (7, 8), (6, 10)]),
     ];
     for (doc, make, shapes) in docs {
         for sel in shapes {
-            for (kind, paths) in [("break", BREAK), ("open", OPEN), ("three", THREE), ("four", FOUR)] {
+            let sets: [(&str, &[Path]); 6] = [("break", &BREAK), ("open", &OPEN), ("three", &THREE), ("four", &FOUR), ("one", &ONE), ("newline", &NEWLINE)];
+            for (kind, paths) in sets {
                 let first = leaves(make(), sel, paths[0].0, paths[0].1);
                 for (name, edit) in &paths[1..] {
                     assert_eq!(leaves(make(), sel, name, *edit), first, "{doc} {kind}: {name} against {} over {sel:?}", paths[0].0);

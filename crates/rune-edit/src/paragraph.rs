@@ -409,3 +409,7 @@ mod fuzz_tests;
 #[cfg(test)]
 #[path = "kept_paste_tests.rs"]
 mod kept_paste_tests;
+
+#[cfg(test)]
+#[path = "path_agreement_tests.rs"]
+mod path_agreement_tests;
