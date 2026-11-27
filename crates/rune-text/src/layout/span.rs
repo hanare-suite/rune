@@ -208,12 +208,12 @@ impl PillMetrics {
         Self { margin: (size * 0.12).max(1.5), pad: (size * 0.36).max(3.0), icon: (size * 0.95).round(), icon_gap: (size * 0.22).max(2.0) }
     }
 
-    /// Room before the label, inside the chip and out.
     /// Room before a label that takes none itself, its icon standing in for it.
     pub fn lead_alone(&self) -> f32 {
         self.margin + self.pad + self.icon
     }
 
+    /// Room before the label, inside the chip and out.
     pub fn lead(&self, icon: bool) -> f32 {
         self.margin + self.pad + if icon { self.icon + self.icon_gap } else { 0.0 }
     }

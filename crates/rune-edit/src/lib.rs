@@ -540,6 +540,8 @@ impl TextEdit {
     pub fn from_html(html_str: &str) -> TextEdit {
         let mut edit = html::parse_html(html_str, &[]).rich();
         edit.allowed_marks = None;
+        // A loaded page's alignment is not a document: only a paste keeps paragraph attributes.
+        edit.attrs.clear();
         edit.sync_invariants();
         edit
     }
@@ -556,6 +558,7 @@ impl TextEdit {
     pub fn from_html_with_color(html_str: &str) -> TextEdit {
         let mut edit = html::parse_html(html_str, &[]).rich();
         edit.allowed_marks = None;
+        edit.attrs.clear();
         edit.allow_color(true)
     }
 

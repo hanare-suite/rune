@@ -130,11 +130,11 @@ impl TextEdit {
         let atom_gone = line_a < line_b && a == line_a_range.start && !kept.head && self.paragraph(line_a).atom.is_some();
         // An atom that stays on a line of its own behind the new text gives nothing to the
         // line before it.
-        // And a paragraph deleted whole, from its start to the start of the next: the paragraph
-        // mark that remains is the next one's, which keeps its attributes, block and id.
-        let whole = s.is_empty() && line_a < line_b && a == line_a_range.start && b == line_b_range.start;
-        let take_b = !(kept.tail && added_lines > 0)
-            && (atom_gone || whole || (line_a < line_b && line_a_range.is_empty() && a == line_a_range.start && b == line_b_range.start));
+        // And paragraphs taken whole, from a line's start to the start of another's, whatever
+        // goes in their place: a paragraph's id, attributes and block live in its line break,
+        // and the one that stays is the last one's, which the text left joins.
+        let whole = line_a < line_b && a == line_a_range.start && b == line_b_range.start;
+        let take_b = !(kept.tail && added_lines > 0) && (atom_gone || whole);
         // An insertion at the start of a line, over a selection that starts there or none, goes
         // before what is left of it: the line keeps its id and attributes
         // and the paragraphs the text brings are new ones above it. Return gives them the line's
@@ -175,6 +175,12 @@ impl TextEdit {
         if added_lines > 0 {
             let insert_pos = (line_a + 1).min(self.blocks.len());
             self.blocks.splice(insert_pos..insert_pos, std::iter::repeat_n(next_line_blk, added_lines));
+        }
+        // Text with a line break in the middle of a line leaves the tail in the line's block.
+        if added_lines > 0 && front.is_none() && new_line_block.is_none() && !kept.tail && b < line_b_range.end {
+            if let Some(slot) = self.blocks.get_mut(line_a + added_lines) {
+                *slot = merged_block;
+            }
         }
         if front.is_some() {
             if let Some(slot) = self.blocks.get_mut(line_a) {
