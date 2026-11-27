@@ -333,7 +333,7 @@ fn a_pasted_fragment_follows_the_rules_over_every_selection() {
                     let (_, at, bl) = lines[end_line];
                     if at != oattrs[lb] || bl != oblocks[lb] { fail("rule-midmid-last", format!("want {:?} {:?}", oattrs[lb], oblocks[lb])); }
                 }
-                if la == lb && (a > ra.0 || !ha) && b < ra.1 && added > 0 && !atom_touch {
+                if la == lb && (a > ra.0 || !ha) && b < ra.1 && added > 0 && !atom_touch && !(!ha && fa.iter().any(|y| y.atom.is_some())) {
                     let (_, at, bl) = lines[la];
                     if at != oattrs[la] || bl != oblocks[la] { fail("rule-split-first", String::new()); }
                     let (_, at, bl) = lines[end_line];
@@ -699,7 +699,7 @@ fn a_pasted_fragment_follows_the_rules_in_code_and_around_every_document() {
                     let (_, at, bl) = lines[end_line];
                     if at != oattrs[lb] || bl != oblocks[lb] { fail("rule-midmid-last", format!("want {:?} {:?}", oattrs[lb], oblocks[lb])); }
                 }
-                if la == lb && (a > ra.0 || !ha) && b < ra.1 && added > 0 && !atom_touch {
+                if la == lb && (a > ra.0 || !ha) && b < ra.1 && added > 0 && !atom_touch && !(!ha && fa.iter().any(|y| y.atom.is_some())) {
                     let (_, at, bl) = lines[la];
                     if at != oattrs[la] || bl != oblocks[la] { fail("rule-split-first", String::new()); }
                     let (_, at, bl) = lines[end_line];

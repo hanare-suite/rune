@@ -2234,9 +2234,10 @@ example, and `spikes/paged/check.py` checks every point below headless.
 - **Splitting and merging**: Return copies a paragraph's attributes to the new one, without
   its page break. After `edit.set_paragraph_ids(next)` the new paragraph takes `next` as its
   `id`, the one after it `next + 1`, and `edit.next_paragraph_id()` gives the counter back to
-  store. Turning ids on (from off) gives one to every line that has none, in the undo history
-  too, and while ids are on `set_paragraph_attrs` and `set_paragraph` do the same, so the order
-  of the calls does not matter. In a field whose paragraphs carry attributes, plain Return breaks the paragraph
+  store. Turning ids on (from off) gives one to every line that has none in a field whose
+  paragraphs carry attributes, and clears the undo history (its states have no ids); while ids
+  are on `set_paragraph_attrs` and `set_paragraph` do the same, so the order of the calls does
+  not matter. In a field whose paragraphs carry attributes, plain Return breaks the paragraph
   rather than submitting. A paragraph's id, attributes and block live in its line break, and
   every path an edit takes (typing, `insert`, `paste`, `paste_html`, `paste_fragment`) gives
   the same result:

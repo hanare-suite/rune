@@ -142,8 +142,9 @@ impl TextEdit {
         let tail_whole = front.is_none() && !take_b && !kept.head && !kept.tail && added_lines > 0 && line_a < line_b && !(a == line_a_range.start && hard_a)
             && self.paragraph(line_b).atom.is_none();
         let block_b = self.blocks.get(line_b).copied().unwrap_or(Block::Paragraph);
-        // What is left of the paragraph behind the edit: the rest of the line, and the soft lines that follow it.
-        let rest = b < line_b_range.end || (soft(line_b + 1) && s.ends_with('\n'));
+        // What is left of the paragraph behind the edit: the rest of the line, or the soft lines that follow it. It keeps the
+        // paragraph's attributes and block, whether or not the inserted text ends in a break.
+        let rest = b < line_b_range.end || soft(line_b + 1);
         let edge = match front {
             Some(copy) => Edge::Front { copy },
             None if tail_whole => Edge::Tail,
@@ -242,7 +243,7 @@ impl TextEdit {
             if let Some(slot) = self.blocks.get_mut(line_a + added_lines) {
                 *slot = block_b;
             }
-        } else if added_lines > 0 && front.is_none() && new_line_block.is_none() && !kept.tail && (b < line_b_range.end || (s.ends_with('\n') && self.soft_breaks.binary_search(&((line_b + 1) as u32)).is_ok())) {
+        } else if added_lines > 0 && front.is_none() && new_line_block.is_none() && !kept.tail && (b < line_b_range.end || self.soft_breaks.binary_search(&((line_b + 1) as u32)).is_ok()) {
             if let Some(slot) = self.blocks.get_mut(line_a + added_lines) {
                 *slot = merged_block;
             }

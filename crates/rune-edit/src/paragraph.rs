@@ -186,8 +186,10 @@ impl TextEdit {
     }
 
     /// Gives every paragraph an edit makes from now on an id: `next`, then the one after it,
-    /// and so on. Paragraphs already there keep the ids they have, but turning ids on (from off)
-    /// gives one to every line that has none, in the undo history too. 0 turns ids off.
+    /// and so on. Paragraphs already there keep the ids they have; turning ids on (from off) gives
+    /// one to every line that has none in a field whose paragraphs carry attributes, and clears the
+    /// undo history, which holds states from before there were ids (an app that keeps its own
+    /// history, with [`set_history(false)`](Self::set_history), is not affected). 0 turns ids off.
     pub fn set_paragraph_ids(&mut self, next: u64) {
         self.open_document();
         let was_off = self.next_id == 0;
@@ -196,10 +198,12 @@ impl TextEdit {
             let had_attrs = !self.attrs.is_empty();
             self.sync_invariants();
             self.attrs_mut();
-            // Turning ids on: a line that has none takes one now, in the stored history too, so undo and redo keep them.
+            // Turning ids on: a line that has none takes one now. The stored history is from before there were ids: it goes.
             if was_off && had_attrs {
                 self.give_ids_to_lines_without();
-                self.give_ids_to_history();
+            }
+            if was_off && (!self.history.undo.is_empty() || !self.history.redo.is_empty()) {
+                self.clear_history();
             }
         }
     }
