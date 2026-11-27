@@ -571,7 +571,7 @@ impl TextEdit {
         // editor's copy on a field that has not opted into colour) would collapse plain
         // whitespace for nothing.
         let mut frag = self.keep_allowed(frag);
-        let unformatted = frag.marks.is_empty() && frag.attrs.is_empty() && frag.blocks.iter().all(|&b| b == Block::Paragraph);
+        let unformatted = frag.marks.is_empty() && frag.attrs.is_empty() && frag.soft_breaks.is_empty() && frag.blocks.iter().all(|&b| b == Block::Paragraph);
         if !plain.is_empty() && (frag.text.is_empty() || unformatted) {
             return self.paste_unformatted(plain);
         }

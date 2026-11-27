@@ -37,7 +37,7 @@ fn pasting_what_the_selection_holds_changes_nothing() {
             x.set_selection(a, b);
             x.paste_fragment(fragment_of(&e, a, b), "");
             let snap = |y: &TextEdit| (y.text.clone(), y.paragraph_attrs(), y.blocks().to_vec(), marked(y.marks(), 0, y.text.len()));
-            if snap(&x) != snap(&e) { fails.push(format!("{doc} {a}..{b} {:?}\n   was {}\n   now {}", &e.text[a..b], show(&rows(&e, &[1, 2, 3, 4])), show(&rows(&x, &[1, 2, 3, 4])))); }
+            if snap(&x) != snap(&e) { fails.push(format!("{doc} {a}..{b} {:?}\n   was {} soft {:?}\n   now {} soft {:?}", &e.text[a..b], show(&rows(&e, &[1, 2, 3, 4])), e.soft_breaks(), show(&rows(&x, &[1, 2, 3, 4])), x.soft_breaks())); }
         }}
     }
     assert!(fails.is_empty(), "{cases} cases, {} failures, the first:\n{}", fails.len(), fails.iter().take(10).cloned().collect::<Vec<_>>().join("\n"));
@@ -362,15 +362,14 @@ fn cut_and_paste_in_place_restores_whole_paragraphs_without_atoms() {
             x.insert("");
             x.paste_fragment(f, &e.text[a..b]);
             let key = |y: &TextEdit| y.text.split('\n').enumerate().map(|(i, t)| { let mut at = y.paragraph(i); at.id = 0; (t.to_string(), at, y.blocks()[i]) }).collect::<Vec<_>>();
-            if key(&x) != key(&e) || snap(&x).3 != snap(&e).3 || x.soft_breaks() != e.soft_breaks() { fails.push(format!("{doc} {a}..{b} {:?}\n   was {}\n   now {}", &e.text[a..b], show(&rows(&e, &[1, 2, 3, 4])), show(&rows(&x, &[1, 2, 3, 4])))); }
+            if key(&x) != key(&e) || snap(&x).3 != snap(&e).3 || x.soft_breaks() != e.soft_breaks() { fails.push(format!("{doc} {a}..{b} {:?}\n   was {} soft {:?}\n   now {} soft {:?}", &e.text[a..b], show(&rows(&e, &[1, 2, 3, 4])), e.soft_breaks(), show(&rows(&x, &[1, 2, 3, 4])), x.soft_breaks())); }
         }}
     }
-    assert!(fails.is_empty(), "{cases} cases, {} failures, the first:\n{}", fails.len(), fails.iter().take(8).cloned().collect::<Vec<_>>().join("\n"));
+    assert!(fails.is_empty(), "{cases} cases, {} failures, the first:\n{}", fails.len(), fails.iter().take(12).cloned().collect::<Vec<_>>().join("\n"));
 }
 
 /// A copy through `selected_html` pasted over the same selection is a no-op where the HTML carries
-/// the selection exactly: no indent, page break, styled list item or quote, code, pill or soft
-/// line, which the HTML cannot say.
+/// the selection exactly: no indent, page break, styled list item or quote, code or pill, which the HTML cannot say.
 #[test]
 fn pasting_a_copy_of_the_selection_back_is_a_no_op_where_the_html_carries_it() {
     let mut fails: Vec<String> = Vec::new();
@@ -387,7 +386,7 @@ fn pasting_a_copy_of_the_selection_back_is_a_no_op_where_the_html_carries_it() {
             let lossy = (la..=lb).any(|l| {
                 let o = e.paragraph(l);
                 (o.style != 0 && e.blocks()[l] != Block::Paragraph) || (o.page_break_before && a <= ol[l].0) || o.indent != 0.0 || o.first_line_indent != 0.0 || e.blocks()[l] == Block::Code
-            }) || e.marks().iter().any(|m| m.mark.is_pill() && m.start < b && m.end > a) || e.soft_breaks().iter().any(|&l| (l as usize) >= la && (l as usize) <= lb);
+            }) || e.marks().iter().any(|m| m.mark.is_pill() && m.start < b && m.end > a);
             let html = s.selected_html();
             let f = s.html_fragment(&html);
             let sel = &e.text[a..b];
@@ -403,5 +402,5 @@ fn pasting_a_copy_of_the_selection_back_is_a_no_op_where_the_html_carries_it() {
             }
         }}
     }
-    assert!(fails.is_empty(), "{cases} cases, {} failures, the first:\n{}", fails.len(), fails.iter().take(8).cloned().collect::<Vec<_>>().join("\n"));
+    assert!(fails.is_empty(), "{cases} cases, {} failures, the first:\n{}", fails.len(), fails.iter().take(12).cloned().collect::<Vec<_>>().join("\n"));
 }

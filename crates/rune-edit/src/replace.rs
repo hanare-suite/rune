@@ -204,11 +204,10 @@ impl TextEdit {
         // A line's softness describes the break before it, and when lines merge that break survives only if it
         // is the one before the first: the merged line is as soft as `line_a`, never as `line_b`.
         let merged_soft = self.soft_breaks.binary_search(&(line_a as u32)).is_ok() && line_a > 0;
-        // Determine the surviving block for `line_a` when `a..b` merges `line_a..=line_b`: a soft line is in
-        // the block of the paragraph above, whichever paragraph's text it holds.
-        let merged_block = if merged_soft && added_lines == 0 {
-            self.blocks.get(line_a).copied().unwrap_or(Block::Paragraph)
-        } else if take_b || (kept.tail && added_lines == 0) {
+        // Determine the surviving block for `line_a` when `a..b` merges `line_a..=line_b` (a soft line is in the
+        // block of the paragraph above, whichever paragraph's text it holds: see `soft_block` below).
+        let soft_block = self.blocks.get(line_a).copied().unwrap_or(Block::Paragraph);
+        let merged_block = if take_b || (kept.tail && added_lines == 0) {
             self.blocks.get(if take_b { owner_b } else { line_b }).copied().unwrap_or(Block::Paragraph)
         } else {
             self.blocks.get(line_a).copied().unwrap_or(Block::Paragraph)
@@ -261,6 +260,12 @@ impl TextEdit {
             }
             if let Some(slot) = self.blocks.get_mut(line_a + added_lines) {
                 *slot = merged_block;
+            }
+        }
+
+        if merged_soft && added_lines == 0 {
+            if let Some(slot) = self.blocks.get_mut(line_a) {
+                *slot = soft_block;
             }
         }
 

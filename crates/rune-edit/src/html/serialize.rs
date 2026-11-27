@@ -41,7 +41,18 @@ pub(crate) fn serialize_html(edit: &TextEdit, range: Range<usize>) -> String {
 
     // A copy that ends behind a line break, at the start of a paragraph it takes nothing of,
     // ends in an empty paragraph, so a paste breaks the line there as the copy did.
-    let open_end = end > start && edit.text.as_bytes()[end - 1] == b'\n' && paras.last().is_some_and(|p| p.1.end < end);
+    let mut open_end = end > start && edit.text.as_bytes()[end - 1] == b'\n' && paras.last().is_some_and(|p| p.1.end < end);
+    // If the line it ends at the start of is a soft line, the break is a soft one, which the copy says as an
+    // empty soft line of the paragraph it ends: `a<br><br>`.
+    if open_end {
+        let line = edit.line_of_byte(end);
+        if let Some(prev) = paras.last().filter(|p| p.0 + 1 == line && !matches!(p.2, Block::Code) && edit.paragraph(p.0).atom.is_none()) {
+            if edit.soft_breaks().binary_search(&(line as u32)).is_ok() && edit.line_range(line).start == end && edit.blocks().get(line) == Some(&prev.2) && edit.paragraph(line).atom.is_none() {
+                paras.push((line, end..end, prev.2, true));
+                open_end = false;
+            }
+        }
+    }
 
     let dirs = block_dirs(edit, &paras);
     let mut out = String::new();
@@ -119,6 +130,7 @@ pub(crate) fn serialize_html(edit: &TextEdit, range: Range<usize>) -> String {
                         serialize_inline(edit, paras[idx].1.clone(), &mut out);
                         idx += 1;
                     }
+                    if paras[idx - 1].3 && paras[idx - 1].1.is_empty() { out.push_str("<br>"); }
                     out.push_str("</li>");
                 }
                 while let Some(k) = open_lists.pop() {
@@ -142,6 +154,8 @@ pub(crate) fn serialize_html(edit: &TextEdit, range: Range<usize>) -> String {
                     serialize_inline(edit, paras[idx].1.clone(), &mut out);
                     idx += 1;
                 }
+                // (A `<br>` ends no line at the end of a block: an empty soft line is a second one.)
+                if paras[idx - 1].3 && paras[idx - 1].1.is_empty() { out.push_str("<br>"); }
                 out.push_str("</blockquote>");
             }
             Block::Paragraph => {
@@ -168,6 +182,7 @@ pub(crate) fn serialize_html(edit: &TextEdit, range: Range<usize>) -> String {
                     serialize_inline(edit, paras[idx].1.clone(), &mut out);
                     idx += 1;
                 }
+                if paras[idx - 1].3 && paras[idx - 1].1.is_empty() { out.push_str("<br>"); }
                 out.push_str("</");
                 out.push_str(tag);
                 out.push('>');
