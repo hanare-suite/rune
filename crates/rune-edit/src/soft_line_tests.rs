@@ -323,3 +323,168 @@ fn soft_lines_of_a_quote_joined_into_a_paragraph_mirror_the_paragraph() {
     assert_eq!((x.text.as_str(), x.blocks().to_vec()), ("abcd\nef", vec![p, p]), "{}", show(&x));
     assert_eq!(inv(&x), "");
 }
+
+/// Hard lines of a document as (the whole paragraph's text, soft lines joined with `~`, and its id where it is one the
+/// document had, 0 for one made by the edit).
+fn paras(e: &TextEdit) -> Vec<(String, u64)> {
+    let mut out: Vec<(String, u64)> = Vec::new();
+    for (i, t) in e.text.split('\n').enumerate() {
+        if e.soft_breaks().contains(&(i as u32)) && !out.is_empty() {
+            let l = out.last_mut().unwrap();
+            l.0.push('~');
+            l.0.push_str(t);
+        } else {
+            let id = e.paragraph(i).id;
+            out.push((t.to_string(), if id < 100 { id } else { 0 }));
+        }
+    }
+    out
+}
+
+/// A paste of a fragment that is soft lines only is what typing the same text with Shift+Return gives, ids included,
+/// at every caret and selection of documents with soft lines.
+#[test]
+fn a_fragment_of_soft_lines_pastes_as_the_text_typed_with_shift_return() {
+    let (p, q, u) = (Block::Paragraph, Block::Quote, Block::Bullet(0));
+    let bold = |s, e| MarkRange { start: s, end: e, mark: Mark::Bold };
+    let fixtures: Vec<(&str, Vec<Block>, Vec<u32>, Vec<MarkRange>)> = vec![
+        ("ab\ncd\nef", vec![p, p, p], vec![], vec![]),
+        ("ab\ncd\nef", vec![p, p, p], vec![1], vec![]),
+        ("ab\ncd\nef", vec![p, p, p], vec![2], vec![]),
+        ("ab\ncd\nef", vec![u, u, p], vec![1], vec![bold(0, 2)]),
+        ("ab\ncd\nef", vec![p, q, q], vec![2], vec![]),
+        ("ab\ncd\nef\ngh", vec![p, p, u, u], vec![1, 3], vec![]),
+        ("ab\n\nef", vec![p, p, p], vec![1], vec![]),
+    ];
+    // (html, plain, typed: chars, '~' is Shift+Return)
+    let frags = [("<p>x<br>y</p>", "x\ny", "x~y"), ("<p>x<br>y<br>z</p>", "x\ny\nz", "x~y~z"), ("<p><b>x</b><br>y</p>", "x\ny", "x~y")];
+    let mut fails: Vec<String> = Vec::new();
+    let mut total = 0;
+    for (text, blocks, soft, marks) in &fixtures {
+        let f = doc(text, blocks.clone(), &[], soft, marks.clone(), true);
+        for a in 0..=text.len() { for b in a..=text.len() {
+            for (html, plain, script) in &frags {
+                for route in ["html", "frag"] {
+                    let mut x = f.clone();
+                    x.set_selection(a, b);
+                    if route == "html" { x.paste_html(html, plain); } else { let fr = x.html_fragment(html); x.paste_fragment(fr, plain); }
+                    let mut t = f.clone();
+                    t.set_selection(a, b);
+                    for ch in script.chars() {
+                        match ch { '~' => { t.key(&key(Key::Enter, true), None); } c => { t.key(&key(Key::Text(c.to_string().into()), false), None); } }
+                    }
+                    total += 1;
+                    if x.text != t.text || paras(&x) != paras(&t) {
+                        fails.push(format!("{text:?}{}s{soft:?} {a}..{b} {route} {html}\n   paste {}\n   typed {}", blocks.iter().map(|b| blk(*b)).collect::<String>(), show(&x), show(&t)));
+                    }
+                }
+            }
+        } }
+    }
+    assert!(fails.is_empty(), "{total} cases, {} failures, the first:\n{}", fails.len(), fails.iter().take(4).cloned().collect::<Vec<_>>().join("\n"));
+}
+
+fn changes_or_not(tag: &str, before: &St, x: &mut TextEdit) {
+    let same = st(x) == *before;
+    let ch = x.take_changes();
+    assert_eq!(ch.is_empty(), same, "{tag}: {} changes, state {}: {}", ch.len(), if same { "unchanged" } else { "changed" }, show(x));
+    assert_eq!(inv(x), "", "{tag}: {}", show(x));
+}
+
+/// Formatting commands act on whole paragraphs: on a soft line they format the head, and the soft lines follow it.
+#[test]
+fn formatting_commands_on_a_soft_line_format_its_paragraph() {
+    let (p, q, u) = (Block::Paragraph, Block::Quote, Block::Bullet(0));
+    let c = ParagraphAlign::Center;
+    for attributed in [true, false] {
+        let f = doc("ab\ncd\nef", vec![p, p, p], &[], &[1], vec![], attributed);
+        let f = { let mut f = f; if attributed { f.set_paragraph_attrs(vec![id(1), id(2), id(3)]); } f };
+        // (selection, lines the command takes: the head and its soft lines, whole)
+        for (name, (a, b), lines) in [("caret head", (1, 1), 0..2), ("caret soft", (4, 4), 0..2), ("in soft", (3, 5), 0..2), ("head+soft", (1, 4), 0..2), ("soft+next", (4, 7), 0..3)] {
+            let tag = format!("attributed {attributed} {name}");
+            let mut x = f.clone();
+            x.set_selection(a, b);
+            x.set_block(u);
+            let want: Vec<Block> = (0..3).map(|i| if lines.contains(&i) { u } else { p }).collect();
+            assert_eq!(x.blocks().to_vec(), want, "{tag} set_block: {}", show(&x));
+            changes_or_not(&format!("{tag} set_block"), &st(&f), &mut x);
+            let mut x = f.clone();
+            x.set_selection(a, b);
+            x.toggle_block(q);
+            let want: Vec<Block> = (0..3).map(|i| if lines.contains(&i) { q } else { p }).collect();
+            assert_eq!(x.blocks().to_vec(), want, "{tag} toggle_block: {}", show(&x));
+            changes_or_not(&format!("{tag} toggle_block"), &st(&f), &mut x);
+            if attributed {
+                let mut x = f.clone();
+                x.set_selection(a, b);
+                x.format_paragraphs(|p| p.align = c);
+                let centred: Vec<bool> = (0..3).map(|i| x.paragraph(i).align == c).collect();
+                assert_eq!(centred, (0..3).map(|i| lines.contains(&i)).collect::<Vec<_>>(), "{tag} format: {}", show(&x));
+                changes_or_not(&format!("{tag} format"), &st(&f), &mut x);
+            }
+        }
+        // A list item with a soft line: indent, outdent and off.
+        let l = doc("ab\ncd\nef", vec![u, u, u], &[], &[1], vec![], attributed);
+        for (name, (a, b)) in [("caret head", (1, 1)), ("caret soft", (4, 4)), ("head+soft", (1, 4))] {
+            let mut x = l.clone();
+            x.set_selection(a, b);
+            assert!(x.indent_list(), "{name}");
+            assert_eq!(x.blocks().to_vec(), vec![Block::Bullet(1), Block::Bullet(1), u], "{name}: {}", show(&x));
+            changes_or_not(&format!("indent {name}"), &st(&l), &mut x);
+            let mut y = x.clone();
+            assert!(y.outdent_list(), "{name}");
+            assert_eq!(st(&y).blocks, st(&l).blocks, "{name} outdent");
+            let mut x = l.clone();
+            x.set_selection(a, b);
+            x.toggle_block(u);
+            assert_eq!(x.blocks().to_vec(), vec![p, p, u], "{name} toggle off: {}", show(&x));
+        }
+        // Where nothing changes, nothing is reported and indent_list says so.
+        let mut top = l.clone();
+        top.set_selection(0, 0);
+        for _ in 0..8 { top.indent_list(); }
+        let at_max = st(&top);
+        top.take_changes();
+        assert!(!top.indent_list(), "at the deepest level");
+        assert_eq!(st(&top), at_max);
+        assert!(top.take_changes().is_empty());
+    }
+    // set_paragraph on a soft line sets the head's paragraph, under the head's id.
+    let mut f = doc("ab\ncd\nef", vec![p, p, p], &[], &[1], vec![], true);
+    f.set_paragraph_attrs(vec![id(1), id(2), id(3)]);
+    let mut x = f.clone();
+    x.set_paragraph(1, id(2).align(c));
+    assert_eq!((x.paragraph(0).align, x.paragraph(0).id, x.paragraph(1).align, x.paragraph(2).align), (c, 1, c, ParagraphAlign::Left), "{}", show(&x));
+}
+
+/// A block set on a head makes its marked soft line code: the marks go with it, in one step undo and redo restore.
+#[test]
+fn a_code_head_takes_the_marks_off_its_soft_lines_in_the_same_step() {
+    let p = Block::Paragraph;
+    for attributed in [true, false] {
+        let mut f = TextEdit::from_parts("ab\ncd\nef", vec![MarkRange { start: 3, end: 5, mark: Mark::Bold }], vec![p, p, p]);
+        if attributed { f.set_paragraph_attrs((1..=3).map(id).collect()); f.set_paragraph_ids(100); }
+        f.set_soft_breaks(vec![1]);
+        f.take_changes();
+        let mut x = f.clone();
+        x.set_selection(1, 1);
+        x.set_block(Block::Code);
+        assert_eq!(inv(&x), "", "{}", show(&x));
+        let after = st(&x);
+        let mut y = x.clone();
+        y.sync_invariants();
+        assert_eq!(st(&y), after, "a later sync changes nothing");
+        let mut u = x.clone();
+        u.undo();
+        assert_eq!(st(&u), st(&f), "undo");
+        u.redo();
+        assert_eq!(st(&u), after, "redo");
+        let mut z = x.clone();
+        z.set_selection(8, 8);
+        z.insert("!");
+        z.undo();
+        assert_eq!(st(&z), after, "a later edit and its undo");
+        z.undo();
+        assert_eq!(st(&z), st(&f), "undo again");
+    }
+}
