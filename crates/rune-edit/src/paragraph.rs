@@ -116,6 +116,18 @@ impl TextEdit {
         self.open_document();
         self.attrs = attrs.into_iter().map(ParagraphAttrs::clean).collect();
         self.sync_invariants();
+        self.give_ids_to_lines_without();
+    }
+
+    /// With ids on, every line that has none takes one (so the order of the attributes and the ids does not matter).
+    fn give_ids_to_lines_without(&mut self) {
+        if self.next_id == 0 { return; }
+        for i in 0..self.attrs.len() {
+            if self.attrs[i].id == 0 {
+                let id = self.fresh_id();
+                self.attrs[i].id = id;
+            }
+        }
     }
 
     /// Replaces paragraph `line`'s attributes, as [`Self::set_paragraph_attrs`] does all of them.
@@ -130,6 +142,7 @@ impl TextEdit {
             *slot = attrs.clean();
         }
         self.sync_invariants();
+        self.give_ids_to_lines_without();
     }
 
     /// The attributes of the paragraph at the caret, or the selection's first.
@@ -173,23 +186,20 @@ impl TextEdit {
     }
 
     /// Gives every paragraph an edit makes from now on an id: `next`, then the one after it,
-    /// and so on. Paragraphs already there keep the ids they have. 0 turns ids off.
+    /// and so on. Paragraphs already there keep the ids they have, but turning ids on (from off)
+    /// gives one to every line that has none, in the undo history too. 0 turns ids off.
     pub fn set_paragraph_ids(&mut self, next: u64) {
         self.open_document();
         let was_off = self.next_id == 0;
         self.next_id = next;
         if next != 0 {
+            let had_attrs = !self.attrs.is_empty();
             self.sync_invariants();
             self.attrs_mut();
-            // Turning ids on: a line that has none (an atom cleared for want of a label before there were ids, say)
-            // takes one now, so the order of the attributes and the ids does not matter.
-            if was_off {
-                for i in 0..self.attrs.len() {
-                    if self.attrs[i].id == 0 {
-                        let id = self.fresh_id();
-                        self.attrs[i].id = id;
-                    }
-                }
+            // Turning ids on: a line that has none takes one now, in the stored history too, so undo and redo keep them.
+            if was_off && had_attrs {
+                self.give_ids_to_lines_without();
+                self.give_ids_to_history();
             }
         }
     }
@@ -201,8 +211,10 @@ impl TextEdit {
     }
 
     /// Replaces the selection with a locked atom on a line of its own: `label` as its text,
-    /// `height` points tall, with the next paragraph id. One edit. Line breaks in `label`
-    /// become spaces; an empty label inserts nothing.
+    /// `height` points tall. The atom is always a new paragraph: a fresh id (never a paragraph's it
+    /// stands in), the default attributes and the Paragraph block, whatever the position (the end of a
+    /// line, a soft line's start, over a selection, on an empty line), and the typing style is
+    /// cleared. One edit. Line breaks in `label` become spaces; an empty label inserts nothing.
     pub fn insert_atom(&mut self, label: &str, height: f32) {
         self.open_document();
         let label: String = label.chars().map(|c| if c.is_control() || matches!(c, '\u{2028}' | '\u{2029}') { ' ' } else { c }).collect();
@@ -213,6 +225,7 @@ impl TextEdit {
         self.undo_group(|e| {
             let (a, b) = e.range();
             e.replace((a, b), "", EditKind::Other);
+            e.typing = Typing::Inherited;
             let at = e.range().0;
             let line = e.line_of_byte(at);
             let range = e.line_range(line);
@@ -222,11 +235,11 @@ impl TextEdit {
             let text = format!("{}{label}{}", if lead { "\n" } else { "" }, if trail { "\n" } else { "" });
             e.replace((at, at), &text, EditKind::Other);
             let line = line + usize::from(lead);
-            let id = if e.paragraph(line).id != 0 { e.paragraph(line).id } else { e.fresh_id() };
-            let mut attrs = e.paragraph(line);
-            (attrs.atom, attrs.id) = (Some(height), id);
-            let attrs = attrs.clean();
+            let id = e.fresh_id();
+            let attrs = ParagraphAttrs::default().atom(height).id(id).clean();
             if let Some(slot) = e.attrs_mut().get_mut(line) { *slot = attrs; }
+            if let Some(slot) = e.blocks.get_mut(line) { *slot = Block::Paragraph; }
+            e.typing = Typing::Inherited;
             let end = at + usize::from(lead) + label.len();
             (e.anchor, e.focus) = (end, end);
         });
@@ -453,3 +466,7 @@ mod path_agreement_report_tests;
 #[cfg(test)]
 #[path = "soft_line_tests.rs"]
 mod soft_line_tests;
+
+#[cfg(test)]
+#[path = "soft_line_edit_tests.rs"]
+mod soft_line_edit_tests;

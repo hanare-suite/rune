@@ -143,7 +143,7 @@ impl TextEdit {
             && self.paragraph(line_b).atom.is_none();
         let block_b = self.blocks.get(line_b).copied().unwrap_or(Block::Paragraph);
         // What is left of the paragraph behind the edit: the rest of the line, and the soft lines that follow it.
-        let rest = b < line_b_range.end || soft(line_b + 1);
+        let rest = b < line_b_range.end || (soft(line_b + 1) && s.ends_with('\n'));
         let edge = match front {
             Some(copy) => Edge::Front { copy },
             None if tail_whole => Edge::Tail,
@@ -208,7 +208,7 @@ impl TextEdit {
         self.splice_attrs(line_a, line_b, added_lines, take_b, kept, edge);
         // A line's softness describes the break before it, and when lines merge that break survives only if it
         // is the one before the first: the merged line is as soft as `line_a`, never as `line_b`.
-        let merged_soft = self.soft_breaks.binary_search(&(line_a as u32)).is_ok() && line_a > 0;
+        let merged_soft = self.soft_breaks.binary_search(&(line_a as u32)).is_ok() && line_a > 0 && !kept.tail; // (an atom below it is a paragraph of its own)
         // Determine the surviving block for `line_a` when `a..b` merges `line_a..=line_b` (a soft line is in the
         // block of the paragraph above, whichever paragraph's text it holds: see `soft_block` below).
         let soft_block = self.blocks.get(line_a).copied().unwrap_or(Block::Paragraph);
@@ -242,7 +242,7 @@ impl TextEdit {
             if let Some(slot) = self.blocks.get_mut(line_a + added_lines) {
                 *slot = block_b;
             }
-        } else if added_lines > 0 && front.is_none() && new_line_block.is_none() && !kept.tail && (b < line_b_range.end || self.soft_breaks.binary_search(&((line_b + 1) as u32)).is_ok()) {
+        } else if added_lines > 0 && front.is_none() && new_line_block.is_none() && !kept.tail && (b < line_b_range.end || (s.ends_with('\n') && self.soft_breaks.binary_search(&((line_b + 1) as u32)).is_ok())) {
             if let Some(slot) = self.blocks.get_mut(line_a + added_lines) {
                 *slot = merged_block;
             }

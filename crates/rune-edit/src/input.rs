@@ -705,10 +705,12 @@ impl TextEdit {
                 // Text before the paste on its line, or an atom behind it: the break goes before an
                 // atom line that joins it. A single line with nothing before it takes the break after.
                 let before = a > ra.start;
+                // (Nothing of the line left behind the paste, and soft lines after it: they start the next paragraph.)
+                let nothing_left = a == b && a > ra.start && b == rb.end && self.soft_breaks.binary_search(&((lb + 1) as u32)).is_ok();
                 if frag_atom(&frag, 0) && joined(0) && !plain_single && !consumed_first && (before || last > 0) {
                     // Without marks, whatever the caret inherits: the break is no one's text.
                     frag.insert_plain_at(0, "\n");
-                } else if frag_atom(&frag, last) && (joined(last) || (last == 0 && joined(0))) && !plain_single {
+                } else if frag_atom(&frag, last) && (joined(last) || (last == 0 && joined(0))) && !plain_single && !nothing_left {
                     frag.insert_plain_at(frag.text.len(), "\n");
                 } else {
                     break;

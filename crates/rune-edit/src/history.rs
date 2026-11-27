@@ -495,6 +495,28 @@ impl TextEdit {
         r
     }
 
+    /// Writes ids into the stored undo and redo states that have none: where a state has the current lines (as many) the
+    /// ids they have now, else new ones. For [`TextEdit::set_paragraph_ids`] turning ids on.
+    pub(super) fn give_ids_to_history(&mut self) {
+        if self.history.undo.is_empty() && self.history.redo.is_empty() { return; }
+        let current: Vec<u64> = self.attrs.iter().map(|a| a.id).collect();
+        let mut next = self.next_id;
+        let hist = Arc::make_mut(&mut self.history);
+        let mut give = |m: &mut Meta| {
+            let same = m.attrs.len() == current.len();
+            for (i, a) in m.attrs.iter_mut().enumerate() {
+                if a.id == 0 {
+                    a.id = if same { current[i] } else { let id = next; next += 1; id };
+                }
+            }
+        };
+        for c in hist.undo.iter_mut().chain(hist.redo.iter_mut()) {
+            give(&mut c.before);
+            give(&mut c.after);
+        }
+        self.next_id = next;
+    }
+
     /// Undo one typing group or discrete edit. Active IME composition is cancelled first.
     pub fn undo(&mut self) {
         if !self.recording() { return; }
