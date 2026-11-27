@@ -307,14 +307,16 @@ fn shape(e: &TextEdit) -> (String, Vec<u32>, Vec<Block>, Vec<(ParagraphAlign, f3
 #[test]
 fn insert_atom_and_a_pasted_atom_agree_in_paragraphs_with_soft_lines() {
     let mut fails: Vec<String> = Vec::new();
-    // (A field without paragraph attributes has no atoms: the fragment's is its label as text.)
-    for (name, e) in nondefault_docs().into_iter().filter(|(n, _)| *n != "plain-soft") {
+    // (A field without paragraph attributes has no atoms: `insert_atom` makes it attributed first, and is compared with an
+    // attributed paste.)
+    for (name, e) in nondefault_docs() {
         let len = e.text.len();
         for (a, b) in (0..=len).flat_map(|a| (a..=len).map(move |b| (a, b))) {
             let mut i = e.clone();
             i.set_selection(a, b);
             i.insert_atom("N", 20.0);
             let mut f = e.clone();
+            if !f.attributed() { f = f.rich(); f.set_paragraph_attrs(vec![ParagraphAttrs::default(); f.text.split('\n').count()]); }
             f.set_selection(a, b);
             let fr = f.html_fragment("<p data-atom=\"9\" data-atom-height=\"20\">N</p>");
             f.paste_fragment(fr, "N");
@@ -356,4 +358,98 @@ fn turning_ids_on_clears_the_history() {
     assert_eq!((0..2).map(|i| e.paragraph(i).id).collect::<Vec<_>>(), ids);
     e.redo();
     assert_eq!(e.text, text);
+}
+
+fn doc_kinds() -> Vec<(&'static str, TextEdit)> {
+    let mut v = nondefault_docs();
+    let plain = TextEdit::from_parts("ab\ncd\nxy\nef", vec![], vec![Block::Paragraph; 4]);
+    v.push(("plain", plain.clone()));
+    v.push(("plain-rich", plain.rich()));
+    v.push(("atom-next", atom_at_start_doc()));
+    v
+}
+
+/// The line of the new atom `N` in `x`.
+fn new_atom_line(x: &TextEdit) -> Option<usize> {
+    x.text.split('\n').enumerate().position(|(i, t)| t == "N" && x.paragraph(i).atom.is_some())
+}
+
+/// `insert_atom` works in any field, as before: a field without attributes becomes attributed, a field that is not rich
+/// still gets the atom on a line of its own, and the caret ends at the new atom's end, at every caret and selection (also
+/// before another atom).
+#[test]
+fn insert_atom_works_in_any_field_and_leaves_the_caret_at_the_new_atom() {
+    let mut fails: Vec<String> = Vec::new();
+    for (name, e) in doc_kinds() {
+        let len = e.text.len();
+        for (a, b) in (0..=len).flat_map(|a| (a..=len).map(move |b| (a, b))) {
+            let mut x = e.clone();
+            x.set_selection(a, b);
+            if x.range() != (a, b) { continue; }
+            x.insert_atom("N", 20.0);
+            let Some(n) = new_atom_line(&x) else { fails.push(format!("{name} {a}..{b}: no atom: {}", show(&x))); continue; };
+            let end = x.line_range(n).end;
+            if (x.anchor, x.focus) != (end, end) { fails.push(format!("{name} {a}..{b}: caret {:?} not at {end}: {}", (x.anchor, x.focus), show(&x))); }
+            if x.paragraph(n).atom != Some(20.0) || x.blocks()[n] != Block::Paragraph { fails.push(format!("{name} {a}..{b}: not a Paragraph atom: {}", show(&x))); }
+        }
+    }
+    assert!(fails.is_empty(), "{} failures, the first:\n{}", fails.len(), fails.iter().take(5).cloned().collect::<Vec<_>>().join("\n"));
+}
+
+fn atom_fragment(shape: &str) -> TextEdit {
+    let (text, atoms): (Vec<&str>, Vec<bool>) = shape.chars().map(|c| (if c == 'A' { "T" } else { "x" }, c == 'A')).unzip();
+    let mut f = TextEdit::from_parts(text.join("\n"), vec![], vec![Block::Paragraph; text.len()]);
+    f.set_paragraph_attrs(atoms.iter().enumerate().map(|(i, &a)| if a { id(500 + i as u64).atom(20.0) } else { id(500 + i as u64) }).collect());
+    f
+}
+
+/// Fragments of several atoms pasted over every selection leave every id unique.
+#[test]
+fn several_pasted_atoms_get_ids_of_their_own() {
+    let mut fails: Vec<String> = Vec::new();
+    for (name, e) in nondefault_docs().into_iter().chain(std::iter::once(("atom-next", atom_at_start_doc()))).filter(|(n, _)| *n != "plain-soft") {
+        let len = e.text.len();
+        for (a, b) in (0..=len).flat_map(|a| (a..=len).map(move |b| (a, b))) {
+            for shape in ["AA", "AAA", "AxA", "xAA", "AAx"] {
+                let mut x = e.clone();
+                x.set_selection(a, b);
+                if x.range() != (a, b) { continue; }
+                x.paste_fragment(atom_fragment(shape), "");
+                let ids: Vec<u64> = x.paragraph_attrs().iter().map(|p| p.id).collect();
+                let mut u = ids.clone();
+                u.sort();
+                u.dedup();
+                if u.len() != ids.len() || ids.contains(&0) { fails.push(format!("{name} {a}..{b} {shape}: {ids:?}: {}", show(&x))); }
+            }
+        }
+    }
+    assert!(fails.is_empty(), "{} failures, the first:\n{}", fails.len(), fails.iter().take(5).cloned().collect::<Vec<_>>().join("\n"));
+}
+
+/// `insert_atom` always inserts: over an identical atom it gives a fresh id, one undo step and a change report.
+#[test]
+fn insert_atom_over_an_identical_atom_still_inserts() {
+    let mut e = atom_at_start_doc();
+    e.set_selection(3, 6);
+    e.take_changes();
+    let (old, steps) = (e.paragraph(1).id, e.history_len().0);
+    e.insert_atom("Tbl", 20.0);
+    assert_ne!(e.paragraph(1).id, old, "a fresh id: {}", show(&e));
+    assert_eq!(e.history_len().0, steps + 1, "one undo step");
+    assert!(!e.take_changes().is_empty(), "a change report");
+}
+
+/// Turning ids on inside an undo group with no history clears the group's baseline too: undo brings back no id-less state.
+#[test]
+fn turning_ids_on_in_an_undo_group_leaves_no_id_less_baseline() {
+    let p = Block::Paragraph;
+    let mut e = TextEdit::from_parts("ab\ncd", vec![], vec![p, p]);
+    e.set_paragraph_attrs(vec![ParagraphAttrs::default(); 2]);
+    e.undo_group(|e| {
+        e.set_paragraph_ids(100);
+        e.set_selection(2, 2);
+        e.insert("x");
+    });
+    e.undo();
+    assert!((0..2).all(|i| e.paragraph(i).id != 0), "undo keeps the ids: {}", show(&e));
 }
