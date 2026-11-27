@@ -23,6 +23,23 @@ pub(super) enum Edge {
     Tail,
 }
 
+/// Which of the lines an edit starts on, one more than it adds, are new paragraphs (`true`)
+/// and which are an existing one's, or what is left of it, whatever text they hold now.
+pub(super) fn new_lines(added: usize, kept: Kept, edge: Edge, same_line: bool) -> Vec<bool> {
+    // An edit that adds no line leaves the one line it is on as it was.
+    if added == 0 { return vec![false]; }
+    let mut lines = vec![true; added + 1];
+    match edge {
+        Edge::Front { .. } => lines[added] = false,
+        Edge::Tail => (lines[0], lines[added]) = (false, false),
+        Edge::Inside { rest, .. } => {
+            lines[0] = kept.tail && same_line;
+            lines[added] = !(kept.tail || (kept.head && !same_line) || rest);
+        }
+    }
+    lines
+}
+
 /// What a paragraph split off `a` takes: everything but its page break, its atom and its id.
 fn split_attrs(mut a: ParagraphAttrs, id: u64) -> ParagraphAttrs {
     (a.page_break_before, a.atom, a.id) = (false, None, id);
@@ -367,7 +384,7 @@ impl TextEdit {
             // The atom an insertion pushed down a line took its attributes with it: the line
             // the typed text is on is a new paragraph.
             let id = self.fresh_id();
-            split_attrs(last, id)
+            if matches!(edge, Edge::Inside { copy: true, .. }) { split_attrs(last, id) } else { ParagraphAttrs::default().id(id) }
         } else {
             self.as_text(survivor)
         });

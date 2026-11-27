@@ -1,6 +1,6 @@
 //! Core text and attribute replacement engine, grapheme stepping, and input sanitization.
 
-use super::paragraph::Edge;
+use super::paragraph::{Edge, new_lines};
 use super::*;
 
 /// The previous grapheme boundary, so a caret or backspace takes a ZWJ emoji, flag or skin
@@ -85,13 +85,30 @@ impl TextEdit {
     /// Core replacement engine. `back` is how far before the inserted text's end the caret goes.
     pub(crate) fn apply_fenced(
         &mut self,
-        (a, b): (usize, usize),
+        range: (usize, usize),
         s: &str,
         inserted_marks: &[Mark],
         new_line_block: Option<Block>,
         mark_new_lines_soft: bool,
         back: usize,
     ) {
+        self.apply_fenced_lines(range, s, inserted_marks, new_line_block, mark_new_lines_soft, back, false);
+    }
+
+    /// [`apply_fenced`](Self::apply_fenced) that, with `want`, says which of the lines from the
+    /// one `range` starts on, as many as the text's line breaks add, are new paragraphs, and
+    /// which hold what the edit left of an existing one. A paste decorates the new ones.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn apply_fenced_lines(
+        &mut self,
+        (a, b): (usize, usize),
+        s: &str,
+        inserted_marks: &[Mark],
+        new_line_block: Option<Block>,
+        mark_new_lines_soft: bool,
+        back: usize,
+        want: bool,
+    ) -> Vec<bool> {
         // Callers sync first; a second whole-text pass here would show on every keystroke.
         self.column = Column::Free;
         self.affinity = parley::Affinity::Downstream;
@@ -103,6 +120,7 @@ impl TextEdit {
             && !mark_new_lines_soft
             && new_line_block.is_none_or(|b| b == Block::Paragraph)
             && self.attrs.is_empty()
+            && !want
             && self.blocks.iter().all(|&b| b == Block::Paragraph)
         {
             // Plain text: no per-line passes, so a keystroke in a long plain field costs what
@@ -115,7 +133,7 @@ impl TextEdit {
             self.focus = self.anchor;
             self.cancel_composition();
             if del_len + ins_len > 0 { self.note_text(a..b, ins_len); }
-            return;
+            return Vec::new();
         }
         let line_a = self.line_of_byte(a);
         let line_b = self.line_of_byte(b);
@@ -146,14 +164,18 @@ impl TextEdit {
         let front = (a == line_a_range.start && added_lines > 0 && !mark_new_lines_soft && !kept.head && !kept.tail
             && (self.paragraph(line_a).atom.is_none() || atom_gone || label_gone) && new_line_block.is_none_or(|blk| blk == block_a))
             .then(|| new_line_block.is_some());
-        // Text that ends at the start of a later line leaves that line whole: its break stays.
-        let tail_whole = front.is_none() && !take_b && !kept.head && !kept.tail && added_lines > 0 && line_a < line_b && b == line_b_range.start;
+        // Text with a line break over a selection that starts in the middle of a line and ends in a
+        // later one: the last line the edit leaves ends with the later paragraph's break, so it is
+        // that paragraph, with its id, attributes and block; the first line keeps its own.
+        let tail_whole = front.is_none() && !take_b && !kept.head && !kept.tail && added_lines > 0 && line_a < line_b && a != line_a_range.start
+            && self.paragraph(line_b).atom.is_none();
         let block_b = self.blocks.get(line_b).copied().unwrap_or(Block::Paragraph);
         let edge = match front {
             Some(copy) => Edge::Front { copy },
             None if tail_whole => Edge::Tail,
             None => Edge::Inside { copy: new_line_block.is_some(), rest: b < line_b_range.end },
         };
+        let new_lines = if want { new_lines(added_lines, kept, edge, line_a == line_b) } else { Vec::new() };
         self.splice_attrs(line_a, line_b, added_lines, take_b, kept, edge);
         // Determine the surviving block for `line_a` when `a..b` merges `line_a..=line_b`.
         let merged_block = if take_b || (kept.tail && added_lines == 0) {
@@ -286,6 +308,7 @@ impl TextEdit {
         self.cancel_composition();
         self.sync_invariants();
         self.mark_edited();
+        new_lines
     }
 
     pub(crate) fn replace(&mut self, (mut a, mut b): (usize, usize), s: &str, kind: EditKind) {

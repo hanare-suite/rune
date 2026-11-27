@@ -2234,9 +2234,25 @@ example, and `spikes/paged/check.py` checks every point below headless.
 - **Splitting and merging**: Return copies a paragraph's attributes to the new one, without
   its page break. After `edit.set_paragraph_ids(next)` the new paragraph takes `next` as its
   `id`, the one after it `next + 1`, and `edit.next_paragraph_id()` gives the counter back to
-  store. Joining two paragraphs keeps the first one's attributes and id; an empty first
-  paragraph gives way to the second. In a field whose paragraphs carry attributes, plain Return
-  breaks the paragraph rather than submitting.
+  store. In a field whose paragraphs carry attributes, plain Return breaks the paragraph
+  rather than submitting. A paragraph's id, attributes and block live in its line break, and
+  every path an edit takes (typing, `insert`, `paste`, `paste_html`, `paste_fragment`) gives
+  the same result:
+  - A join is a deletion or replacement that starts in the middle of a line, or covers exactly
+    a line break, and inserts none: it keeps the first paragraph's attributes and id, and an
+    empty first paragraph gives way to the second.
+  - Whole paragraphs, from a line's start up to a later line's start, are decided by the
+    paragraph whose break stays: the text left joins it, under its id, attributes and block.
+  - Text with a line break over a selection that starts in the middle of a line and ends in a
+    later one leaves the first line its own, and its last line is the later paragraph, with
+    its id, attributes and block. Over a selection inside one line, the rest of the line stays
+    in the line's block.
+  - An insertion at the start of a line, over a selection that starts there or none, goes
+    before the line: the line keeps its id, attributes and block, and the paragraphs the text
+    brings are new, above it. Return gives them the line's style and alignment; typed and
+    pasted text gives them the defaults, or a pasted fragment's own style, alignment and block.
+  - An atom's line never joins text: new paragraphs go above or below it, and text that takes
+    its place becomes a paragraph under a new id, in the atom's style.
 - **Pages**: `.page_flow(PageFlow::new(page_height, gap))` lays the field's lines into pages. A
   line that doesn't fit its page moves whole to the next, and the caret, presses, selection
   boxes, caret follow and the input method's cursor rectangle follow it. A paragraph with
