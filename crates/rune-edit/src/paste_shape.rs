@@ -13,6 +13,55 @@ impl TextEdit {
         if la < lb && a == ra.start && (b == rb.start || (b == self.text.len() && b == rb.end) || self.paragraph(la).atom.is_some()) { lb } else { la }
     }
 
+    /// A copy of what an edit's lines depend on, without the history, the change log or the typing state: text,
+    /// marks, blocks, attributes and soft lines, for a dry run of an edit.
+    fn scratch_copy(&self) -> TextEdit {
+        let mut c = TextEdit::default();
+        c.text = self.text.clone();
+        c.anchor = self.anchor;
+        c.focus = self.focus;
+        c.marks = self.marks.clone();
+        c.blocks = self.blocks.clone();
+        c.soft_breaks = self.soft_breaks.clone();
+        c.attrs = self.attrs.clone();
+        c.next_id = self.next_id;
+        c.line_mode = self.line_mode;
+        c.rich = self.rich;
+        c.allowed_marks = self.allowed_marks;
+        c.allowed_blocks = self.allowed_blocks;
+        c.history_off = true;
+        c.html_styles = self.html_styles.clone();
+        c
+    }
+
+    /// Unformatted text pasted as typed, but where it starts at a paragraph's start in a document, the lines that
+    /// become paragraphs of their own take no marks from the one that starts there (the next paragraph's bold, say,
+    /// when a cut paragraph is pasted back before it); an open last line, which joins that paragraph, inherits as
+    /// typed text does, so its run size is kept. One undo step.
+    pub(super) fn paste_unformatted(&mut self, plain: &str) -> EditOutcome {
+        let (a, b) = self.range();
+        let split = plain.rfind('\n').map(|i| i + 1);
+        match split {
+            Some(k) if self.attributed() && a == self.line_range(self.line_of_byte(a)).start && self.text[a..b] != *plain => {
+                let inherited = self.inherited_marks_at(a);
+                let tail = &plain[k..];
+                self.undo_group(|e| {
+                    e.typing = Typing::Armed { at: (e.anchor, e.focus), marks: Vec::new() };
+                    e.paste(plain);
+                    let end = e.focus;
+                    let start = end.saturating_sub(tail.len());
+                    if !tail.is_empty() && !inherited.is_empty() && e.text.get(start..end) == Some(tail) {
+                        e.marks.extend(inherited.into_iter().map(|mark| MarkRange { start, end, mark }));
+                        e.normalize_marks();
+                        e.note_marks(start..end);
+                    }
+                });
+                EditOutcome::default()
+            }
+            _ => self.paste(plain),
+        }
+    }
+
     /// Which lines of `frag` land on a line of code, as the paste puts them: the paste is done to a copy and the
     /// lines it makes of the fragment's are read there, a line of code that is no atom's. So this cannot
     /// differ from what the paste does.
@@ -24,7 +73,7 @@ impl TextEdit {
         let (a, b) = self.range();
         let f = self.fence(a, b, &frag.text);
         let first = self.line_of_byte(f.a);
-        let mut dry = self.clone();
+        let mut dry = self.scratch_copy();
         dry.apply_fenced_lines((f.a, f.b), f.text.as_deref().unwrap_or(&frag.text), &[], None, false, f.back, false);
         (0..n).map(|k| {
             let line = first + f.lead + k;

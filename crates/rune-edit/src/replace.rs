@@ -117,6 +117,12 @@ impl TextEdit {
         // (The end of the text counts as the last paragraph's break.)
         let whole = line_a < line_b && a == line_a_range.start && (b == line_b_range.start || (b == self.text.len() && b == line_b_range.end));
         let take_b = !(kept.tail && added_lines > 0) && (atom_gone || whole);
+        // A paragraph taken to the end of the text, whose last line is soft: the paragraph that stays is
+        // the one the soft lines belong to, the hard line above them, not the soft line itself.
+        let mut owner_b = line_b;
+        if whole && b != line_b_range.start {
+            while owner_b > line_a && self.soft_breaks.binary_search(&(owner_b as u32)).is_ok() { owner_b -= 1; }
+        }
         // An insertion at the start of a line, over a selection that starts there or none, goes
         // before what is left of it (an atom's line the selection takes counts as gone): the
         // line keeps its id and attributes and the paragraphs the text brings are new ones above
@@ -138,7 +144,7 @@ impl TextEdit {
             None if tail_whole => Edge::Tail,
             None => Edge::Inside { copy: new_line_block.is_some(), rest: b < line_b_range.end },
         };
-        Plan { line_a, line_b, line_b_range, added_lines, kept, take_b, front, tail_whole, block_b, edge }
+        Plan { line_a, line_b, line_b_range, added_lines, kept, take_b, front, tail_whole, block_b, owner_b, edge }
     }
 
     /// Which of the lines an edit replacing `a..b` with `s` starts on, one more than it adds, are
@@ -188,22 +194,24 @@ impl TextEdit {
             if del_len + ins_len > 0 { self.note_text(a..b, ins_len); }
             return Vec::new();
         }
-        let Plan { line_a, line_b, line_b_range, added_lines, kept, take_b, front, tail_whole, block_b, edge } = self.edit_plan((a, b), s, new_line_block, mark_new_lines_soft);
+        let Plan { line_a, line_b, line_b_range, added_lines, kept, take_b, front, tail_whole, block_b, owner_b, edge } = self.edit_plan((a, b), s, new_line_block, mark_new_lines_soft);
         let removed_lines = line_b - line_a;
         let new_lines = if want { new_lines(added_lines, kept, edge, line_a == line_b) } else { Vec::new() };
+        if owner_b != line_b && line_b < self.attrs.len() {
+            self.attrs[line_b] = self.attrs[owner_b];
+        }
         self.splice_attrs(line_a, line_b, added_lines, take_b, kept, edge);
-        // Determine the surviving block for `line_a` when `a..b` merges `line_a..=line_b`.
-        let merged_block = if take_b || (kept.tail && added_lines == 0) {
-            self.blocks.get(line_b).copied().unwrap_or(Block::Paragraph)
+        // A line's softness describes the break before it, and when lines merge that break survives only if it
+        // is the one before the first: the merged line is as soft as `line_a`, never as `line_b`.
+        let merged_soft = self.soft_breaks.binary_search(&(line_a as u32)).is_ok() && line_a > 0;
+        // Determine the surviving block for `line_a` when `a..b` merges `line_a..=line_b`: a soft line is in
+        // the block of the paragraph above, whichever paragraph's text it holds.
+        let merged_block = if merged_soft && added_lines == 0 {
+            self.blocks.get(line_a).copied().unwrap_or(Block::Paragraph)
+        } else if take_b || (kept.tail && added_lines == 0) {
+            self.blocks.get(if take_b { owner_b } else { line_b }).copied().unwrap_or(Block::Paragraph)
         } else {
             self.blocks.get(line_a).copied().unwrap_or(Block::Paragraph)
-        };
-        // The merged line is as soft as the paragraph that stays: the later one's when it is the later
-        // one that stays.
-        let merged_soft = if take_b {
-            self.soft_breaks.binary_search(&(line_b as u32)).is_ok() && line_a > 0
-        } else {
-            self.soft_breaks.binary_search(&(line_a as u32)).is_ok()
         };
 
         let next_line_blk = new_line_block.unwrap_or(match merged_block {

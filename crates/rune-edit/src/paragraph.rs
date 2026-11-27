@@ -34,6 +34,9 @@ pub(super) struct Plan {
     pub(super) front: Option<bool>,
     pub(super) tail_whole: bool,
     pub(super) block_b: Block,
+    /// The line the paragraph that stays, when `take_b`, is the first line of: `line_b`, or the hard line above
+    /// the soft ones a paragraph taken to the end of the text ends with.
+    pub(super) owner_b: usize,
     pub(super) edge: Edge,
 }
 

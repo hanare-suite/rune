@@ -315,7 +315,11 @@ fn a_pasted_fragment_follows_the_rules_over_every_selection() {
                 }
                 if la < lb && a == ra.0 && (b == rb.0 || (b == n && b == rb.1 && oattrs[lb].atom.is_none())) && !plain_single {
                     let (t, at, bl) = lines[end_line];
-                    if at != oattrs[lb] || !blk(oblocks[lb], bl) || (b == rb.0 && !t.ends_with(&e.text[rb.0..rb.1])) { fail("rule-whole", format!("line {lb} was {:?} {:?}", oattrs[lb], oblocks[lb])); }
+                    // (A paragraph taken to the end of the text stays as the hard line its soft lines belong to; a soft line
+                    // the edit starts on keeps the block of the paragraph above.)
+                    let own = if b == n && b != rb.0 { (la..=lb).rev().find(|&l| !e.soft_breaks().contains(&(l as u32))).unwrap_or(la) } else { lb };
+                    let want_block = if added == 0 && e.soft_breaks().contains(&(la as u32)) { oblocks[la] } else { oblocks[own] };
+                    if at != oattrs[own] || !blk(want_block, bl) || (b == rb.0 && !t.ends_with(&e.text[rb.0..rb.1])) { fail("rule-whole", format!("line {lb} was {:?} {:?}", oattrs[own], oblocks[own])); }
                 }
                 if la < lb && a > ra.0 && b > rb.0 && added > 0 && !atom_touch {
                     let (_, at, bl) = lines[la];
@@ -663,7 +667,11 @@ fn a_pasted_fragment_follows_the_rules_in_code_and_around_every_document() {
                 }
                 if la < lb && a == ra.0 && (b == rb.0 || (b == n && b == rb.1 && oattrs[lb].atom.is_none())) && !plain_single {
                     let (t, at, bl) = lines[end_line];
-                    if at != oattrs[lb] || !blk(oblocks[lb], bl) || (b == rb.0 && !t.ends_with(&e.text[rb.0..rb.1])) { fail("rule-whole", format!("line {lb} was {:?} {:?}", oattrs[lb], oblocks[lb])); }
+                    // (A paragraph taken to the end of the text stays as the hard line its soft lines belong to; a soft line
+                    // the edit starts on keeps the block of the paragraph above.)
+                    let own = if b == n && b != rb.0 { (la..=lb).rev().find(|&l| !e.soft_breaks().contains(&(l as u32))).unwrap_or(la) } else { lb };
+                    let want_block = if added == 0 && e.soft_breaks().contains(&(la as u32)) { oblocks[la] } else { oblocks[own] };
+                    if at != oattrs[own] || !blk(want_block, bl) || (b == rb.0 && !t.ends_with(&e.text[rb.0..rb.1])) { fail("rule-whole", format!("line {lb} was {:?} {:?}", oattrs[own], oblocks[own])); }
                 }
                 if la < lb && a > ra.0 && b > rb.0 && added > 0 && !atom_touch {
                     let (_, at, bl) = lines[la];
