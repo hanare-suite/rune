@@ -362,14 +362,14 @@ def marks_baseline():
 
 # ---- F2a: paragraph attributes -------------------------------------------------------------
 
-def line_ends(name, needle, snap=None, wraps=True):
+def line_ends(name, needle, snap=None, wraps=True, snap_at="second"):
     """The caret at `needle`'s paragraph start, at its first line's end, at its second line's start, and its facts.
 
     A line that wraps ends in a space that hangs past it: one step back from the line's edge is the end of its last word."""
     env = {"PAGED_DOC": "features", "PAGED_CARET": needle}
     back = [("Left",)] if wraps else []
     events = steps(0.2, ("Right",), ("Left",), "start", ("Right", "cmd"), *back, "end", ("Left", "cmd"), ("Down",), ("Left", "cmd"), "second")
-    t = marks(name, events, ["start", "end", "second"], env=env, snaps={"second": snap} if snap else None)
+    t = marks(name, events, ["start", "end", "second"], env=env, snaps={snap_at: snap} if snap else None)
     return caret(t["start"]), caret(t["end"]), caret(t["second"]), facts(t["start"])
 
 
@@ -393,18 +393,41 @@ def attrs_align():
 def attrs_indent():
     plain = line_ends("attrs-indent", "Einzug:", snap="attrs-indent.png")
     hanging = line_ends("attrs-hanging", "Hängend:")
-    styled = line_ends("attrs-list-styled", "Punkt eins", wraps=False)
+    styled = line_ends("attrs-list-styled", "Punkt eins", wraps=False, snap="attrs-list-styled.png", snap_at="start")
     nested = line_ends("attrs-list-indented", "Punkt zwei", wraps=False)
     one = line_ends("attrs-list-plain", "Erstens", wraps=False)
+    # The bullet's dot, in the pixels left of the styled item's text: its right edge, in device px.
+    sx, sy = styled[0]["window"][0], styled[0]["window"][1]
+    dot = box(os.path.join(EVIDENCE, "attrs-list-styled.png"), lambda r, g, b: r < 190 and g < 190 and b < 190, sx - 24, sx - 2, sy, sy + styled[0]["h"])
     ok = ((plain[0]["x"], plain[2]["x"]) == (54, 36) and (hanging[0]["x"], hanging[2]["x"]) == (18, 36)
           and plain[3]["indent"] == "36/18" and hanging[3]["indent"] == "36/-18"
           # A list item that is also styled: the heading style's line, the bullet's indent.
           and (styled[3]["style"], styled[3]["block"], styled[0]["h"]) == (1, "bullet0", 20) and styled[0]["x"] > 0
           # A list item with a left indent of its own: the indent on top of its level's.
-          and nested[3]["block"] == "bullet1" and nested[0]["x"] == 2 * one[0]["x"] + 36 and one[0]["x"] > 0)
+          and nested[3]["block"] == "bullet1" and nested[0]["x"] == 2 * one[0]["x"] + 36 and one[0]["x"] > 0
+          # The styled bullet is drawn 7 pt left of where its text starts, the indent of its own style's size.
+          and dot is not None and abs(dot[2] - (2 * styled[0]["window"][0] - 14)) <= 1)
     check("attrs-indent", ok, {"first_line_and_second_line_x": {"left 36, first line 18": [plain[0]["x"], plain[2]["x"]], "left 36, first line -18": [hanging[0]["x"], hanging[2]["x"]]},
-                               "styled_bullet": {"style": styled[3]["style"], "block": styled[3]["block"], "x": styled[0]["x"], "line_height": styled[0]["h"]},
+                               "styled_bullet": {"style": styled[3]["style"], "block": styled[3]["block"], "x": styled[0]["x"], "line_height": styled[0]["h"], "dot_px": dot},
                                "indented_bullet_level_1_x": nested[0]["x"], "numbered_level_0_x": one[0]["x"]})
+
+
+def empty_caret():
+    """Return at a paragraph's end opens an empty one with its attributes: its caret stands where typed text starts,
+    or in the middle of a centred paragraph, where typed text centres."""
+    found, ok = {}, True
+    for case, needle in (("centre", "Mitte:"), ("bullet", "Punkt zwei")):
+        env = {"PAGED_DOC": "features", "PAGED_CARET": needle}
+        names = ["start", "empty", "typed", "typed-start"]
+        events = steps(0.2, ("Right",), ("Left",), "start", ("Right", "cmd"), ("Enter",), "empty", {"type": "type", "text": "x"}, "typed", ("Left",), "typed-start")
+        c = {k: caret(v) for k, v in marks(f"empty-caret-{case}", events, names, env=env).items()}
+        if case == "centre":
+            good = abs(c["empty"]["x"] - CONTENT_W / 2) <= 1 and abs((c["typed-start"]["x"] + c["typed"]["x"]) / 2 - c["empty"]["x"]) <= 1
+        else:
+            good = abs(c["empty"]["x"] - c["typed-start"]["x"]) <= 0.5 and abs(c["empty"]["x"] - c["start"]["x"]) <= 0.5 and c["empty"]["x"] > 0
+        ok = ok and good
+        found[case] = {k: v["x"] for k, v in c.items()}
+    check("empty-caret", ok, {"caret_x": found, "content_width": CONTENT_W})
 
 
 def attrs_split_merge():
@@ -706,7 +729,7 @@ def pages_same_frame():
 
 CHECKS = {"open": pages, "arrows": arrows, "tap": tap, "drag": drag, "typing": typing, "forced-break": forced_break, "fractional-scale": fractional_scale, "fractional-flow": fractional_flow, "ime-headless": ime,
           "marks-family": marks_family, "marks-highlight": marks_highlight, "marks-baseline": marks_baseline,
-          "attrs-align": attrs_align, "attrs-indent": attrs_indent, "attrs-split-merge": attrs_split_merge,
+          "attrs-align": attrs_align, "attrs-indent": attrs_indent, "empty-caret": empty_caret, "attrs-split-merge": attrs_split_merge,
           "page-rules": page_rules, "atoms": atoms, "paste-over-atom": paste_over_atom, "paste-at-atom": paste_at_atom,
           "atom-ids": atom_ids, "atom-keys": atom_keys, "history": history, "reuse": reuse, "pages-same-frame": pages_same_frame}
 os.makedirs(SCRIPTS, exist_ok=True)

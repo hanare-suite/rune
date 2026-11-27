@@ -1,0 +1,55 @@
+{
+ "events": [
+  {
+   "t": 0.2,
+   "type": "key",
+   "name": "Right"
+  },
+  {
+   "t": 0.45,
+   "type": "key",
+   "name": "Left"
+  },
+  {
+   "t": 0.7,
+   "type": "mark",
+   "name": "start"
+  },
+  {
+   "t": 0.95,
+   "type": "key",
+   "name": "Right",
+   "cmd": true
+  },
+  {
+   "t": 1.2,
+   "type": "key",
+   "name": "Enter"
+  },
+  {
+   "t": 1.45,
+   "type": "mark",
+   "name": "empty"
+  },
+  {
+   "t": 1.7,
+   "type": "type",
+   "text": "x"
+  },
+  {
+   "t": 1.95,
+   "type": "mark",
+   "name": "typed"
+  },
+  {
+   "t": 2.2,
+   "type": "key",
+   "name": "Left"
+  },
+  {
+   "t": 2.45,
+   "type": "mark",
+   "name": "typed-start"
+  }
+ ]
+}

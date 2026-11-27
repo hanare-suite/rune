@@ -104,6 +104,9 @@ pub(super) struct Shape {
 }
 
 impl Shape {
+    /// No attributes: the field's alignment, no indents, no atom.
+    pub(super) const NONE: Shape = Shape { align: Alignment::Start, indent: [0.0; 2], atom: None };
+
     /// `attrs` in a field whose own alignment is `align`: a left-aligned paragraph keeps the
     /// field's, and an atom's label is centred.
     pub(super) fn of(attrs: ParagraphAttrs, align: Alignment, scale: f32) -> Shape {
@@ -133,6 +136,8 @@ struct Spot {
 /// the next layout places again) and its height without what the gaps added.
 #[derive(Clone)]
 pub(super) struct Paged {
+    /// How it was aligned and indented, which an empty paragraph's caret needs.
+    pub(super) shape: Shape,
     pub(super) gaps: Box<[(u32, f32)]>,
     pub(super) natural: Option<Rc<Layout<Ink>>>,
     pub(super) natural_height: f32,
@@ -141,7 +146,7 @@ pub(super) struct Paged {
 impl Paged {
     /// A paragraph that crosses no page's end, `height` px tall.
     pub(super) fn plain(height: f32) -> Paged {
-        Paged { gaps: Box::default(), natural: None, natural_height: height }
+        Paged { shape: Shape::NONE, gaps: Box::default(), natural: None, natural_height: height }
     }
 }
 
@@ -180,7 +185,7 @@ impl TextSystem {
             self.layout_ids.build(&l);
             (l, Some(layout))
         };
-        Placed { top: spot.top, lead, height, extent: total.max(height), layout, paged: Paged { gaps: spot.gaps.into(), natural, natural_height } }
+        Placed { top: spot.top, lead, height, extent: total.max(height), layout, paged: Paged { shape, gaps: spot.gaps.into(), natural, natural_height } }
     }
 }
 
@@ -307,13 +312,19 @@ pub(super) fn reuse_rich(prev: &ParagraphLayout, spec: &TextInput<'_>, style_key
         (lo, hi) = (lo.min(s.start as usize), hi.max(s.end as usize));
     }
     for s in &sn[p..sn.len() - q] {
-        (lo, hi) = (lo.min(old_at(s.start)), hi.max(old_at(s.end)));
+        // The span's new numbers and the old text's at the same place: an app that keeps a span
+        // through an edit that shifts the text covers other paragraphs than it did.
+        (lo, hi) = (lo.min(s.start as usize).min(old_at(s.start)), hi.max(s.end as usize).max(old_at(s.end)));
     }
     if delta != 0 {
         // A span that stayed where it was is another span to a paragraph that moved, and one
         // that moved is another to a paragraph that stayed.
-        hi = so[..p].iter().fold(hi, |hi, s| hi.max(s.end as usize));
-        lo = so[so.len() - q..].iter().fold(lo, |lo, s| lo.min(s.start as usize));
+        // A span the app kept at its old numbers covers other text now: the bytes at its numbers
+        // in the new text are the old text's at `old_at` of them.
+        hi = so[..p].iter().fold(hi, |hi, s| hi.max(s.end as usize).max(old_at(s.end)));
+        // A span moved with the tail starts at its new numbers in the new text, which may be
+        // before the edit: the paragraph there is another one than the span's old start is in.
+        lo = so[so.len() - q..].iter().zip(&sn[sn.len() - q..]).fold(lo, |lo, (a, b)| lo.min(a.start as usize).min(b.start as usize));
     }
     let ps = &prev.paragraphs;
     let new_lines = count_newlines(new) + 1;

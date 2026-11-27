@@ -19,6 +19,8 @@ pub struct Piece<'a> {
     pub index: usize,
     pub shaped: bool,
     pub(super) pad: [f32; 2],
+    /// How its attributes align and indent it.
+    pub(super) shape: paged::Shape,
     pub(super) isolates: &'a [(u32, u32)],
     pub(super) disjoint_spans: bool,
     pub(super) whole: bool,
@@ -26,11 +28,11 @@ pub struct Piece<'a> {
 
 impl<'a> Piece<'a> {
     pub(crate) fn of_paragraph(k: usize, p: &'a Paragraph, disjoint_spans: bool) -> Piece<'a> {
-        Piece { layout: &p.layout, shared: Some(&p.layout), start: p.start, end: p.end, y: p.y, height: p.height, flow: p.flow, index: k, shaped: p.shaped, pad: p.pad, isolates: &p.isolates, disjoint_spans, whole: false }
+        Piece { layout: &p.layout, shared: Some(&p.layout), start: p.start, end: p.end, y: p.y, height: p.height, flow: p.flow, index: k, shaped: p.shaped, pad: p.pad, shape: p.paged.shape, isolates: &p.isolates, disjoint_spans, whole: false }
     }
 
     pub(super) fn whole(layout: &'a Layout<Ink>) -> Piece<'a> {
-        Piece { layout, shared: None, start: 0, end: usize::MAX, y: 0.0, height: layout.height(), flow: Flow::of_layout(layout), index: 0, shaped: true, pad: [0.0, 0.0], isolates: &[], disjoint_spans: false, whole: true }
+        Piece { layout, shared: None, start: 0, end: usize::MAX, y: 0.0, height: layout.height(), flow: Flow::of_layout(layout), index: 0, shaped: true, pad: [0.0, 0.0], shape: paged::Shape::NONE, isolates: &[], disjoint_spans: false, whole: true }
     }
 
     /// Whether it's a text's one layout rather than a paragraph of a field's.

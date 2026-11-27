@@ -36,12 +36,14 @@ In the window the function keys stand in for a ribbon: F1 to F4 align the paragr
 | `typing` | with widow control off, typing at a paragraph's end on page 1's last line moves its last line to page 2; Backspace brings it back |
 | `forced-break` | a paragraph with a page break before it starts at a page's top, with room left on the page before |
 | `fractional-scale` | at scale 1.25 a chapter heading on page 45 still sits at its sheet's top margin, within half a device pixel |
+| `fractional-flow` | at scale 1.25 the first line of each page sits at that page's top rounded to a device px, and the last line of page 1 ends within its page |
 | `ime-headless` | a composition on page 2 moves the input method's cursor rectangle with the caret |
 | `marks-family` | a run in a registered family is shaped in it (monospaced: four M as wide as four i); an unknown name keeps the field's family |
 | `marks-highlight` | a highlight starts and ends with its word, fills its line's height, and has square corners; two sizes on one line share one band |
 | `marks-baseline` | sub- and superscripts are 58 % as wide and sit a third of the em below and above the baseline |
 | `attrs-align` | left, centred, right and justified paragraphs put their lines' ends where they belong |
-| `attrs-indent` | a left and a first-line indent, a hanging indent, a styled bullet and an indented one |
+| `attrs-indent` | a left and a first-line indent, a hanging indent, a styled bullet (its dot 7 pt left of its text, which starts at the indent of the item's own style) and an indented one |
+| `empty-caret` | Return at the end of a centred paragraph and of an indented list item opens an empty one whose caret is in the middle, or where typed text starts |
 | `attrs-split-merge` | Return copies style, alignment and indents to a new paragraph with the next id and without the page break; Backspace merges back to the first paragraph's attributes and id |
 | `page-rules` | a paragraph's first line and its last line never stand alone on a page; the room above a paragraph is dropped at a page's top it flowed onto and kept after a forced break |
 | `atoms` | the caret crosses a locked block in one step, Shift+Right selects it whole, text typed beside it gets its own paragraph, Backspace removes it as one edit and one history step, and the accessibility tree names it as a group |

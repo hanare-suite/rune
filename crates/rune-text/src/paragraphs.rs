@@ -300,21 +300,37 @@ impl<'a> TextFlow<'a> {
         }
     }
 
-    /// Where an empty paragraph's caret or newline box, `size` px wide, starts: after its left
-    /// indent when reading left to right, or inside its right padding from the wrap width when
-    /// reading right to left.
+    /// Where an empty paragraph's caret or newline box, `size` px wide, starts: after its indents
+    /// when reading left to right, and, in a field with paragraph attributes, in the middle or at
+    /// the end of its line when it is centred or right-aligned; or inside its right padding from
+    /// the wrap width when reading right to left, unless it is centred.
     pub(crate) fn blank_start(self, p: &Piece<'_>, size: f32) -> f32 {
-        let indent = if p.index == 0 {
-            match self {
-                TextFlow::Paragraphs(pl) => pl.text_indent_px,
-                TextFlow::Single(_) => 0.0,
+        let TextFlow::Paragraphs(pl) = self else { return p.pad[0] };
+        let indent = if p.index == 0 { pl.text_indent_px } else { 0.0 };
+        // Where line breaking starts its first line, the right padding it keeps, and how much
+        // room that leaves.
+        let left = (p.pad[0] + p.shape.indent[0] + p.shape.indent[1]).max(0.0);
+        let right = if p.pad[1] > 0.0 { left } else { p.pad[1] };
+        let rtl = p.flow == Flow::Rtl;
+        // The side the text of its alignment stands on: its reading direction's start or end,
+        // or the side an alignment names.
+        let to_right = match p.shape.align {
+            Alignment::Center => {
+                let room = pl.max_width.map_or(0.0, |w| ((w - left - right).max(1.0) - indent).max(1.0));
+                return left + indent + room * 0.5;
             }
-        } else {
-            0.0
+            Alignment::Right => true,
+            Alignment::Left => false,
+            Alignment::End => !rtl,
+            Alignment::Start | Alignment::Justify => rtl,
         };
-        match (p.flow, self) {
-            (Flow::Rtl, TextFlow::Paragraphs(pl)) => (pl.max_width.unwrap_or(pl.width) - p.pad[1] - indent - size).max(p.pad[0]),
-            _ => p.pad[0] + indent,
+        if rtl && to_right {
+            (pl.max_width.unwrap_or(pl.width) - right - indent - size).max(left)
+        } else if to_right {
+            let room = pl.max_width.map_or(0.0, |w| ((w - left - right).max(1.0) - indent).max(1.0));
+            left + indent + (room - size).max(0.0)
+        } else {
+            left + indent
         }
     }
 
@@ -499,7 +515,10 @@ impl<'a> TextFlow<'a> {
                         (m.block_min_coord.min(m.content_block_min_coord), m.block_max_coord.max(m.content_block_max_coord), m.baseline, x, x + m.advance, ws)
                     }
                     None => {
-                        let x = self.blank_start(&p, 0.0);
+                        // The box from where the caret would start to a line break's width after it, which
+                        // is the side of the line the paragraph's text would stand on.
+                        let x = self.blank_start(&p, pl.newline);
+                        let x = if p.flow == Flow::Rtl { x + pl.newline } else { x };
                         (0.0, p.height, pl.blank_box[0], x, x, pl.newline as f64)
                     }
                 };
@@ -747,7 +766,8 @@ impl TextSystem {
         let rich = !plain && spec.pills.is_empty() && spec.span_boxes.is_empty() && spec.inline_boxes.is_empty() && spec.text_indent == 0.0;
         let reused = match prev {
             Some(p) if plain => reuse_keys(p, content, style_key, start_flow, &mut self.last_diff),
-            Some(p) if rich => paged::reuse_rich(p, spec, style_key, start_flow),
+            // Only a field with paragraph attributes or pages keys by its spans and blocks.
+            Some(p) if rich && spec.flow.is_some() => paged::reuse_rich(p, spec, style_key, start_flow),
             _ => None,
         };
         let (mut found, tail, entering) = reused.map_or((Vec::new(), Vec::new(), start_flow), |r| (r.head, r.tail, r.entering));
@@ -813,12 +833,12 @@ impl TextSystem {
         let (mut width, mut full_width, mut fresh) = (0.0f32, 0.0f32, 0);
         for (k, ((a, b, flow, key, isolates, run), kept)) in items.into_iter().enumerate() {
             let block = spec.blocks.get(k).copied().unwrap_or(Block::Paragraph);
-            let pad = block.pad_px(style.size, scale);
             let blocks: &[Block] = if block == Block::Paragraph { &[] } else { std::slice::from_ref(&block) };
             // A paragraph is shaped in the style its attributes name, with that style's room
             // around it, aligned and indented as they say.
             let attrs = spec.flow.and_then(|f| f.attrs.get(k)).copied().unwrap_or_default();
             let (own, style, line) = pager.own(attrs, style, scale);
+            let pad = block.pad_px(style.size, scale);
             let shape = paged::Shape::of(attrs, align, scale);
             // A waiting record kept at the same width stays as it was; a run found here waits.
             let wait = match (kept, run) {
@@ -882,7 +902,9 @@ impl TextSystem {
                 (height, widths) = (if a == b { layout.height().max(line) } else { layout.height() }, [layout.width(), layout.full_width()]);
             }
             (width, full_width) = (width.max(widths[0]), full_width.max(widths[1]));
-            let placed = self.place_on_page(&pager, y, k == 0, &own, shape, layout, height, kept, again.is_some(), blocks, (para_indent, style.size), scale, max_width);
+            let mut placed = self.place_on_page(&pager, y, k == 0, &own, shape, layout, height, kept, again.is_some(), blocks, (para_indent, style.size), scale, max_width);
+            // Without paragraph attributes an empty line's caret stays at its left edge, whatever the field's alignment.
+            if spec.flow.is_none() { placed.paged.shape = paged::Shape::NONE; }
             let py = if spec.flow.is_some() { (placed.top + placed.lead).round() as f32 } else if want_frac != 0.0 { y.floor() as f32 } else { y.round() as f32 };
             paragraphs.push(Paragraph { start: a, end: b, y: py, y_frac: want_frac, height: placed.height, widths, pad, flow, key, isolates, layout: placed.layout, shaped: true, lines: 1, run: false, paged: placed.paged });
             y = pager.end(placed.top, placed.extent, own.after);
