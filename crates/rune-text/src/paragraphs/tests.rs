@@ -551,14 +551,49 @@ fn an_empty_rtl_code_block_with_an_indent_of_its_own_keeps_the_right_padding_lin
 }
 
 #[test]
-fn a_selected_line_break_of_an_empty_right_aligned_paragraph_stays_inside_the_wrap_width() {
+fn a_selected_line_break_of_an_empty_paragraph_stays_inside_the_wrap_width() {
     let style = TextStyle::new(14.0, 400.0);
     let (scale, max_w) = (2.0, 400.0);
-    let attrs = [ParagraphAttrs::default(), ParagraphAttrs::default().align(ParagraphAlign::Right), ParagraphAttrs::default()];
-    let text = "a\n\nb";
+    let mut key = 300;
+    for (flow, text) in [(Flow::Ltr, "a\n\nb"), (Flow::Rtl, "א\n\nב")] {
+        for (field, para) in [
+            (Alignment::Start, ParagraphAlign::Left),
+            (Alignment::End, ParagraphAlign::Left),
+            (Alignment::Left, ParagraphAlign::Left),
+            (Alignment::Start, ParagraphAlign::Right),
+            (Alignment::Start, ParagraphAlign::Center),
+        ] {
+            key += 1;
+            let attrs = [ParagraphAttrs::default(), ParagraphAttrs::default().align(para), ParagraphAttrs::default()];
+            let mut ts = TextSystem::default();
+            let laid = ts.layout_text(&document(input(text, &[], style, TextDir::Fixed(flow)), &attrs, key), true, scale, Some(max_w), field, None);
+            // The boxes of the empty paragraph's line: the break after the text before it may
+            // stand past the wrap width, as the text it follows does.
+            let empty = laid.view().caret(text.find('\n').unwrap() + 1, Affinity::Downstream, 3.0).y0;
+            for (bb, _) in laid.view().range_boxes(0, text.len(), false).into_iter().filter(|(bb, _)| (bb.y0 - empty).abs() < 1.0) {
+                let (left, right) = (bb.x0, bb.x1);
+                assert!(left >= 0.0 && right <= f64::from(max_w), "{flow:?} {field:?} {para:?}: a box spans {left}..{right}, outside 0..{max_w}");
+            }
+        }
+    }
+}
+
+/// An app that hands a span over at the numbers its text moved to: laid out again from the last
+/// layout, the paragraph the span now starts in must come out as a fresh layout of it does.
+#[test]
+fn a_span_moved_with_the_tail_that_now_starts_before_the_edit_lays_out_as_a_fresh_text_does() {
+    let style = TextStyle::new(14.0, 400.0);
+    let (old, new) = ("aaaa\nbbbb\ncccc", "aaaa\nbbbb\ncc");
+    let attrs = vec![ParagraphAttrs::default(); 3];
     let mut ts = TextSystem::default();
-    let laid = ts.layout_text(&document(input(text, &[], style, TextDir::Fixed(Flow::Ltr)), &attrs, 300), true, scale, Some(max_w), Alignment::Start, None);
-    let boxes = laid.view().range_boxes(0, text.len(), false);
-    let right = boxes.iter().map(|(bb, _)| bb.x1).fold(0.0, f64::max);
-    assert!(right <= f64::from(max_w), "a box reaches {right}, past the wrap width {max_w}");
+    let lay = |ts: &mut TextSystem, content: &str, spans: &[Span], prev: Option<&TextLayout>| {
+        let inp = document(rich_input(content, spans, style, false, TextDir::Fixed(Flow::Ltr)), &attrs, 1);
+        ts.layout_text(&inp, true, 2.0, Some(400.0), Alignment::Start, prev)
+    };
+    let first = lay(&mut ts, old, &[Span::new(5, 9).size(28.0)], None);
+    let spans = [Span::new(3, 7).size(28.0)];
+    let next = lay(&mut ts, new, &spans, Some(&first));
+    let fresh = lay(&mut TextSystem::default(), new, &spans, None);
+    assert_eq!(carets(&next, new), carets(&fresh, new));
+    assert_eq!(next.view().height(), fresh.view().height());
 }
