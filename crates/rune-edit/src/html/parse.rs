@@ -269,7 +269,7 @@ pub(crate) fn parse_html(html: &str, styles: &[HtmlStyle]) -> TextEdit {
                             blk,
                             in_pre,
                         );
-                        mark_block(&mut line_attrs, blocks.len(), None, block_atom(attrs));
+                        mark_block(&mut line_attrs, blocks.len(), block_align(attrs), block_atom(attrs));
                     }
                     "pre" => {
                         in_pre += 1;
@@ -284,7 +284,7 @@ pub(crate) fn parse_html(html: &str, styles: &[HtmlStyle]) -> TextEdit {
                             Block::Code,
                             in_pre,
                         );
-                        mark_block(&mut line_attrs, blocks.len(), None, block_atom(attrs));
+                        mark_block(&mut line_attrs, blocks.len(), block_align(attrs), block_atom(attrs));
                     }
                     "p" | "div" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
                         let blk = current_default_block(&list_stack, in_pre, in_quote, in_li);
@@ -597,7 +597,10 @@ pub(crate) fn parse_html(html: &str, styles: &[HtmlStyle]) -> TextEdit {
     line_attrs.resize(edit.blocks().len(), ParagraphAttrs::default());
     for &line in &soft_breaks {
         if let Some(i) = (line as usize).checked_sub(1).filter(|_| (line as usize) < line_attrs.len()) {
+            // A soft line has its paragraph's attributes, but is no atom and has no id of its own.
             line_attrs[i + 1] = line_attrs[i];
+            line_attrs[i + 1].atom = None;
+            line_attrs[i + 1].id = 0;
         }
     }
     if line_attrs.iter().any(|a| *a != ParagraphAttrs::default()) {

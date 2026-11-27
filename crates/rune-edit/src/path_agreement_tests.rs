@@ -212,7 +212,7 @@ fn a_pasted_fragment_follows_the_rules_over_every_selection() {
                 let (ra, rb) = (olines[la], olines[lb]);
                 let mut wo = oattrs[if la < lb && a == ra.0 && (b == rb.0 || oattrs[la].atom.is_some()) { lb } else { la }]; wo.id = 0;
                 let recv_block = oblocks[if la < lb && a == ra.0 && (b == rb.0 || oattrs[la].atom.is_some()) { lb } else { la }];
-                let plain_single = flines.len() == 1 && a == ra.0 && b == rb.1 && wo == ParagraphAttrs::default() && recv_block == Block::Paragraph;
+                let plain_single = flines.len() == 1 && a == ra.0 && b == rb.1 && wo == ParagraphAttrs::default() && recv_block == Block::Paragraph || (fa.last().is_some_and(|x| x.atom.is_some()) && a == ra.0 && b == rb.1 && (wo == ParagraphAttrs::default() || { let l = fa.last().unwrap(); (l.style, l.align, l.indent, l.first_line_indent) == (wo.style, wo.align, wo.indent, wo.first_line_indent) }));
                 for k in 0..flines.len() {
                     let (t, at, bl) = lines[l0 + k];
                     let from = fa[k];
@@ -587,7 +587,7 @@ fn a_pasted_fragment_follows_the_rules_in_code_and_around_every_document() {
                 let added = mid.matches('\n').count();
                 let end_line = la + added;
                 let mut wo = oattrs[landing]; wo.id = 0;
-                let plain_single = flines.len() == 1 && a == ra.0 && b == rb.1 && wo == ParagraphAttrs::default() && oblocks[landing] == Block::Paragraph;
+                let plain_single = flines.len() == 1 && a == ra.0 && b == rb.1 && wo == ParagraphAttrs::default() && oblocks[landing] == Block::Paragraph || (fa.last().is_some_and(|x| x.atom.is_some()) && a == ra.0 && b == rb.1 && (wo == ParagraphAttrs::default() || { let l = fa.last().unwrap(); (l.style, l.align, l.indent, l.first_line_indent) == (wo.style, wo.align, wo.indent, wo.first_line_indent) }));
                 let takes_block = a == ra.0 && b == rb.1 && oblocks[landing] == Block::Paragraph && flines.len() > 1 && !ft.ends_with('\n');
                 let blk = |orig: Block, got: Block| if takes_block { got == orig || got == fb[last] } else { got == orig };
                 if a == b && a == ra.0 && !plain_single {
@@ -921,7 +921,7 @@ fn an_atom_in_every_block_survives_copy_paste_and_cut_and_paste() {
                 x.paste_fragment(f.clone(), &src.text[a..b]);
                 let key = |y: &TextEdit| y.text.split('\n').enumerate().map(|(i, t)| (t.to_string(), y.paragraph(i).atom, y.blocks()[i])).collect::<Vec<_>>();
                 let mut k2 = key(&src); k2.insert(lb + 1, (String::new(), None, key(&x).get(lb + 1).map_or(Block::Paragraph, |r| r.2)));
-                if key(&x) == k2 { fails.entry("cut-paste-leaves-empty-line".to_string()).or_default().push(String::new()); }
+                if key(&x) == k2 { fails.entry("cut-paste-leaves-empty-line".to_string()).or_default().push(format!("{msg}\n     cut {after_cut}\n     now {}", show(&rows(&x, &[1, 2, 3])))); }
                 else if key(&x) != key(&src) { fails.entry(format!("cut-paste{tag}")).or_default().push(format!("{msg}\n     cut {after_cut}\n     now {}", show(&rows(&x, &[1, 2, 3])))); }
                 let ids: Vec<u64> = x.paragraph_attrs().iter().map(|a| a.id).collect();
                 let mut u = ids.clone(); u.sort(); u.dedup();

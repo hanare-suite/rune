@@ -96,6 +96,7 @@ impl TextEdit {
             }
             // One pass: cut each mark around the (sorted, disjoint) code ranges it overlaps.
             let mut out = Vec::with_capacity(self.marks.len());
+            let mut stripped: Vec<Range<usize>> = Vec::new();
             for m in self.marks.drain(..) {
                 let mut start = m.start;
                 let first = code_ranges.partition_point(|cr| cr.end <= start);
@@ -103,6 +104,7 @@ impl TextEdit {
                     if cr.start >= m.end {
                         break;
                     }
+                    stripped.push(m.start.max(cr.start)..m.end.min(cr.end));
                     if start < cr.start {
                         out.push(MarkRange { start, end: cr.start, mark: m.mark.clone() });
                     }
@@ -113,6 +115,10 @@ impl TextEdit {
                 }
             }
             self.marks = out;
+            // Marks a code line cannot hold went with the edit: they are a change too.
+            for r in stripped {
+                self.note_marks(r);
+            }
         }
 
         // Merge overlapping or adjacent ranges of the same mark kind.

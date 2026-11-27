@@ -44,6 +44,10 @@ pub(crate) fn serialize_html(edit: &TextEdit, range: Range<usize>) -> String {
                 out.push_str("<pre");
                 out.push_str(&atom_attrs(edit, paras[idx].0, &paras[idx].1));
                 out.push_str(dirs[idx]);
+                // An atom's `<pre>` is its own, so it can say how it is aligned.
+                if edit.paragraph(paras[idx].0).atom.is_some() {
+                    out.push_str(align_css(edit.paragraph(paras[idx].0).align));
+                }
                 out.push_str("><code>");
                 let mut first = true;
                 // An atom is a `<pre>` of its own, so it says so; text lines go in one block.
@@ -64,6 +68,7 @@ pub(crate) fn serialize_html(edit: &TextEdit, range: Range<usize>) -> String {
                 let mut open_lists: Vec<ListKind> = Vec::new();
                 while idx < paras.len() && paras[idx].2.is_list() {
                     let (_, ref r, blk, _) = paras[idx];
+                    let head_atom = edit.paragraph(paras[idx].0).atom.is_some();
                     let (kind, level) = match blk {
                         Block::Bullet(l) => (ListKind::Bullet, l as usize),
                         Block::Numbered(l) => (ListKind::Numbered, l as usize),
@@ -100,7 +105,7 @@ pub(crate) fn serialize_html(edit: &TextEdit, range: Range<usize>) -> String {
                     out.push('>');
                     serialize_inline(edit, r.clone(), &mut out);
                     idx += 1;
-                    while idx < paras.len() && paras[idx].3 && paras[idx].2 == blk {
+                    while idx < paras.len() && paras[idx].3 && !head_atom && edit.paragraph(paras[idx].0).atom.is_none() && paras[idx].2 == blk {
                         out.push_str("<br>");
                         serialize_inline(edit, paras[idx].1.clone(), &mut out);
                         idx += 1;
@@ -115,13 +120,15 @@ pub(crate) fn serialize_html(edit: &TextEdit, range: Range<usize>) -> String {
                 }
             }
             Block::Quote => {
+                let head_atom = edit.paragraph(paras[idx].0).atom.is_some();
                 out.push_str("<blockquote");
                 out.push_str(&atom_attrs(edit, paras[idx].0, &paras[idx].1));
                 out.push_str(dirs[idx]);
+                out.push_str(align_css(edit.paragraph(paras[idx].0).align));
                 out.push('>');
                 serialize_inline(edit, paras[idx].1.clone(), &mut out);
                 idx += 1;
-                while idx < paras.len() && paras[idx].3 && paras[idx].2 == Block::Quote {
+                while idx < paras.len() && paras[idx].3 && !head_atom && edit.paragraph(paras[idx].0).atom.is_none() && paras[idx].2 == Block::Quote {
                     out.push_str("<br>");
                     serialize_inline(edit, paras[idx].1.clone(), &mut out);
                     idx += 1;
@@ -130,6 +137,7 @@ pub(crate) fn serialize_html(edit: &TextEdit, range: Range<usize>) -> String {
             }
             Block::Paragraph => {
                 let attrs = edit.paragraph(paras[idx].0);
+                let head_atom = attrs.atom.is_some();
                 let named = edit.html_styles().iter().find(|s| s.style == attrs.style);
                 let tag = named.map_or("p", |s| s.tag);
                 out.push('<');
@@ -146,7 +154,7 @@ pub(crate) fn serialize_html(edit: &TextEdit, range: Range<usize>) -> String {
                 out.push('>');
                 serialize_inline(edit, paras[idx].1.clone(), &mut out);
                 idx += 1;
-                while idx < paras.len() && paras[idx].3 && paras[idx].2 == Block::Paragraph {
+                while idx < paras.len() && paras[idx].3 && !head_atom && edit.paragraph(paras[idx].0).atom.is_none() && paras[idx].2 == Block::Paragraph {
                     out.push_str("<br>");
                     serialize_inline(edit, paras[idx].1.clone(), &mut out);
                     idx += 1;
