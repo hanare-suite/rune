@@ -515,7 +515,10 @@ impl<'a> TextFlow<'a> {
                         (m.block_min_coord.min(m.content_block_min_coord), m.block_max_coord.max(m.content_block_max_coord), m.baseline, x, x + m.advance, ws)
                     }
                     None => {
-                        let x = self.blank_start(&p, if p.flow == Flow::Rtl { 0.0 } else { pl.newline });
+                        // The box from where the caret would start to a line break's width after it, which
+                        // is the side of the line the paragraph's text would stand on.
+                        let x = self.blank_start(&p, pl.newline);
+                        let x = if p.flow == Flow::Rtl { x + pl.newline } else { x };
                         (0.0, p.height, pl.blank_box[0], x, x, pl.newline as f64)
                     }
                 };

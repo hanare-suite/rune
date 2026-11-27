@@ -322,7 +322,9 @@ pub(super) fn reuse_rich(prev: &ParagraphLayout, spec: &TextInput<'_>, style_key
         // A span the app kept at its old numbers covers other text now: the bytes at its numbers
         // in the new text are the old text's at `old_at` of them.
         hi = so[..p].iter().fold(hi, |hi, s| hi.max(s.end as usize).max(old_at(s.end)));
-        lo = so[so.len() - q..].iter().fold(lo, |lo, s| lo.min(s.start as usize));
+        // A span moved with the tail starts at its new numbers in the new text, which may be
+        // before the edit: the paragraph there is another one than the span's old start is in.
+        lo = so[so.len() - q..].iter().zip(&sn[sn.len() - q..]).fold(lo, |lo, (a, b)| lo.min(a.start as usize).min(b.start as usize));
     }
     let ps = &prev.paragraphs;
     let new_lines = count_newlines(new) + 1;
