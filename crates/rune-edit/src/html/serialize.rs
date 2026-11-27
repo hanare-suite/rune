@@ -35,7 +35,8 @@ pub(crate) fn serialize_html(edit: &TextEdit, range: Range<usize>) -> String {
 
     // An empty code line the selection ends at the start of is no part of it: a `<pre>` cannot say its
     // break, so the copy ends behind the break before it, in a paragraph.
-    while paras.len() > 1 && paras.last().is_some_and(|p| p.2 == Block::Code && p.1.is_empty() && p.1.start == end && edit.line_range(p.0).start == end) {
+    // (A whole document keeps its last line, empty or not.)
+    while paras.len() > 1 && !(start == 0 && end == edit.text.len()) && paras.last().is_some_and(|p| p.2 == Block::Code && p.1.is_empty() && p.1.start == end && edit.line_range(p.0).start == end) {
         paras.pop();
     }
 
@@ -83,6 +84,8 @@ pub(crate) fn serialize_html(edit: &TextEdit, range: Range<usize>) -> String {
                     escape_html(&edit.text[r.clone()], &mut out);
                     idx += 1;
                 }
+                // (A parser drops a newline before the end of the document: a last block that ends in an empty line says so with another.)
+                if idx == paras.len() && !open_end && paras[idx - 1].1.is_empty() { out.push('\n'); }
                 out.push_str("</code></pre>");
             }
             Block::Bullet(_) | Block::Numbered(_) => {

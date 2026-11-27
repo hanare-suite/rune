@@ -639,6 +639,9 @@ fn a_pasted_fragment_follows_the_rules_in_code_and_around_every_document() {
                             let as_text = |o: ParagraphAttrs| { let mut o = o; o.atom = None; o.id = at.id; o };
                             let kept_atom = atom_touch && (la..=lb).any(|l| oattrs[l].atom.is_some() && (as_text(oattrs[l]) == at || { let mut o = as_text(oattrs[l]); o.page_break_before = false; o == at }));
                             if kept_atom || makes_code_lines(&e, a, b, ft) { continue; }
+                            // The last line, where soft lines follow the selection's end, is what remains of that paragraph: it keeps its
+                            // attributes and block.
+                            if k == last && e.soft_breaks().contains(&((lb + 1) as u32)) { continue; }
                             if (at.style, at.align) != (from.style, from.align) || bl != fb[k] || at.indent != 0.0 || at.first_line_indent != 0.0 || at.page_break_before {
                                 fail(&format!("new-para-k{}{}{}", if k == 0 { "first" } else if k == last { "last" } else { "mid" }, if atom_touch { "/atomtouch" } else { "" }, if code_line { "/codeline" } else { "" }), format!("frag line {k}: {at:?} {bl:?}"));
                             }

@@ -176,10 +176,21 @@ impl TextEdit {
     /// and so on. Paragraphs already there keep the ids they have. 0 turns ids off.
     pub fn set_paragraph_ids(&mut self, next: u64) {
         self.open_document();
+        let was_off = self.next_id == 0;
         self.next_id = next;
         if next != 0 {
             self.sync_invariants();
             self.attrs_mut();
+            // Turning ids on: a line that has none (an atom cleared for want of a label before there were ids, say)
+            // takes one now, so the order of the attributes and the ids does not matter.
+            if was_off {
+                for i in 0..self.attrs.len() {
+                    if self.attrs[i].id == 0 {
+                        let id = self.fresh_id();
+                        self.attrs[i].id = id;
+                    }
+                }
+            }
         }
     }
 
@@ -207,7 +218,7 @@ impl TextEdit {
             let range = e.line_range(line);
             // On a line of its own: a break before it unless the line starts here, and one
             // after it unless the line ends here.
-            let (lead, trail) = (at > range.start || e.paragraph(line).atom.is_some(), at < range.end);
+            let (lead, trail) = (at > range.start, at < range.end);
             let text = format!("{}{label}{}", if lead { "\n" } else { "" }, if trail { "\n" } else { "" });
             e.replace((at, at), &text, EditKind::Other);
             let line = line + usize::from(lead);

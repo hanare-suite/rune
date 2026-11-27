@@ -142,10 +142,12 @@ impl TextEdit {
         let tail_whole = front.is_none() && !take_b && !kept.head && !kept.tail && added_lines > 0 && line_a < line_b && !(a == line_a_range.start && hard_a)
             && self.paragraph(line_b).atom.is_none();
         let block_b = self.blocks.get(line_b).copied().unwrap_or(Block::Paragraph);
+        // What is left of the paragraph behind the edit: the rest of the line, and the soft lines that follow it.
+        let rest = b < line_b_range.end || soft(line_b + 1);
         let edge = match front {
             Some(copy) => Edge::Front { copy },
             None if tail_whole => Edge::Tail,
-            None => Edge::Inside { copy: new_line_block.is_some(), rest: b < line_b_range.end },
+            None => Edge::Inside { copy: new_line_block.is_some(), rest },
         };
         Plan { line_a, line_b, line_b_range, added_lines, kept, take_b, front, tail_whole, block_b, owner_b, edge }
     }
@@ -240,7 +242,7 @@ impl TextEdit {
             if let Some(slot) = self.blocks.get_mut(line_a + added_lines) {
                 *slot = block_b;
             }
-        } else if added_lines > 0 && front.is_none() && new_line_block.is_none() && !kept.tail && b < line_b_range.end {
+        } else if added_lines > 0 && front.is_none() && new_line_block.is_none() && !kept.tail && (b < line_b_range.end || self.soft_breaks.binary_search(&((line_b + 1) as u32)).is_ok()) {
             if let Some(slot) = self.blocks.get_mut(line_a + added_lines) {
                 *slot = merged_block;
             }
@@ -377,6 +379,14 @@ impl TextEdit {
         let (a, b, back) = (fenced.a, fenced.b, fenced.back);
         let s = fenced.text.as_deref().unwrap_or(s);
         if kind == EditKind::Other { self.break_history_group(); }
+        // Nothing replaced by nothing is nothing, whatever style is armed: the style stays, and no atom is turned into text.
+        if a == b && s.is_empty() {
+            self.anchor = a - back;
+            self.focus = self.anchor;
+            self.cancel_composition();
+            self.mark_edited();
+            return;
+        }
         // (Breaks typed or pasted over soft ones are hard ones: not the same text.)
         let softer = s.contains('\n') && !self.soft_breaks.is_empty() && { let (la, lb) = (self.line_of_byte(a), self.line_of_byte(b)); self.soft_breaks.iter().any(|&l| (l as usize) > la && (l as usize) <= lb) };
         if &self.text[a..b] == s

@@ -513,8 +513,10 @@ impl TextEdit {
         }
         self.marks.push(MarkRange { start: a, end: b, mark });
         self.typing = Typing::Inherited;
+        let log_at = self.changes.len();
         self.normalize_marks();
-        if self.marks != was { self.note_marks(a..b); }
+        // (Marks a code line cannot hold are no change where the command changed none.)
+        if self.marks != was { self.note_marks(a..b); } else { self.changes.truncate(log_at); }
         self.record_change(before, EditKind::Other);
     }
 
@@ -552,8 +554,10 @@ impl TextEdit {
         }
         self.marks = out;
         self.typing = Typing::Inherited;
+        let log_at = self.changes.len();
         self.normalize_marks();
-        if self.marks != was { self.note_marks(a..b); }
+        // (Marks a code line cannot hold are no change where the command changed none.)
+        if self.marks != was { self.note_marks(a..b); } else { self.changes.truncate(log_at); }
         self.record_change(before, EditKind::Other);
     }
 

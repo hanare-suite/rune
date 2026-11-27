@@ -583,7 +583,7 @@ impl TextEdit {
             // The text is no one's: it takes no marks from the caret (pasting what is selected
             // changes nothing, marks included).
             let (a, b) = self.range();
-            if self.text[a..b] != frag.text {
+            if !frag.text.is_empty() && self.text[a..b] != frag.text {
                 self.typing = Typing::Armed { at: (self.anchor, self.focus), marks: Vec::new() };
             }
             return self.paste(&frag.text);
