@@ -122,7 +122,11 @@ impl TextEdit {
     pub fn set_paragraph(&mut self, line: usize, attrs: ParagraphAttrs) {
         self.open_document();
         self.sync_invariants();
-        if let Some(slot) = self.attrs_mut().get_mut(line) {
+        // A soft line is part of its paragraph: it sets the head's, under the head's id.
+        let mut head = line;
+        while head > 0 && self.soft_breaks.binary_search(&(head as u32)).is_ok() { head -= 1; }
+        let attrs = if head == line { attrs } else { attrs.id(self.paragraph(head).id) };
+        if let Some(slot) = self.attrs_mut().get_mut(head) {
             *slot = attrs.clean();
         }
         self.sync_invariants();

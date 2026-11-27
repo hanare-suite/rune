@@ -88,8 +88,9 @@ impl TextEdit {
     /// A soft line is part of its paragraph: it has its head's (the hard line it follows) block, style, alignment
     /// and indents, so under a code head it is code, and under any other it is not, whatever edit joined or moved it.
     /// Cheap: it looks at the soft lines only.
-    pub(super) fn mirror_soft_lines(&mut self) {
+    pub(super) fn mirror_soft_lines(&mut self) -> bool {
         let mut mirrored: Vec<usize> = Vec::new();
+        let mut blocks_changed = false;
         for k in 0..self.soft_breaks.len() {
             let i = self.soft_breaks[k] as usize;
             if i == 0 || i >= self.blocks.len() { continue; }
@@ -99,6 +100,7 @@ impl TextEdit {
             if self.blocks[i] != self.blocks[i - 1] {
                 self.blocks[i] = self.blocks[i - 1];
                 changed = true;
+                blocks_changed = true;
             }
             if i < self.attrs.len() {
                 let head = self.attrs[i - 1];
@@ -114,6 +116,7 @@ impl TextEdit {
         for line in mirrored {
             self.note_paragraphs(line..line + 1);
         }
+        blocks_changed
     }
 
     pub(super) fn normalize_marks(&mut self) {
@@ -580,7 +583,8 @@ impl TextEdit {
         }
     }
 
-    /// Line index range `first_line..=last_line` covered by the current selection.
+    /// Line index range `first_line..=last_line` the commands that format paragraphs act on: the selection's, widened to
+    /// whole paragraphs (a soft line is part of the paragraph its head starts).
     pub(super) fn selected_line_range(&self) -> (usize, usize) {
         let (a, b) = self.range();
         let first = self.line_of_byte(a);
@@ -589,7 +593,11 @@ impl TextEdit {
         } else {
             self.line_of_byte(b)
         };
-        (first, last.max(first))
+        // Whole paragraphs: from the head of the first line's soft group to the last soft line of the last one's.
+        let (mut first, mut last) = (first, last.max(first));
+        while first > 0 && self.soft_breaks.binary_search(&(first as u32)).is_ok() { first -= 1; }
+        while self.soft_breaks.binary_search(&((last + 1) as u32)).is_ok() { last += 1; }
+        (first, last)
     }
 
     /// The [`Block`] attribute of the paragraph at the caret or selection.
@@ -671,7 +679,7 @@ impl TextEdit {
     }
 
     /// Increase list nesting level (`Tab`) for list items in the selection, up to [`MAX_LIST_LEVEL`].
-    /// Returns `true` if the selection was inside a list item.
+    /// Returns `true` if a list item was indented (not at the deepest level already).
     pub fn indent_list(&mut self) -> bool {
         if self.secure || self.is_single_line() {
             return false;
@@ -691,9 +699,10 @@ impl TextEdit {
                 *slot = slot.with_level((lvl + 1).min(MAX_LIST_LEVEL));
             }
         }
-        if self.blocks != was { self.note_paragraphs(first..last + 1); }
+        let changed = self.blocks != was;
+        if changed { self.note_paragraphs(first..last + 1); }
         self.record_change(before, EditKind::Other);
-        true
+        changed
     }
 
     /// Decrease list nesting level (`Shift+Tab`) for list items in the selection.

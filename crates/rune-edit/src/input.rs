@@ -771,7 +771,7 @@ impl TextEdit {
             }
         }
 
-        self.receiving_paragraph_heads_soft_lines(&frag, line_idx, frag_lines, !is_new(fenced.lead + frag_lines - 1));
+        self.receiving_paragraph_heads_soft_lines(&frag, line_idx, frag_lines, &new, fenced.lead);
         // Add `frag.marks` shifted by `ins_at`.
         for m in &frag.marks {
             self.marks.push(MarkRange {

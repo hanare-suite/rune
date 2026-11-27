@@ -144,25 +144,27 @@ impl TextEdit {
         Some(out)
     }
 
-    /// A soft line of the fragment that lands on a kept line: the receiving paragraph is the head of that group of
-    /// lines. Its first line takes the receiving line's id, attributes and block, and the soft lines (the kept one
-    /// with an id of its own) mirror it, as typing the text with `Shift+Return` gives.
-    pub(super) fn receiving_paragraph_heads_soft_lines(&mut self, frag: &TextEdit, line_idx: usize, frag_lines: usize, last_kept: bool) {
-        if frag_lines < 2 || !last_kept { return; }
+    /// A soft line of the fragment that lands on the line that keeps what was there: where the head of that group of lines
+    /// is a new line (the paste is at a paragraph's start), the receiving paragraph is the head. Its first line takes the
+    /// receiving line's id, attributes and block, and the soft lines (the landed one with an id of its own) mirror it, as
+    /// typing the text with `Shift+Return` gives. Where the head is a line that was there (the paste is inside a
+    /// paragraph), it stays as it is and mirroring does the rest, as typed text does.
+    pub(super) fn receiving_paragraph_heads_soft_lines(&mut self, frag: &TextEdit, line_idx: usize, frag_lines: usize, new: &[bool], lead: usize) {
+        let is_new = |j: usize| new.get(j).copied().unwrap_or(false);
+        if frag_lines < 2 || is_new(lead + frag_lines - 1) { return; }
         let last_line = line_idx + frag_lines - 1;
         let mut head_k = frag_lines - 1;
         while head_k > 0 && frag.soft_breaks.contains(&(head_k as u32)) && self.soft_breaks.contains(&((line_idx + head_k) as u32)) { head_k -= 1; }
         let head_line = line_idx + head_k;
-        if head_line < last_line {
-            if self.attributed() {
-                let recv = self.paragraph(last_line);
-                let id = self.fresh_id();
-                let slot = self.attrs_mut();
-                slot[head_line] = recv;
-                slot[last_line] = recv.id(id);
-            }
-            self.blocks[head_line] = self.blocks[last_line];
+        if head_line >= last_line || !is_new(lead + head_k) { return; }
+        if self.attributed() {
+            let recv = self.paragraph(last_line);
+            let id = self.fresh_id();
+            let slot = self.attrs_mut();
+            slot[head_line] = recv;
+            slot[last_line] = recv.id(id);
         }
+        self.blocks[head_line] = self.blocks[last_line];
     }
 
     /// Everything an edit can change in the document, to tell whether it changed anything.

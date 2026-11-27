@@ -350,9 +350,13 @@ fn a_pasted_fragment_follows_the_rules_over_every_selection() {
                         // A fragment's atom is an atom of its own where typed text is text.
                         if infrag && now[i].5 == Some(20.0) { continue; }
                         if infrag && plain_single { continue; }
-                        // A soft line is its head's: where the paths make different heads of what comes before it (an atom
-                        // ends a paragraph's soft lines), it mirrors another one. Its text is what must agree.
-                        if !infrag && now[i].0 == tr[i].0 && (x.soft_breaks().contains(&(i as u32)) || t.soft_breaks().contains(&(i as u32))) { continue; }
+                        // A soft line is its head's. Where it mirrors a head that legitimately differs between the paths, or a pasted atom
+                        // ended its paragraph's soft lines (the line is a paragraph of its own then, where typed text keeps it soft), its
+                        // text is what must agree.
+                        if !infrag && now[i].0 == tr[i].0 && (x.soft_breaks().contains(&(i as u32)) || t.soft_breaks().contains(&(i as u32))) {
+                            let head = |y: &TextEdit| { let mut h = i; while h > 0 && y.soft_breaks().contains(&(h as u32)) { h -= 1; } h };
+                            if fa.iter().any(|y| y.atom.is_some()) || now[head(&x)] != tr[head(&t)] { continue; }
+                        }
                         if takes_block && i == l0 + last { let mut n2 = now[i].clone(); n2.6 = tr[i].6; if n2 == tr[i] { continue; } }
                         if now[i] != tr[i] { fail("agree", format!("line {i}; typed gives {}", show(&tr))); break; }
                     }
