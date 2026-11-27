@@ -218,7 +218,8 @@ impl TextEdit {
     /// `height` points tall. The atom is always a new paragraph: a fresh id (never a paragraph's it
     /// stands in), the default attributes and the Paragraph block, whatever the position (the end of a
     /// line, a soft line's start, over a selection, on an empty line), and the typing style is
-    /// cleared. One edit. Line breaks in `label` become spaces; an empty label inserts nothing.
+    /// cleared. It goes in as a one-atom fragment does through [`paste_fragment`](Self::paste_fragment): the same rules
+    /// apply over every selection. One edit. Line breaks in `label` become spaces; an empty label inserts nothing.
     pub fn insert_atom(&mut self, label: &str, height: f32) {
         self.open_document();
         let label: String = label.chars().map(|c| if c.is_control() || matches!(c, '\u{2028}' | '\u{2029}') { ' ' } else { c }).collect();
@@ -226,26 +227,20 @@ impl TextEdit {
             return;
         }
         self.sync_invariants();
+        // One code path with a pasted atom: a one-atom fragment (a new paragraph: default attributes, the Paragraph block) goes
+        // through `paste_fragment`, so the same rules apply over every selection. The label goes in with no style.
+        let mut frag = TextEdit::from_parts(label, Vec::new(), vec![Block::Paragraph]);
+        frag.set_paragraph_attrs(vec![ParagraphAttrs::default().atom(height)]);
         self.undo_group(|e| {
-            let (a, b) = e.range();
-            e.replace((a, b), "", EditKind::Other);
             e.typing = Typing::Inherited;
-            let at = e.range().0;
-            let line = e.line_of_byte(at);
-            let range = e.line_range(line);
-            // On a line of its own: a break before it unless the line starts here, and one
-            // after it unless the line ends here.
-            let (lead, trail) = (at > range.start, at < range.end);
-            let text = format!("{}{label}{}", if lead { "\n" } else { "" }, if trail { "\n" } else { "" });
-            e.replace((at, at), &text, EditKind::Other);
-            let line = line + usize::from(lead);
-            let id = e.fresh_id();
-            let attrs = ParagraphAttrs::default().atom(height).id(id).clean();
-            if let Some(slot) = e.attrs_mut().get_mut(line) { *slot = attrs; }
-            if let Some(slot) = e.blocks.get_mut(line) { *slot = Block::Paragraph; }
+            e.paste_fragment(frag, "");
             e.typing = Typing::Inherited;
-            let end = at + usize::from(lead) + label.len();
-            (e.anchor, e.focus) = (end, end);
+            // The caret ends at the atom's end, not behind the break a paste leaves after it.
+            let line = e.line_of_byte(e.focus);
+            if line > 0 && e.paragraph(line).atom.is_none() && e.paragraph(line - 1).atom.is_some() && e.focus == e.line_range(line).start {
+                let end = e.line_range(line - 1).end;
+                (e.anchor, e.focus) = (end, end);
+            }
         });
     }
 
