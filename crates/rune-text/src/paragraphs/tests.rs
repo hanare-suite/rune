@@ -510,3 +510,55 @@ fn a_span_that_keeps_its_numbers_through_a_shifting_edit_lays_out_as_a_fresh_tex
         assert!(at.is_none(), "attributed {attributed}: the caret at byte {:?} is {:?} laid out again and {:?} fresh", at.map(|i| a[i].0), at.map(|i| a[i].1), at.map(|i| b[i].1));
     }
 }
+
+#[test]
+fn an_empty_rtl_paragraph_of_a_document_field_stands_where_its_typed_text_does() {
+    let style = TextStyle::new(14.0, 400.0);
+    let (scale, max_w, caret_w) = (2.0, 400.0, 3.0);
+    let mut key = 100;
+    let mut laid_out = |ts: &mut TextSystem, text: &str, field: Alignment, para: ParagraphAlign| {
+        key += 1;
+        let attrs = [ParagraphAttrs::default(), ParagraphAttrs::default().align(para)];
+        ts.layout_text(&document(input(text, &[], style, TextDir::Fixed(Flow::Rtl)), &attrs, key), true, scale, Some(max_w), field, None)
+    };
+    // Typed text goes to the right edge, or to the left one: the caret is where it will start
+    // (its right side) or where it ends (its left).
+    for (field, para, right) in [
+        (Alignment::Start, ParagraphAlign::Left, true),
+        (Alignment::End, ParagraphAlign::Left, false),
+        (Alignment::Left, ParagraphAlign::Left, false),
+        (Alignment::Start, ParagraphAlign::Right, true),
+        (Alignment::Start, ParagraphAlign::Justified, true),
+    ] {
+        let mut ts = TextSystem::default();
+        let empty = laid_out(&mut ts, "א\n", field, para).view().caret(3, Affinity::Downstream, caret_w).x0;
+        let typed = laid_out(&mut ts, "א\nא", field, para);
+        let typed_at = typed.view().caret(if right { 3 } else { 5 }, Affinity::Downstream, caret_w).x0;
+        assert!((empty - typed_at).abs() <= f64::from(caret_w), "{field:?} {para:?}: empty caret at {empty}, typed text at {typed_at}");
+    }
+}
+
+#[test]
+fn an_empty_rtl_code_block_with_an_indent_of_its_own_keeps_the_right_padding_line_breaking_uses() {
+    let style = TextStyle::new(14.0, 400.0);
+    let (scale, max_w, caret_w) = (2.0, 400.0, 3.0);
+    let attrs = [ParagraphAttrs::default(), ParagraphAttrs::default().indent(20.0, 0.0)];
+    let blocks = [Block::Code, Block::Code];
+    let mut ts = TextSystem::default();
+    let laid = ts.layout_text(&document(input("א\n", &blocks, style, TextDir::Fixed(Flow::Rtl)), &attrs, 200), true, scale, Some(max_w), Alignment::Start, None);
+    let pad = (Block::Code.indent_pt(style.size) * scale).round() + (20.0 * scale).round();
+    assert_eq!(laid.view().caret(3, Affinity::Downstream, caret_w).x0 as f32, max_w - pad - caret_w);
+}
+
+#[test]
+fn a_selected_line_break_of_an_empty_right_aligned_paragraph_stays_inside_the_wrap_width() {
+    let style = TextStyle::new(14.0, 400.0);
+    let (scale, max_w) = (2.0, 400.0);
+    let attrs = [ParagraphAttrs::default(), ParagraphAttrs::default().align(ParagraphAlign::Right), ParagraphAttrs::default()];
+    let text = "a\n\nb";
+    let mut ts = TextSystem::default();
+    let laid = ts.layout_text(&document(input(text, &[], style, TextDir::Fixed(Flow::Ltr)), &attrs, 300), true, scale, Some(max_w), Alignment::Start, None);
+    let boxes = laid.view().range_boxes(0, text.len(), false);
+    let right = boxes.iter().map(|(bb, _)| bb.x1).fold(0.0, f64::max);
+    assert!(right <= f64::from(max_w), "a box reaches {right}, past the wrap width {max_w}");
+}
