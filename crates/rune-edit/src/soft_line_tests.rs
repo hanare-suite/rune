@@ -170,6 +170,9 @@ fn probe_soft_lines(formatted: bool) -> Probe {
         ("ab\ncd\nef\ngh", vec![p, p, c, c], vec![], vec![1], vec![]),
         ("ab\ncd\nef\ngh", vec![c, p, p, p], vec![], vec![2], vec![]),
         ("ab\ncd\nef\ngh", vec![c, c, p, p], vec![], vec![3], vec![]),
+        ("ab\ncd\nT\nef", vec![u, u, p, p], vec![2], vec![1], vec![]),
+        ("ab\n\nT\nef", vec![q, q, u, p], vec![2], vec![1], vec![]),
+        ("ab\ncd\nT\nef", vec![u, u, c, p], vec![2], vec![1], vec![]),
         ("ab\n\nef\ngh", vec![p, c, c, p], vec![], vec![], vec![]),
         ("\nef\n\ngh", vec![c, c, c, p], vec![], vec![], vec![]),
         ("ab\nef\n\ngh", vec![p, c, c, p], vec![], vec![], vec![]),
@@ -880,4 +883,191 @@ fn a_document_ending_in_an_empty_code_line_round_trips_through_html() {
         let r = TextEdit::from_html(&e.to_html());
         assert_eq!((r.text.as_str(), r.blocks().to_vec()), (text, blocks), "{text:?}: {}", e.to_html());
     }
+}
+
+/// The bytes an edit took: where the text before and after differ, when it only took (a deletion key reaches as far as
+/// the word or the line it deletes), else the selection.
+fn acted_on(before: &str, after: &str, a: usize, b: usize) -> (usize, usize) {
+    if after.len() >= before.len() { return (a, b); }
+    let p = before.bytes().zip(after.bytes()).take_while(|(x, y)| x == y).count();
+    let s = before.bytes().rev().zip(after.bytes().rev()).take_while(|(x, y)| x == y).count().min(after.len() - p);
+    (p, before.len() - s)
+}
+
+fn atom_below_soft_docs() -> Vec<(String, TextEdit)> {
+    let (p, u, q, c) = (Block::Paragraph, Block::Bullet(0), Block::Quote, Block::Code);
+    let mut out = Vec::new();
+    for (name, text, blocks, soft) in [
+        ("empty soft line", "ab\n\nTbl\nef", vec![u, u, p, p], vec![1u32]),
+        ("soft line", "ab\ncd\nTbl\nef", vec![u, u, p, p], vec![1]),
+        ("quote", "ab\ncd\nTbl\nef", vec![q, q, p, p], vec![1]),
+        ("code atom", "ab\ncd\nTbl\nef", vec![u, u, c, p], vec![1]),
+        ("two soft lines", "ab\ncd\nxy\nTbl\nef", vec![q, q, q, u, p], vec![1, 2]),
+    ] {
+        let atom = text.split('\n').position(|l| l == "Tbl").unwrap();
+        let mut e = TextEdit::from_parts(text, vec![], blocks.clone());
+        e.set_paragraph_attrs((0..blocks.len()).map(|i| if i == atom { id(1 + i as u64).atom(20.0).align(ParagraphAlign::Center) } else { id(1 + i as u64) }).collect());
+        e.set_paragraph_ids(100);
+        e.set_soft_breaks(soft);
+        e.take_changes();
+        out.push((name.to_string(), e));
+    }
+    out
+}
+
+/// An atom whose block and alignment differ from the soft line directly above it keeps both through every edit that
+/// reaches it from that line: the delete family, the empty edits, Shift+Return and `insert_atom`.
+#[test]
+fn an_atom_below_a_soft_line_keeps_its_block_and_alignment() {
+    let alt = |k: Key| KeyEvent { key: k, mods: Mods { alt: true, ..Mods::default() } };
+    let cmd = |k: Key| KeyEvent { key: k, mods: Mods { cmd: true, ..Mods::default() } };
+    type Op = Box<dyn Fn(&mut TextEdit)>;
+    let ops: Vec<(&str, Op)> = vec![
+        ("bksp", Box::new(|x| { x.key(&key(Key::Backspace, false), None); })),
+        ("del", Box::new(|x| { x.key(&key(Key::Delete, false), None); })),
+        ("alt bksp", Box::new(move |x| { x.key(&alt(Key::Backspace), None); })),
+        ("cmd bksp", Box::new(move |x| { x.key(&cmd(Key::Backspace), None); })),
+        ("alt del", Box::new(move |x| { x.key(&alt(Key::Delete), None); })),
+        ("cmd del", Box::new(move |x| { x.key(&cmd(Key::Delete), None); })),
+        ("insert empty", Box::new(|x| x.insert(""))),
+        ("paste empty", Box::new(|x| { x.paste(""); })),
+        ("shift return", Box::new(|x| { x.key(&key(Key::Enter, true), None); })),
+        ("insert_atom", Box::new(|x| x.insert_atom("N", 20.0))),
+    ];
+    let mut fails: Vec<String> = Vec::new();
+    for (name, e) in atom_below_soft_docs() {
+        let len = e.text.len();
+        for a in 0..=len { for b in a..=len {
+            for (op, f) in &ops {
+                let mut x = e.clone();
+                x.set_selection(a, b);
+                if x.range() != (a, b) { continue; }
+                f(&mut x);
+                let (wa, wb) = acted_on(&e.text, &x.text, a, b);
+                let bad = atoms_kept(&e, &x, wa, wb);
+                if !bad.is_empty() || inv(&x) != "" { fails.push(format!("{name} {a}..{b} {op}:{bad} {}\n   from {}\n   to   {}", inv(&x), show(&e), show(&x))); }
+            }
+        } }
+    }
+    assert!(fails.is_empty(), "{} failures, the first:\n{}", fails.len(), fails.iter().take(5).cloned().collect::<Vec<_>>().join("\n"));
+}
+
+/// `insert_atom` always makes a new paragraph: a fresh id, the default attributes and the Paragraph block, whatever the
+/// position, and it clears the typing style.
+#[test]
+fn insert_atom_makes_a_plain_paragraph_with_a_fresh_id_anywhere() {
+    let (p, u) = (Block::Paragraph, Block::Bullet(0));
+    let mut base = TextEdit::from_parts("ab\ncd\n\nef", vec![], vec![u, u, u, p]);
+    base.set_paragraph_attrs(vec![id(1).align(ParagraphAlign::Center).style(2), id(2), id(3).align(ParagraphAlign::Center), id(4)]);
+    base.set_paragraph_ids(100);
+    base.set_soft_breaks(vec![1]);
+    base.take_changes();
+    // (a, b, what): line end, a soft line's start, mid-line, over a selection, on an empty line, at a paragraph's start
+    for (a, b, what) in [(2, 2, "end of the head"), (3, 3, "soft line start"), (4, 4, "mid soft line"), (1, 4, "over a selection"), (6, 6, "empty line"), (0, 0, "paragraph start"), (5, 5, "end of the soft line")] {
+        for armed in [false, true] {
+            let mut x = base.clone();
+            x.set_selection(a, b);
+            if armed { x.toggle_mark(Mark::Bold); }
+            let old: Vec<u64> = (0..4).map(|i| base.paragraph(i).id).collect();
+            x.insert_atom("N", 20.0);
+            let n = x.text.split('\n').position(|l| l == "N").unwrap_or_else(|| panic!("{what}: {}", show(&x)));
+            let at = x.paragraph(n);
+            assert_eq!(at.atom, Some(20.0), "{what} armed {armed}");
+            assert!(!old.contains(&at.id) && at.id != 0, "{what} armed {armed}: id {} is new: {}", at.id, show(&x));
+            assert_eq!((at.style, at.align, at.indent, at.page_break_before), (0, ParagraphAlign::Left, 0.0, false), "{what} armed {armed}: default attributes: {}", show(&x));
+            assert_eq!(x.blocks()[n], p, "{what} armed {armed}: Paragraph block: {}", show(&x));
+            assert_eq!(inv(&x), "", "{what} armed {armed}: {}", show(&x));
+            // The style armed before is gone: text typed after it is plain.
+            x.key(&key(Key::Text("t".into()), false), None);
+            assert!(!x.marks().iter().any(|m| m.mark == Mark::Bold && x.text[m.start..m.end].contains('t')), "{what}: the typing style is cleared");
+        }
+    }
+}
+
+/// A fragment's atom pasted at the end of a head line whose soft lines follow leaves no empty paragraph: the soft lines
+/// start the next one, as `insert_atom` does it.
+#[test]
+fn a_pasted_atom_at_the_end_of_a_head_line_leaves_no_empty_paragraph() {
+    let p = Block::Paragraph;
+    let mut e = TextEdit::from_parts("ab\ncd\nef", vec![], vec![p, p, p]);
+    e.set_paragraph_attrs(vec![id(1), id(2), id(3)]);
+    e.set_paragraph_ids(100);
+    e.set_soft_breaks(vec![1]);
+    e.take_changes();
+    let mut by_insert = e.clone();
+    by_insert.set_caret(2);
+    by_insert.insert_atom("T", 20.0);
+    let mut f = TextEdit::from_parts("T", vec![], vec![p]);
+    f.set_paragraph_attrs(vec![id(500).atom(20.0)]);
+    let mut x = e.clone();
+    x.set_caret(2);
+    x.paste_fragment(f, "");
+    assert_eq!(x.text, "ab\nT\ncd\nef", "{}", show(&x));
+    assert_eq!(x.text, by_insert.text);
+    assert_eq!(x.soft_breaks(), by_insert.soft_breaks(), "{} / {}", show(&x), show(&by_insert));
+    assert_eq!(inv(&x), "");
+}
+
+/// Turning ids on writes them into the stored history, so undo and redo keep them, also through JSON.
+#[test]
+fn ids_turned_on_survive_undo_redo_and_the_json_history() {
+    let p = Block::Paragraph;
+    let mut e = TextEdit::from_parts("ab\ncd\nef", vec![], vec![p, p, p]);
+    e.set_paragraph_attrs(vec![ParagraphAttrs::default(); 3]);
+    e.set_selection(2, 2);
+    e.key(&key(Key::Text("x".into()), false), None);
+    e.key(&key(Key::Enter, false), None);
+    e.set_paragraph_ids(100);
+    let ids = |x: &TextEdit| (0..x.text.split('\n').count()).map(|i| x.paragraph(i).id).collect::<Vec<_>>();
+    let now = ids(&e);
+    assert!(now.iter().all(|&i| i != 0), "{now:?}");
+    let mut u = e.clone();
+    u.undo();
+    assert!(ids(&u).iter().all(|&i| i != 0), "undo keeps ids: {:?}", ids(&u));
+    u.redo();
+    assert_eq!(ids(&u), now, "redo");
+    let j = e.history_json(1000, 1 << 24).expect("history");
+    let j: serde_json::Value = serde_json::from_str(&j.to_string()).unwrap();
+    let mut y = e.clone();
+    y.clear_history();
+    assert!(y.restore_history_json(&j));
+    y.undo();
+    assert!(ids(&y).iter().all(|&i| i != 0), "json undo keeps ids: {:?}", ids(&y));
+    y.redo();
+    assert_eq!(ids(&y), now, "json redo");
+}
+
+/// With ids on, setting the attributes gives an id to any line that has none, so the order of the two calls does not matter.
+#[test]
+fn set_paragraph_attrs_and_ids_end_the_same_in_either_order() {
+    let p = Block::Paragraph;
+    let attrs = || vec![id(1), ParagraphAttrs::default(), id(3)];
+    let mut a = TextEdit::from_parts("ab\ncd\nef", vec![], vec![p, p, p]);
+    a.set_paragraph_ids(100);
+    a.set_paragraph_attrs(attrs());
+    let mut b = TextEdit::from_parts("ab\ncd\nef", vec![], vec![p, p, p]);
+    b.set_paragraph_attrs(attrs());
+    b.set_paragraph_ids(100);
+    for (name, e) in [("ids first", &a), ("attributes first", &b)] {
+        assert!((0..3).all(|i| e.paragraph(i).id != 0), "{name}: {}", show(e));
+    }
+    assert_eq!(a.next_paragraph_id(), b.next_paragraph_id());
+    // And one line, set after the ids.
+    let mut c = TextEdit::from_parts("ab\ncd\nef", vec![], vec![p, p, p]);
+    c.set_paragraph_attrs(vec![id(1), id(2), id(3)]);
+    c.set_paragraph_ids(100);
+    c.set_paragraph(1, ParagraphAttrs::default().align(ParagraphAlign::Center));
+    assert!(c.paragraph(1).id != 0, "set_paragraph: {}", show(&c));
+}
+
+/// An empty one-line fragment pasted on an empty plain line keeps the armed typing style.
+#[test]
+fn an_empty_fragment_on_an_empty_line_keeps_the_armed_style() {
+    let mut e = TextEdit::from_parts("ab\n", vec![], vec![Block::Paragraph; 2]);
+    e.set_paragraph_attrs(vec![ParagraphAttrs::default(); 2]);
+    e.set_caret(3);
+    e.toggle_mark(Mark::Bold);
+    let f = TextEdit::from_parts("", vec![], vec![Block::Paragraph]);
+    e.paste_fragment(f, "");
+    assert!(e.has_mark(&Mark::Bold), "the armed style stays");
 }
