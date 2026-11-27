@@ -221,3 +221,29 @@ fn an_app_can_change_a_fragment_before_it_pastes_it() {
     assert_eq!(pills, [("old", 2..4), ("new", 8..10)]);
     assert_eq!(e.text, "a @x ba @x b");
 }
+
+/// A formatted paragraph copied with its line break, pasted at the start of a locked block's
+/// line, goes above it as a paragraph of its own: the lock, the id and the height stay on the
+/// block, and the pasted text keeps its formatting.
+#[test]
+fn a_copy_with_its_line_break_pasted_at_a_locked_line_leaves_the_lock_where_it_was() {
+    let mut source = TextEdit::from_parts("eins\nzwei", vec![MarkRange::new(0..4, Mark::Italic)], vec![Block::Paragraph, Block::Paragraph]);
+    let d = ParagraphAttrs::default();
+    source.set_paragraph_attrs(vec![d.id(1).align(ParagraphAlign::Center), d.id(2)]);
+    source.set_paragraph_ids(10);
+    source.set_history(false);
+    source.set_selection(0, 5);
+    let html = source.selected_html();
+    let mut e = field("Tabelle\nnach", &[0]);
+    reported(&mut e, |e| {
+        e.set_caret(0);
+        e.paste_html(&html, "eins\n");
+    });
+    assert_eq!(lines(&e), ["eins", "Tabelle", "nach"], "{html}");
+    assert_eq!(atoms(&e), [false, true, false], "the lock stays on the table's line");
+    assert_eq!(e.paragraph(1).atom, Some(40.0));
+    assert_eq!(e.paragraph(1).id, 1, "the table keeps its id");
+    assert_eq!(e.paragraph(0).align, ParagraphAlign::Center, "the pasted paragraph keeps its alignment");
+    assert!(e.paragraph(0).id != 1 && e.paragraph(0).id != 2 && e.paragraph(0).id != 3, "{:?}", ids(&e));
+    assert!(e.marks().iter().any(|m| m.mark == Mark::Italic && m.range() == (0..4)), "{:?}", e.marks());
+}
