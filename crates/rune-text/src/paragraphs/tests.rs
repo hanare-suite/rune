@@ -477,3 +477,36 @@ fn room_below_a_paragraph_that_runs_past_its_pages_end_starts_the_next_paragraph
     assert!(p[2].y + p[2].height < 100.0 && p[3].y >= 100.0, "the third ends on page 1: {} + {}", p[2].y, p[2].height);
     assert_eq!(p[3].y, 100.0, "the fourth starts at page 2's top, both rooms dropped");
 }
+
+/// Every caret of `laid`, and its height.
+fn carets(laid: &TextLayout, content: &str) -> Vec<(usize, [f64; 3])> {
+    let view = laid.view();
+    content.char_indices().map(|(i, _)| i).chain([content.len()])
+        .map(|i| { let c = view.caret(i, Affinity::Downstream, 2.0); (i, [c.x0, c.y0, c.y1]) }).collect()
+}
+
+/// An app that keeps its span's numbers through an edit that shifts the text: laid out again
+/// from the last layout, the text must come out as a fresh layout of it does.
+#[test]
+fn a_span_that_keeps_its_numbers_through_a_shifting_edit_lays_out_as_a_fresh_text_does() {
+    let style = TextStyle::new(14.0, 400.0);
+    let before = "alpha and so gamma alpha alpha beta longerword x beta x\nlongerword gamma and beta δέλτα beta longerword beta\nlongerword so δέλτα x beta δέλτα longerword\nx δέλτα δέλτα longerword x beta beta x x alpha\nlongerword so δέλτα gamma longerword so δέλτα and x δέλτα\n";
+    let after = before.replacen("longerword gamma", "lorword gamma", 1);
+    let spans = [Span::new(109, 113).size(22.0)];
+    let blocks: Vec<Block> = (0..6).map(|k| [Block::Quote, Block::Paragraph, Block::Bullet(0), Block::Paragraph][k % 4]).collect();
+    let attrs = vec![ParagraphAttrs::default(); 6];
+    for attributed in [false, true] {
+        let mut ts = TextSystem::default();
+        let lay = |ts: &mut TextSystem, content: &str, key: u64, prev: Option<&TextLayout>| {
+            let mut inp = TextInput { blocks: &blocks, ..rich_input(content, &spans, style, false, TextDir::Fixed(Flow::Ltr)) };
+            if attributed { inp = document(inp, &attrs, key); }
+            ts.layout_text(&inp, true, 1.5, Some(300.0), Alignment::Start, prev)
+        };
+        let first = lay(&mut ts, before, 1, None);
+        let next = lay(&mut ts, &after, 2, Some(&first));
+        let fresh = lay(&mut TextSystem::default(), &after, 2, None);
+        let (a, b) = (carets(&next, &after), carets(&fresh, &after));
+        let at = a.iter().zip(&b).position(|(x, y)| x != y);
+        assert!(at.is_none(), "attributed {attributed}: the caret at byte {:?} is {:?} laid out again and {:?} fresh", at.map(|i| a[i].0), at.map(|i| a[i].1), at.map(|i| b[i].1));
+    }
+}
