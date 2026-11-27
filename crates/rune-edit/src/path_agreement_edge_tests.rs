@@ -131,6 +131,7 @@ fn an_atom_in_every_block_survives_copy_paste_and_cut_and_paste() {
             let mut x = src.clone();
             x.set_selection(a, b);
             x.paste_fragment(f.clone(), &src.text[a..b]);
+            if !super::soft_line_tests::atoms_kept(&src, &x, a, b).is_empty() { fails.entry(format!("atoms-kept{tag}")).or_default().push(msg.clone()); }
             let snap = |y: &TextEdit| (y.text.clone(), y.paragraph_attrs(), y.blocks().to_vec());
             let cut_label = (la..=lb).any(|l| at[l].atom.is_some() && !(a <= ol[l].0 && b >= ol[l].1) && a < ol[l].1 && b > ol[l].0);
             if snap(&x) != snap(&src) { fails.entry(format!("self-paste{}{tag}", if cut_label { "/cutlabel" } else { "" })).or_default().push(format!("{msg}\n     now {}", show(&rows(&x, &[1, 2, 3])))); }
@@ -141,6 +142,7 @@ fn an_atom_in_every_block_survives_copy_paste_and_cut_and_paste() {
                 x.set_selection(a, b);
                 x.insert("");
                 x.paste_fragment(f.clone(), &src.text[a..b]);
+                if !super::soft_line_tests::atoms_kept(&src, &x, a, b).is_empty() { fails.entry(format!("atoms-kept-cut{tag}")).or_default().push(msg.clone()); }
                 let ids: Vec<u64> = x.paragraph_attrs().iter().map(|a| a.id).collect();
                 let mut u = ids.clone(); u.sort(); u.dedup();
                 if u.len() != ids.len() { fails.entry(format!("cut-paste-dup{tag}")).or_default().push(msg.clone()); }
@@ -262,6 +264,7 @@ fn an_atom_is_never_a_soft_line_whatever_edits_or_pastes_beside_it() {
                 let mut x = e.clone();
                 x.set_selection(a, b);
                 x.paste_fragment(mkfrag(fr), "");
+                if !super::soft_line_tests::atoms_kept(&e, &x, a, b).is_empty() { fails.push(format!("{doc} {a}..{b} frag#{fi}: an atom lost: {:?}", x.paragraph_attrs())); }
                 if !super::path_agreement_tests::soft_ok(&x) { fails.push(format!("{doc} {a}..{b} frag#{fi}: soft {:?} text {:?}", x.soft_breaks(), x.text)); }
             }
         }}
@@ -362,6 +365,7 @@ fn cut_and_paste_in_place_restores_whole_paragraphs_without_atoms() {
             x.set_selection(a, b);
             x.insert("");
             x.paste_fragment(f, &e.text[a..b]);
+            if !super::soft_line_tests::atoms_kept(&e, &x, a, b).is_empty() { fails.push(format!("{doc} {a}..{b}: an atom lost")); }
             let key = |y: &TextEdit| y.text.split('\n').enumerate().map(|(i, t)| { let mut at = y.paragraph(i); at.id = 0; (t.to_string(), at, y.blocks()[i]) }).collect::<Vec<_>>();
             if key(&x) != key(&e) || snap(&x).3 != snap(&e).3 || x.soft_breaks() != e.soft_breaks() { fails.push(format!("{doc} {a}..{b} {:?}\n   was {} soft {:?}\n   now {} soft {:?}", &e.text[a..b], show(&rows(&e, &[1, 2, 3, 4])), e.soft_breaks(), show(&rows(&x, &[1, 2, 3, 4])), x.soft_breaks())); }
         }}
@@ -399,6 +403,7 @@ fn pasting_a_copy_of_the_selection_back_is_a_no_op_where_the_html_carries_it() {
                 let mut x = e.clone();
                 x.set_selection(a, b);
                 if hook { x.paste_fragment(f.clone(), sel); } else { x.paste_html(&html, sel); }
+                if !super::soft_line_tests::atoms_kept(&e, &x, a, b).is_empty() { fails.push(format!("{path} {doc} {a}..{b}: an atom lost")); }
                 if snap(&x) != snap(&e) { fails.push(format!("{path} {doc} {a}..{b} {sel:?}\n   html {html}\n   now {}", show(&rows(&x, &[1, 2, 3, 4])))); }
             }
         }}

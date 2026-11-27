@@ -23,7 +23,8 @@ fn formatted_lines(e: &TextEdit, la: usize, lb: usize) -> bool {
     (la..=lb).any(|l| { let o = e.paragraph(l); (o.indent, o.first_line_indent, o.style) != (0.0, 0.0, 0) })
 }
 
-/// Every atom line of `before` the selection `a..b` did not take still holds its label, its atom and its id in `after`: no
+/// Every atom line of `before` the selection `a..b` did not take still holds its label, its atom, its id, its block and its
+/// alignment in `after`: no
 /// paste puts text on an atom's line or takes its id and lock.
 pub(super) fn atoms_kept(before: &TextEdit, after: &TextEdit, a: usize, b: usize) -> String {
     let mut bad = String::new();
@@ -32,7 +33,7 @@ pub(super) fn atoms_kept(before: &TextEdit, after: &TextEdit, a: usize, b: usize
         let end = start + label.len();
         let attrs = before.paragraph(i);
         let selected = !(b <= start || a >= end);
-        if attrs.atom.is_some() && !selected && !after.text.split('\n').enumerate().any(|(j, t)| t == label && after.paragraph(j).atom == attrs.atom && after.paragraph(j).id == attrs.id) {
+        if attrs.atom.is_some() && !selected && !after.text.split('\n').enumerate().any(|(j, t)| t == label && after.paragraph(j).atom == attrs.atom && after.paragraph(j).id == attrs.id && after.paragraph(j).align == attrs.align && after.blocks()[j] == before.blocks()[i]) {
             bad.push_str(" ATOM-LOST");
         }
         start = end + 1;
@@ -169,6 +170,9 @@ fn probe_soft_lines(formatted: bool) -> Probe {
         ("ab\ncd\nef\ngh", vec![p, p, c, c], vec![], vec![1], vec![]),
         ("ab\ncd\nef\ngh", vec![c, p, p, p], vec![], vec![2], vec![]),
         ("ab\ncd\nef\ngh", vec![c, c, p, p], vec![], vec![3], vec![]),
+        ("ab\n\nef\ngh", vec![p, c, c, p], vec![], vec![], vec![]),
+        ("\nef\n\ngh", vec![c, c, c, p], vec![], vec![], vec![]),
+        ("ab\nef\n\ngh", vec![p, c, c, p], vec![], vec![], vec![]),
     ];
     let ops: Vec<(&str, &str, &str)> = vec![
         ("bksp", "", ""), ("del", "", ""), ("ret", "", ""), ("sret", "", ""),
@@ -216,7 +220,8 @@ fn probe_soft_lines(formatted: bool) -> Probe {
                             // Code decides by position, and HTML cannot say a code line's alignment: a copy pasted over code, or
                             // into the line before or after it, is not itself (the edge probe leaves code out the same way).
                             let (la, lb) = (text[..a].matches('\n').count(), text[..b].matches('\n').count());
-                            let lossy_code = (la.saturating_sub(1)..=(lb + 1).min(blocks.len() - 1)).any(|l| blocks[l] == c);
+                            // (Only a code line with attributes HTML cannot express: the plain paste of a code line is its text.)
+                            let lossy_code = (la.saturating_sub(1)..=(lb + 1).min(blocks.len() - 1)).any(|l| blocks[l] == c && attributed && { let mut at = f.paragraph(l); at.id = 0; at != ParagraphAttrs::default() });
                             if !(sel_atom && *op == "html-own") && !lossy_code && !(formatted && formatted_lines(&f, la, lb)) {
                                 own_checks += 1;
                                 // (A paragraph's identity is its head's id: a soft line's id is its own and no one's.)
@@ -234,6 +239,7 @@ fn probe_soft_lines(formatted: bool) -> Probe {
                             base = x.clone();
                             let fr = x.html_fragment(&h);
                             x.paste_fragment(fr, &pl);
+                            if attributed { flags.push(atoms_kept(&f, &x, a, b)); }
                             let (la, lb) = (text[..a].matches('\n').count(), text[..b].matches('\n').count());
                             let whole = hard_starts.contains(&a) && (hard_starts.contains(&b) || b == text.len()) && la < lb.max(if b == text.len() { lb + 1 } else { lb });
                             let has_atom = (la..=lb).any(|i| atoms.contains(&i));
@@ -699,4 +705,62 @@ fn a_kept_line_that_becomes_a_soft_line_gets_a_new_id_and_no_page_break() {
     for i in 0..3 { assert_eq!((x.paragraph(i).page_break_before, x.paragraph(i).id >= 100 || x.paragraph(i).id == e.paragraph(i).id), (t.paragraph(i).page_break_before, t.paragraph(i).id >= 100 || t.paragraph(i).id == e.paragraph(i).id), "line {i}: paste {} / typed {}", show(&x), show(&t)); }
     let soft = x.soft_breaks()[0] as usize;
     assert!(!x.paragraph(soft).page_break_before && x.paragraph(soft).id >= 100, "{}", show(&x));
+}
+
+/// A copy that starts at an empty code line keeps that line (the parser drops the newline after `<pre><code>`), and pasted
+/// over its own selection it changes nothing, wherever the selection starts and ends around empty code lines.
+#[test]
+fn a_copy_that_starts_at_an_empty_code_line_round_trips() {
+    let (p, c) = (Block::Paragraph, Block::Code);
+    for (text, blocks) in [("ab\n\nef\ngh", vec![p, c, c, p]), ("\nef", vec![c, c]), ("ab\n\n\nef", vec![p, c, c, c]), ("ab\nef\n\ngh", vec![p, c, c, p]), ("ab\nef\n\n", vec![p, c, c, c]), ("ab\n\ngh", vec![p, c, p])] {
+        for attributed in [false, true] {
+            let mut e = TextEdit::from_parts(text, vec![], blocks.clone());
+            if attributed { e.set_paragraph_attrs((0..blocks.len()).map(|i| id(1 + i as u64)).collect()); e.set_paragraph_ids(100); }
+            e.take_changes();
+            for a in 0..text.len() { for b in a + 1..=text.len() {
+                let mut x = e.clone();
+                x.set_selection(a, b);
+                let h = x.selected_html();
+                let fr = x.html_fragment(&h);
+                assert_eq!(fr.text, text[a..b], "attributed {attributed} {text:?} {a}..{b}: the copy {h:?} reads back as another text");
+                x.paste_html(&h, &text[a..b]);
+                assert_eq!(st(&x), st(&e), "attributed {attributed} {text:?} {a}..{b} [{h}]: own paste: {}", show(&x));
+            } }
+        }
+    }
+}
+
+/// A foreign paste over code is not the selection's own copy: it goes in as the plain text it has, where the HTML says
+/// something else of it (an own paste, `plain == the selection`, is a no-op).
+#[test]
+fn a_foreign_paste_into_code_goes_in_as_its_plain_text() {
+    let (p, c) = (Block::Paragraph, Block::Code);
+    for attributed in [true, false] {
+        let mut e = TextEdit::from_parts("x a b y\nend", vec![], vec![c, p]);
+        if attributed { e.set_paragraph_attrs(vec![id(1), id(2)]); e.set_paragraph_ids(100); }
+        e.take_changes();
+        for (html, plain) in [("<p style=\"text-align:center\">a   b</p>", "a   b"), ("<p><b>a</b>   b</p>", "a   b"), ("<ul><li>a   b</li></ul>", "a   b")] {
+            let mut x = e.clone();
+            x.set_selection(2, 5);
+            x.paste_html(html, plain);
+            assert_eq!(x.text, "x a   b y\nend", "attributed {attributed} {html}: {}", show(&x));
+            assert_eq!(x.blocks().to_vec(), vec![c, p]);
+        }
+    }
+}
+
+/// An atom has a label: a line with no text is no atom, whichever way it came about.
+#[test]
+fn a_line_with_no_text_is_no_atom() {
+    let p = Block::Paragraph;
+    let mut e = TextEdit::from_parts("ab\n\ncd", vec![], vec![p, p, p]);
+    e.set_paragraph_attrs(vec![id(1), id(2).atom(20.0), id(3)]);
+    assert_eq!(e.paragraph(1).atom, None, "set_paragraph_attrs: {}", show(&e));
+    let mut e = TextEdit::from_parts("ab\n\ncd", vec![], vec![p, p, p]);
+    e.set_paragraph_attrs(vec![id(1), id(2), id(3)]);
+    e.set_paragraph(1, id(2).atom(20.0));
+    assert_eq!(e.paragraph(1).atom, None, "set_paragraph: {}", show(&e));
+    let mut e = TextEdit::from_parts("ab\nT\ncd", vec![], vec![p, p, p]);
+    e.set_paragraph_attrs(vec![id(1), id(2).atom(20.0), id(3)]);
+    assert_eq!(e.paragraph(1).atom, Some(20.0), "an atom with a label stays");
 }

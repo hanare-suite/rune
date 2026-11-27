@@ -221,7 +221,13 @@ fn step(e: &mut TextEdit, rng: &mut Rng) -> String {
         12 => key(e, Key::Enter, Mods { shift: true, ..none }),
         13..=15 => key(e, Key::Backspace, Mods { alt: rng.one_in(6), cmd: rng.one_in(8), ..none }),
         16 | 17 => key(e, Key::Delete, Mods { alt: rng.one_in(6), ..none }),
-        18 => { let s = rng.pick(&["eingefügt", "zwei\nZeilen", "\nvorn", "hinten\n", "a\n\nb", "\n"]); e.paste(s); format!("paste {s:?}") }
+        18 => {
+            let s = rng.pick(&["eingefügt", "zwei\nZeilen", "\nvorn", "hinten\n", "a\n\nb", "\n"]);
+            let (was, (a, b)) = (e.clone(), e.range());
+            e.paste(s);
+            assert_eq!(super::soft_line_tests::atoms_kept(&was, e, a, b), "", "a paste of {s:?} took an atom");
+            format!("paste {s:?}")
+        }
         19 => {
             let html = rng.pick(&[
                 "<b>fett</b> und <i>schräg</i>",
@@ -238,7 +244,9 @@ fn step(e: &mut TextEdit, rng: &mut Rng) -> String {
                 twin.paste(&html::parse_html(html, e.html_styles()).rich().text);
                 twin
             });
+            let (was, (a, b)) = (e.clone(), e.range());
             e.paste_html(html, "");
+            assert_eq!(super::soft_line_tests::atoms_kept(&was, e, a, b), "", "a paste of {html:?} took an atom");
             if let Some(twin) = twin {
                 assert_eq!(e.text, twin.text, "a rich paste of {html:?} over selected atoms leaves other lines than a plain paste");
             }

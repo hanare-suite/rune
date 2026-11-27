@@ -60,6 +60,7 @@ fn the_change_report_holds_without_ids_and_without_attributes() {
                 f(&mut x);
                 let ch = x.take_changes();
                 if let Err(w) = check(&before, &x, &ch) { fails.push(format!("{doc} {a}..{b} {:?} {name} {s:?}: {w}", &e.text[a..b])); }
+                if !matches!(name, "return" | "shift" | "backspace") && !super::soft_line_tests::atoms_kept(&e, &x, a, b).is_empty() { fails.push(format!("{doc} {a}..{b} {name} {s:?}: an atom lost")); }
                 if !attributed && x.paragraph_attrs().iter().any(|p| *p != ParagraphAttrs::default()) { fails.push(format!("{doc} {a}..{b} {name} {s:?}: the field gained paragraph attributes")); }
                 if x.paragraph_attrs().iter().any(|p| p.id != 0) { fails.push(format!("{doc} {a}..{b} {name} {s:?}: the field gained an id")); }
                 if !soft_ok(&x) { fails.push(format!("{doc} {a}..{b} {name} {s:?}: an atom is a soft line")); }
@@ -112,6 +113,7 @@ fn an_empty_fragment_is_a_no_op_at_a_caret_and_a_deletion_over_a_selection() {
                 f(&mut x);
                 let ch = x.take_changes();
                 if let Err(w) = check(&before, &x, &ch) { fails.push(format!("{doc} {a}..{b} {name}: report {w}")); }
+                if !super::soft_line_tests::atoms_kept(&e, &x, a, b).is_empty() { fails.push(format!("{doc} {a}..{b} {name}: an atom lost")); }
                 if !takes && (rows(&x, &orig), x.soft_breaks().to_vec()) != (rows(&want, &orig), want.soft_breaks().to_vec()) {
                     fails.push(format!("{doc} {a}..{b} {:?} {name}\n   now  {} soft {:?}\n   want {} soft {:?}", &e.text[a..b], show(&rows(&x, &orig)), x.soft_breaks(), show(&rows(&want, &orig)), want.soft_breaks()));
                 }
@@ -387,6 +389,7 @@ fn a_paste_into_code_is_clean_for_every_plain_fallback() {
                 x.paste_html(html, plain);
                 let ch = x.take_changes();
                 let msg = format!("{text:?}{blocks:?} atoms {atoms:?} {a}..{b} {html} {plain:?}: {:?}", lines_of(&x));
+                if !super::soft_line_tests::atoms_kept(&f, &x, a, b).is_empty() { fails.push(format!("{text:?} {a}..{b} {html}: an atom lost")); }
                 if x.text.contains('\r') { fails.push(format!("{msg}: a carriage return in the text")); }
                 let mut off = 0;
                 let lines: Vec<&str> = x.text.split('\n').collect();
