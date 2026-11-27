@@ -55,7 +55,18 @@ impl TextEdit {
         // An atom is never a soft line and never has one: whatever edit left it beside one.
         let attrs = &self.attrs;
         let plain = |i: usize| attrs.get(i).is_none_or(|a| a.atom.is_none());
-        self.soft_breaks.retain(|&idx| idx > 0 && (idx as usize) < line_count && plain(idx as usize) && plain(idx as usize - 1));
+        let mut dropped: Vec<usize> = Vec::new();
+        self.soft_breaks.retain(|&idx| {
+            let line = idx as usize;
+            if idx == 0 || line >= line_count { return false; }
+            let keep = plain(line) && plain(line - 1);
+            if !keep { dropped.push(line); }
+            keep
+        });
+        // A line whose softness went with an edit is a paragraph change, wherever it is.
+        for line in dropped {
+            self.note_paragraphs(line..line + 1);
+        }
         self.normalize_marks();
         self.snap_to_pills();
         let anchor_line = self.line_of_byte(self.anchor);

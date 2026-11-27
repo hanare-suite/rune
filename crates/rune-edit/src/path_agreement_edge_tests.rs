@@ -121,7 +121,9 @@ fn an_atom_in_every_block_survives_copy_paste_and_cut_and_paste() {
                 if got.atom != src_atom { fails.entry(format!("frag-atom{tag}")).or_default().push(format!("{msg}\n     line {k} atom {:?} want {:?}", got.atom, src_atom)); }
                 if src_atom.is_some() && got.id != at[line].id { fails.entry(format!("frag-atom-id{tag}")).or_default().push(msg.clone()); }
                 let empty_tail = k == fl - 1 && k > 0 && b == ol[line].0;
-                if !empty_tail && f.blocks()[k] != bl[line] { fails.entry(format!("frag-block{}{tag}/line{:?}", if src_atom.is_some() { "-ATOM" } else { "" }, bl[line])).or_default().push(format!("{msg}\n     line {k} block {:?} want {:?}", f.blocks()[k], bl[line])); }
+                // (A copy that begins at a line's end begins with a plain empty paragraph.)
+                let empty_lead = k == 0 && a == ol[line].1 && b > a;
+                if !empty_tail && !empty_lead && f.blocks()[k] != bl[line] { fails.entry(format!("frag-block{}{tag}/line{:?}", if src_atom.is_some() { "-ATOM" } else { "" }, bl[line])).or_default().push(format!("{msg}\n     line {k} block {:?} want {:?}", f.blocks()[k], bl[line])); }
                 if src_atom.is_some() && got.align != at[line].align { fails.entry(format!("frag-atom-align{tag}")).or_default().push(msg.clone()); }
             }
             // pasting it back over the selection changes nothing
@@ -343,7 +345,7 @@ fn cut_and_paste_in_place_restores_whole_paragraphs_without_atoms() {
             let lossy = (la..lb).any(|l| {
                 let o = e.paragraph(l);
                 (o.style != 0 && e.blocks()[l] != Block::Paragraph) || o.page_break_before || o.indent != 0.0 || o.first_line_indent != 0.0 || e.blocks()[l] == Block::Code
-            }) || e.marks().iter().any(|m| m.mark.is_pill() && m.start < b && m.end > a) || e.soft_breaks().iter().any(|&l| (l as usize) >= la && (l as usize) < lb);
+            }) || e.marks().iter().any(|m| m.mark.is_pill() && m.start < b && m.end > a) || e.soft_breaks().iter().any(|&l| (l as usize) > la && (l as usize) <= lb);
             if !whole || atoms || lossy || e.text[a..b] == *"\n" { continue; }
             cases += 1;
             let html = s.selected_html();

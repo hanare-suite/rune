@@ -27,6 +27,7 @@ mod keys;
 mod marks;
 mod model;
 mod paragraph;
+mod paste_shape;
 mod pills;
 mod replace;
 mod secure;

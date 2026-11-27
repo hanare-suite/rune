@@ -157,3 +157,38 @@ fn a_formatted_copy_ending_behind_a_break_pastes_into_a_single_line_field_withou
     dst.paste_html(&html, "one\ntwo\n");
     assert_eq!(dst.text, "xyone twozw", "{html}");
 }
+
+/// Undo and redo of a paste are exact in every kind of field, and for the fragments with no text.
+#[test]
+fn undo_and_redo_of_a_paste_are_exact_in_every_kind_of_field() {
+    let snap = |y: &TextEdit| (y.text.clone(), y.paragraph_attrs(), y.blocks().to_vec(), y.marks().to_vec(), y.soft_breaks().to_vec());
+    let mut all: Vec<(String, TextEdit)> = docs().into_iter().map(|(n, e)| (n.to_string(), e)).collect();
+    all.extend(plain_docs());
+    let mut frags: Vec<TextEdit> = fragments().iter().map(mkfrag).collect();
+    frags.push({ let mut f = TextEdit::from_parts("", vec![], vec![]); f.set_paragraph_attrs(vec![ParagraphAttrs::default().id(60)]); f });
+    frags.push(TextEdit::from_parts("", vec![], vec![Block::Bullet(0)]));
+    let mut fails: Vec<String> = Vec::new();
+    let mut cases = 0;
+    for (doc, e) in all {
+        let n = e.text.len();
+        for a in 0..=n { for b in a..=n {
+            let mut pr = e.clone();
+            pr.set_selection(a, b);
+            if pr.range() != (a, b) { continue; }
+            for (fi, f) in frags.iter().enumerate() {
+                cases += 1;
+                let mut y = e.clone();
+                y.set_history(true);
+                y.set_selection(a, b);
+                let st = snap(&y);
+                y.paste_fragment(f.clone(), "");
+                let done = snap(&y);
+                y.undo();
+                if snap(&y) != st { fails.push(format!("{doc} {a}..{b} frag#{fi}: undo")); }
+                y.redo();
+                if snap(&y) != done { fails.push(format!("{doc} {a}..{b} frag#{fi}: redo")); }
+            }
+        }}
+    }
+    assert!(fails.is_empty(), "{cases} cases, {} failures, the first:\n{}", fails.len(), fails.iter().take(8).cloned().collect::<Vec<_>>().join("\n"));
+}

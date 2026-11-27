@@ -25,7 +25,10 @@ pub(crate) fn serialize_html(edit: &TextEdit, range: Range<usize>) -> String {
             if sub_start <= sub_end
                 && (sub_start < sub_end || start == end || (p.range.start >= start && p.range.end <= end) || (start == p.range.end && end > start))
             {
-                paras.push((p.index, sub_start..sub_end, p.block, p.soft_break && p.range.start > start));
+                // A copy that begins at a line's end begins with that line's empty rest, as a plain paragraph
+                // wherever it is from: no empty bullet or quote above what is pasted.
+                let lead = sub_start == sub_end && start == p.range.end && p.range.start < start && end > start;
+                paras.push((p.index, sub_start..sub_end, if lead { Block::Paragraph } else { p.block }, p.soft_break && p.range.start > start));
             }
         }
     }
