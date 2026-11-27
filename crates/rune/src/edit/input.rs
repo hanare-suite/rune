@@ -581,7 +581,10 @@ impl TextEdit {
         // pushes that line down whole: the line keeps its block, its attributes and its id,
         // and the pasted paragraphs above it are new ones.
         let ends_open = frag_lines > 1 && frag.text.ends_with('\n');
-        if ends_open && at_line_start && !at_line_end && !own_line {
+        // A locked block (an atom) is not pushed down by swapping attributes: its lock, its id and
+        // its height would move onto the pasted text. It stays where the paste's own lines put it.
+        let at_atom = |e: &Self, i: usize| e.attrs.get(i).is_some_and(|a| a.atom.is_some());
+        if ends_open && at_line_start && !at_line_end && !own_line && !at_atom(self, line_idx) && !at_atom(self, line_idx + frag_lines - 1) {
             let last = line_idx + frag_lines - 1;
             if last < self.attrs.len() {
                 self.attrs.swap(line_idx, last);
