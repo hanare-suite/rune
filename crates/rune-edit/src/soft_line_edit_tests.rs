@@ -303,7 +303,7 @@ fn shape(e: &TextEdit) -> (String, Vec<u32>, Vec<Block>, Vec<(ParagraphAlign, f3
 
 /// An atom goes in the same by `insert_atom` and by a pasted fragment: on a line of its own with the defaults, the rest of
 /// the paragraph behind it (text or soft lines) keeping the attributes and block it had, at every caret and selection,
-/// at a soft line's start too (no empty soft line). (Selections are the plain paste's: see the path harness.)
+/// at a soft line's start too (no empty soft line): one code path, so the same documented rules over every selection.
 #[test]
 fn insert_atom_and_a_pasted_atom_agree_in_paragraphs_with_soft_lines() {
     let mut fails: Vec<String> = Vec::new();
@@ -318,18 +318,9 @@ fn insert_atom_and_a_pasted_atom_agree_in_paragraphs_with_soft_lines() {
             f.set_selection(a, b);
             let fr = f.html_fragment("<p data-atom=\"9\" data-atom-height=\"20\">N</p>");
             f.paste_fragment(fr, "N");
-            // A selection over several lines differs by a rule of its own: a paste leaves its last line to the later
-            // paragraph (its id, attributes and block), where `insert_atom` deletes and then inserts, so the first
-            // paragraph keeps the join. The text, the atom and the soft lines are the same.
-            let spans = e.line_of_byte(a) != e.line_of_byte(b);
-            // And one ending at the end of a line leaves that line's rest, empty, to the later paragraph in a paste (an empty line
-            // behind the atom: the rule that a text pasted over several lines ends in the later paragraph), where `insert_atom`
-            // leaves none: only the invariants are asserted there.
-            let ends_line = b == e.line_range(e.line_of_byte(b)).end;
-            // (So does the whole text of a line, replaced, with no soft line after it: the paragraph stays, emptied, under its
-            // attributes, in a paste; the rule that a join keeps the first paragraph.)
-            let soft_follows = e.soft_breaks().contains(&((e.line_of_byte(b) + 1) as u32));
-            let differ = if a < b && ends_line && (spans || !soft_follows) { false } else if spans { (&i.text, i.soft_breaks().to_vec(), i.paragraph_attrs().iter().map(|x| x.atom.is_some()).collect::<Vec<_>>()) != (&f.text, f.soft_breaks().to_vec(), f.paragraph_attrs().iter().map(|x| x.atom.is_some()).collect::<Vec<_>>()) } else { shape(&i) != shape(&f) };
+            // Full equality: text, softness, blocks, attributes and atoms; ids are the old ones or fresh ones.
+            let ids = |x: &TextEdit| x.paragraph_attrs().iter().map(|p| if p.id >= 100 { 0 } else { p.id }).collect::<Vec<_>>();
+            let differ = shape(&i) != shape(&f) || ids(&i) != ids(&f) || i.soft_breaks() != f.soft_breaks();
             if differ || inv(&i) != "" || inv(&f) != "" {
                 fails.push(format!("{name} {a}..{b}\n   insert_atom {}\n   fragment    {}", show(&i), show(&f)));
             }
