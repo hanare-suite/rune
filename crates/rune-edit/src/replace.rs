@@ -137,7 +137,7 @@ impl TextEdit {
             None if tail_whole => Edge::Tail,
             None => Edge::Inside { copy: new_line_block.is_some(), rest: b < line_b_range.end },
         };
-        Plan { line_a, line_b, line_a_range, line_b_range, added_lines, kept, take_b, front, tail_whole, block_b, edge }
+        Plan { line_a, line_b, line_b_range, added_lines, kept, take_b, front, tail_whole, block_b, edge }
     }
 
     /// Which of the lines an edit replacing `a..b` with `s` starts on, one more than it adds, are
@@ -187,7 +187,7 @@ impl TextEdit {
             if del_len + ins_len > 0 { self.note_text(a..b, ins_len); }
             return Vec::new();
         }
-        let Plan { line_a, line_b, line_a_range: _, line_b_range, added_lines, kept, take_b, front, tail_whole, block_b, edge } = self.edit_plan((a, b), s, new_line_block, mark_new_lines_soft);
+        let Plan { line_a, line_b, line_b_range, added_lines, kept, take_b, front, tail_whole, block_b, edge } = self.edit_plan((a, b), s, new_line_block, mark_new_lines_soft);
         let removed_lines = line_b - line_a;
         let new_lines = if want { new_lines(added_lines, kept, edge, line_a == line_b) } else { Vec::new() };
         self.splice_attrs(line_a, line_b, added_lines, take_b, kept, edge);

@@ -27,7 +27,6 @@ pub(super) enum Edge {
 pub(super) struct Plan {
     pub(super) line_a: usize,
     pub(super) line_b: usize,
-    pub(super) line_a_range: Range<usize>,
     pub(super) line_b_range: Range<usize>,
     pub(super) added_lines: usize,
     pub(super) kept: Kept,
