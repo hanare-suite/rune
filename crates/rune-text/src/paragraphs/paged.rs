@@ -104,6 +104,9 @@ pub(super) struct Shape {
 }
 
 impl Shape {
+    /// No attributes: the field's alignment, no indents, no atom.
+    pub(super) const NONE: Shape = Shape { align: Alignment::Start, indent: [0.0; 2], atom: None };
+
     /// `attrs` in a field whose own alignment is `align`: a left-aligned paragraph keeps the
     /// field's, and an atom's label is centred.
     pub(super) fn of(attrs: ParagraphAttrs, align: Alignment, scale: f32) -> Shape {
@@ -133,6 +136,8 @@ struct Spot {
 /// the next layout places again) and its height without what the gaps added.
 #[derive(Clone)]
 pub(super) struct Paged {
+    /// How it was aligned and indented, which an empty paragraph's caret needs.
+    pub(super) shape: Shape,
     pub(super) gaps: Box<[(u32, f32)]>,
     pub(super) natural: Option<Rc<Layout<Ink>>>,
     pub(super) natural_height: f32,
@@ -141,7 +146,7 @@ pub(super) struct Paged {
 impl Paged {
     /// A paragraph that crosses no page's end, `height` px tall.
     pub(super) fn plain(height: f32) -> Paged {
-        Paged { gaps: Box::default(), natural: None, natural_height: height }
+        Paged { shape: Shape::NONE, gaps: Box::default(), natural: None, natural_height: height }
     }
 }
 
@@ -180,7 +185,7 @@ impl TextSystem {
             self.layout_ids.build(&l);
             (l, Some(layout))
         };
-        Placed { top: spot.top, lead, height, extent: total.max(height), layout, paged: Paged { gaps: spot.gaps.into(), natural, natural_height } }
+        Placed { top: spot.top, lead, height, extent: total.max(height), layout, paged: Paged { shape, gaps: spot.gaps.into(), natural, natural_height } }
     }
 }
 

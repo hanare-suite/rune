@@ -115,7 +115,7 @@ pub(in crate::runtime) fn emit_block_decorations(
                     }
                     list_counts[l] = 0;
                     if !is_soft {
-                        let indent = marker_x((blk.indent_pt(spec.style.size) * s).round(), spec.cold.attrs.get(para_idx), s);
+                        let indent = marker_x((blk.indent_pt(para_size(spec, para_idx)) * s).round(), spec.cold.attrs.get(para_idx), s);
                         markers.push((indent, baseline, blk, 0));
                     }
                 }
@@ -126,7 +126,7 @@ pub(in crate::runtime) fn emit_block_decorations(
                     }
                     if !is_soft {
                         list_counts[l] += 1;
-                        let indent = marker_x((blk.indent_pt(spec.style.size) * s).round(), spec.cold.attrs.get(para_idx), s);
+                        let indent = marker_x((blk.indent_pt(para_size(spec, para_idx)) * s).round(), spec.cold.attrs.get(para_idx), s);
                         markers.push((indent, baseline, blk, list_counts[l]));
                     }
                 }
@@ -156,11 +156,11 @@ pub(in crate::runtime) fn emit_block_decorations(
             Block::Code => code_run = Some((top, bot)),
             Block::Quote => quote_run = Some((top, bot)),
             Block::Bullet(_) => {
-                let indent = (blk.indent_pt(spec.style.size) * s).round();
+                let indent = marker_x((blk.indent_pt(para_size(spec, 0)) * s).round(), spec.cold.attrs.first(), s);
                 markers.push((indent, baseline, blk, 0));
             }
             Block::Numbered(_) => {
-                let indent = (blk.indent_pt(spec.style.size) * s).round();
+                let indent = marker_x((blk.indent_pt(para_size(spec, 0)) * s).round(), spec.cold.attrs.first(), s);
                 markers.push((indent, baseline, blk, 1));
             }
             Block::Paragraph => {}
@@ -430,6 +430,13 @@ pub(in crate::runtime) fn push_spelling_marker(out: &mut Vec<Instance>, x0: f32,
         let wave = WAVE[(n as f32 / k) as usize % WAVE.len()];
         rect_inst([start + n as f32, (y + wave * k).round(), 1.0, t], color, 0.0, clip, fade)
     }));
+}
+
+/// The font size paragraph `k` is laid out in: its paragraph style's, or the field's.
+fn para_size(spec: &TextSpec, k: usize) -> f32 {
+    // A paragraph with no attributes of its own has the first style, as layout reads them.
+    let style = spec.cold.paragraph_styles.as_ref().and_then(|s| s.get(spec.cold.attrs.get(k).map_or(0, |a| a.style) as usize));
+    style.map_or(spec.style.size, |o| o.text.size)
 }
 
 /// Where a list marker's line starts, in device px: its block's indent and what its paragraph's

@@ -300,21 +300,24 @@ impl<'a> TextFlow<'a> {
         }
     }
 
-    /// Where an empty paragraph's caret or newline box, `size` px wide, starts: after its left
-    /// indent when reading left to right, or inside its right padding from the wrap width when
-    /// reading right to left.
+    /// Where an empty paragraph's caret or newline box, `size` px wide, starts: after its indents
+    /// when reading left to right, and in the middle or at the end of its line when it is
+    /// centred or right-aligned, or inside its right padding from the wrap width when reading
+    /// right to left.
     pub(crate) fn blank_start(self, p: &Piece<'_>, size: f32) -> f32 {
-        let indent = if p.index == 0 {
-            match self {
-                TextFlow::Paragraphs(pl) => pl.text_indent_px,
-                TextFlow::Single(_) => 0.0,
-            }
-        } else {
-            0.0
-        };
-        match (p.flow, self) {
-            (Flow::Rtl, TextFlow::Paragraphs(pl)) => (pl.max_width.unwrap_or(pl.width) - p.pad[1] - indent - size).max(p.pad[0]),
-            _ => p.pad[0] + indent,
+        let TextFlow::Paragraphs(pl) = self else { return p.pad[0] };
+        let indent = if p.index == 0 { pl.text_indent_px } else { 0.0 };
+        if p.flow == Flow::Rtl {
+            return (pl.max_width.unwrap_or(pl.width) - p.pad[1] - indent - size).max(p.pad[0]);
+        }
+        // Where line breaking starts its first line, and how much room it leaves it.
+        let left = (p.pad[0] + p.shape.indent[0] + p.shape.indent[1]).max(0.0);
+        let right = if p.pad[1] > 0.0 { left } else { p.pad[1] };
+        let room = pl.max_width.map_or(0.0, |w| ((w - left - right).max(1.0) - indent).max(1.0));
+        left + indent + match p.shape.align {
+            Alignment::Center => room * 0.5,
+            Alignment::End | Alignment::Right => (room - size).max(0.0),
+            _ => 0.0,
         }
     }
 
@@ -813,12 +816,12 @@ impl TextSystem {
         let (mut width, mut full_width, mut fresh) = (0.0f32, 0.0f32, 0);
         for (k, ((a, b, flow, key, isolates, run), kept)) in items.into_iter().enumerate() {
             let block = spec.blocks.get(k).copied().unwrap_or(Block::Paragraph);
-            let pad = block.pad_px(style.size, scale);
             let blocks: &[Block] = if block == Block::Paragraph { &[] } else { std::slice::from_ref(&block) };
             // A paragraph is shaped in the style its attributes name, with that style's room
             // around it, aligned and indented as they say.
             let attrs = spec.flow.and_then(|f| f.attrs.get(k)).copied().unwrap_or_default();
             let (own, style, line) = pager.own(attrs, style, scale);
+            let pad = block.pad_px(style.size, scale);
             let shape = paged::Shape::of(attrs, align, scale);
             // A waiting record kept at the same width stays as it was; a run found here waits.
             let wait = match (kept, run) {
