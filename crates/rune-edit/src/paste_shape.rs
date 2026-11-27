@@ -170,6 +170,32 @@ impl TextEdit {
         }
     }
 
+    /// Where an atom's line is a new paragraph though it holds what the edit leaves, as `insert_atom` makes it: at the end of
+    /// the line the selection ends in, with nothing of it left and soft lines after it (they start the next paragraph; for a
+    /// selection, within one line), and at a soft line's start (the middle of a paragraph: the atom replaces the soft break).
+    pub(super) fn atom_paste_edges(&self) -> (bool, bool) {
+        let (a, b) = self.range();
+        let (la, lb) = (self.line_of_byte(a), self.line_of_byte(b));
+        let (ra, rb) = (self.line_range(la), self.line_range(lb));
+        let soft = |l: usize| self.soft_breaks.binary_search(&(l as u32)).is_ok();
+        let nothing_left = (if a == b { a > ra.start } else { la == lb }) && b == rb.end && soft(lb + 1);
+        (nothing_left, a == ra.start && soft(la))
+    }
+
+    /// Marks those lines of a paste that are an atom of the fragment as new paragraphs (with `force_new` set for the end and
+    /// the start), and gives the lines the id to take: returns them and the new id.
+    pub(super) fn force_new_atom_lines(&mut self, frag: &TextEdit, new: &mut [bool], lead: usize, nothing_left: bool, soft_start: bool) -> (Vec<usize>, u64) {
+        let id = if nothing_left || soft_start { self.fresh_id() } else { 0 };
+        let mut forced = Vec::new();
+        for (cond, k) in [(nothing_left, frag.blocks.len() - 1), (soft_start, 0)] {
+            if cond && frag.attrs.get(k).is_some_and(|a| a.atom.is_some()) && lead + k < new.len() {
+                new[lead + k] = true;
+                forced.push(lead + k);
+            }
+        }
+        (forced, id)
+    }
+
     /// A soft line of the fragment that lands on the line that keeps what was there: where the head of that group of lines
     /// is a new line (the paste is at a paragraph's start), the receiving paragraph is the head. Its first line takes the
     /// receiving line's id, attributes and block, and the soft lines (the landed one with an id of its own) mirror it, as

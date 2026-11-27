@@ -699,8 +699,7 @@ impl TextEdit {
         let frag_atom = |frag: &TextEdit, line: usize| frag.attrs.get(line).is_some_and(|a| a.atom.is_some());
         let mut fenced = self.fence(a, b, &frag.text);
         // An atom's line is a new paragraph at the end of a line whose soft lines follow, or at a soft line's start, as `insert_atom` makes it.
-        let nothing_left = a == b && a > ra.start && b == rb.end && self.soft_breaks.binary_search(&((lb + 1) as u32)).is_ok();
-        let soft_start = a == b && a == ra.start && self.soft_breaks.binary_search(&(la as u32)).is_ok();
+        let (nothing_left, soft_start) = self.atom_paste_edges();
         if frag.attrs.iter().any(|a| a.atom.is_some()) {
             for _ in 0..4 {
                 let new = self.new_lines_of((fenced.a, fenced.b), fenced.text.as_deref().unwrap_or(&frag.text));
@@ -728,10 +727,7 @@ impl TextEdit {
         let (ins_at, first) = (fa + fenced.lead, self.line_of_byte(fa));
         let mut new = self.apply_fenced_lines((fa, fb), text, &[], None, false, fenced.back, true);
         let (line_idx, frag_lines) = (first + fenced.lead, frag.blocks.len());
-        let (mut forced, forced_id) = (Vec::new(), if nothing_left || soft_start { self.fresh_id() } else { 0 });
-        for (cond, j) in [(nothing_left, frag_lines - 1), (soft_start, 0)] {
-            if cond && frag_atom(&frag, j) && fenced.lead + j < new.len() { new[fenced.lead + j] = true; forced.push(fenced.lead + j); }
-        }
+        let (forced, forced_id) = self.force_new_atom_lines(&frag, &mut new, fenced.lead, nothing_left, soft_start);
         let is_new = |j: usize| new.get(j).copied().unwrap_or(false);
         let mut styled = false;
         for k in 0..frag_lines {

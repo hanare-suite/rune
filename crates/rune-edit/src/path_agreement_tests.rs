@@ -327,7 +327,7 @@ fn a_pasted_fragment_follows_the_rules_over_every_selection() {
                     let want_block = if added == 0 && e.soft_breaks().contains(&(la as u32)) { oblocks[la] } else { oblocks[own] };
                     if at != oattrs[own] || !blk(want_block, bl) || ((b == rb.0 && hb) && !t.ends_with(&e.text[rb.0..rb.1])) { fail("rule-whole", format!("line {lb} was {:?} {:?}", oattrs[own], oblocks[own])); }
                 }
-                if la < lb && (a > ra.0 || !ha) && (b > rb.0 || !hb) && added > 0 && !atom_touch {
+                if la < lb && (a > ra.0 || !ha) && (b > rb.0 || !hb) && added > 0 && !atom_touch && !(!ha && fa.iter().any(|y| y.atom.is_some())) {
                     let (_, at, bl) = lines[la];
                     if at != oattrs[la] || bl != oblocks[la] { fail("rule-midmid-first", String::new()); }
                     let (_, at, bl) = lines[end_line];
@@ -693,7 +693,7 @@ fn a_pasted_fragment_follows_the_rules_in_code_and_around_every_document() {
                     let want_block = if added == 0 && e.soft_breaks().contains(&(la as u32)) { oblocks[la] } else { oblocks[own] };
                     if at != oattrs[own] || !blk(want_block, bl) || ((b == rb.0 && hb) && !t.ends_with(&e.text[rb.0..rb.1])) { fail("rule-whole", format!("line {lb} was {:?} {:?}", oattrs[own], oblocks[own])); }
                 }
-                if la < lb && (a > ra.0 || !ha) && (b > rb.0 || !hb) && added > 0 && !atom_touch {
+                if la < lb && (a > ra.0 || !ha) && (b > rb.0 || !hb) && added > 0 && !atom_touch && !(!ha && fa.iter().any(|y| y.atom.is_some())) {
                     let (_, at, bl) = lines[la];
                     if at != oattrs[la] || bl != oblocks[la] { fail("rule-midmid-first", String::new()); }
                     let (_, at, bl) = lines[end_line];
