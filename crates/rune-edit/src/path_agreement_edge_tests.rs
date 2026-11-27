@@ -350,7 +350,7 @@ fn cut_and_paste_in_place_restores_whole_paragraphs_without_atoms() {
             let lossy = (la..lb).any(|l| {
                 let o = e.paragraph(l);
                 (o.style != 0 && e.blocks()[l] != Block::Paragraph) || o.page_break_before || o.indent != 0.0 || o.first_line_indent != 0.0 || e.blocks()[l] == Block::Code
-            }) || e.marks().iter().any(|m| m.mark.is_pill() && m.start < b && m.end > a) || e.soft_breaks().iter().any(|&l| (l as usize) > la && (l as usize) <= lb);
+            }) || e.marks().iter().any(|m| m.mark.is_pill() && m.start < b && m.end > a) ;
             // A paragraph right next to a code block pastes back by position: a line made beside code is code.
             let beside_code = e.blocks()[lb] == Block::Code || (la > 0 && e.blocks()[la - 1] == Block::Code);
             if !whole || atoms || lossy || beside_code || e.text[a..b] == *"\n" { continue; }
@@ -362,7 +362,7 @@ fn cut_and_paste_in_place_restores_whole_paragraphs_without_atoms() {
             x.insert("");
             x.paste_fragment(f, &e.text[a..b]);
             let key = |y: &TextEdit| y.text.split('\n').enumerate().map(|(i, t)| { let mut at = y.paragraph(i); at.id = 0; (t.to_string(), at, y.blocks()[i]) }).collect::<Vec<_>>();
-            if key(&x) != key(&e) || snap(&x).3 != snap(&e).3 { fails.push(format!("{doc} {a}..{b} {:?}\n   was {}\n   now {}", &e.text[a..b], show(&rows(&e, &[1, 2, 3, 4])), show(&rows(&x, &[1, 2, 3, 4])))); }
+            if key(&x) != key(&e) || snap(&x).3 != snap(&e).3 || x.soft_breaks() != e.soft_breaks() { fails.push(format!("{doc} {a}..{b} {:?}\n   was {}\n   now {}", &e.text[a..b], show(&rows(&e, &[1, 2, 3, 4])), show(&rows(&x, &[1, 2, 3, 4])))); }
         }}
     }
     assert!(fails.is_empty(), "{cases} cases, {} failures, the first:\n{}", fails.len(), fails.iter().take(8).cloned().collect::<Vec<_>>().join("\n"));

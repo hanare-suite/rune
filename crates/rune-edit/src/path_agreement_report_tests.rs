@@ -575,7 +575,7 @@ fn a_merged_line_takes_the_softness_of_the_first_line_and_the_end_of_the_text_th
             e.set_caret(sel.0);
             e.paste_fragment(f, &text[sel.0..]);
             assert_eq!(e.text, text, "{name} paste back");
-            // (Unformatted HTML pastes as its plain text, which has no soft lines.)
+            assert_eq!(e.soft_breaks(), base.soft_breaks(), "{name} paste back");
             if attributed && sel.0 > 0 { assert_eq!(e.paragraph(0).id, 1, "{name} paste back: {:?}", e.paragraph_attrs()); }
         }
         // The softness of an earlier line: deleting a hard paragraph in front of a soft line leaves it hard, and the
