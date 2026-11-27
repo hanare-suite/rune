@@ -764,3 +764,120 @@ fn a_line_with_no_text_is_no_atom() {
     e.set_paragraph_attrs(vec![id(1), id(2).atom(20.0), id(3)]);
     assert_eq!(e.paragraph(1).atom, Some(20.0), "an atom with a label stays");
 }
+
+fn atom_at_start_doc() -> TextEdit {
+    let p = Block::Paragraph;
+    let mut e = TextEdit::from_parts("ab\nTbl\nef", vec![], vec![p, p, p]);
+    e.set_paragraph_attrs(vec![id(1), id(2).atom(20.0), id(3)]);
+    e.set_paragraph_ids(100);
+    e.take_changes();
+    e
+}
+
+/// An empty edit at an atom's start leaves the atom whole while a typing style is armed, reports nothing and records no
+/// undo step, and the armed style stays; an atom inserted there goes on a line of its own, before it.
+#[test]
+fn an_empty_edit_at_an_atoms_start_leaves_it_alone_with_a_style_armed() {
+    let e = atom_at_start_doc();
+    let calls: Vec<(&str, Box<dyn Fn(&mut TextEdit)>)> = vec![
+        ("insert", Box::new(|x| x.insert(""))),
+        ("paste", Box::new(|x| { x.paste(""); })),
+        ("paste_html empty p", Box::new(|x| { x.paste_html("<p></p>", ""); })),
+        ("paste_html img", Box::new(|x| { x.paste_html("<img src=\"x.png\">", ""); })),
+    ];
+    for (name, call) in calls {
+        let mut x = e.clone();
+        x.set_caret(3);
+        x.toggle_mark(Mark::Bold);
+        x.take_changes();
+        let steps = x.history_len();
+        call(&mut x);
+        assert_eq!(atoms_kept(&e, &x, 3, 3), "", "{name}: {}", show(&x));
+        assert_eq!(st(&x), st(&e), "{name}: {}", show(&x));
+        assert!(x.take_changes().is_empty(), "{name}: nothing reported");
+        assert_eq!(x.history_len(), steps, "{name}: no undo step");
+        assert!(x.has_mark(&Mark::Bold), "{name}: the armed style stays");
+    }
+    let mut x = e.clone();
+    x.set_caret(3);
+    x.insert_atom("N", 20.0);
+    assert_eq!(x.text, "ab\nN\nTbl\nef", "{}", show(&x));
+    assert_eq!(atoms_kept(&e, &x, 3, 3), "", "{}", show(&x));
+    assert_eq!((x.paragraph(1).atom, x.paragraph(2).atom, x.paragraph(2).id), (Some(20.0), Some(20.0), 2), "{}", show(&x));
+    let mut y = e.clone();
+    y.set_caret(3);
+    y.toggle_mark(Mark::Bold);
+    y.insert_atom("N", 20.0);
+    assert_eq!(atoms_kept(&e, &y, 3, 3), "", "armed: {}", show(&y));
+    assert_eq!(y.text, "ab\nN\nTbl\nef", "armed: {}", show(&y));
+}
+
+/// A break typed or pasted at the end of a paragraph's first line leaves what remains of the paragraph, behind the break,
+/// its attributes and block: its trailing soft lines are the rest of it.
+#[test]
+fn a_break_at_the_end_of_a_first_line_keeps_the_paragraph_whole() {
+    let (p, u) = (Block::Paragraph, Block::Bullet(0));
+    for attributed in [true, false] {
+        let mut e = TextEdit::from_parts("ab\ncd\nef", vec![], vec![u, u, p]);
+        if attributed { e.set_paragraph_attrs(vec![id(1).align(ParagraphAlign::Center), id(2).align(ParagraphAlign::Center), id(3)]); e.set_paragraph_ids(100); }
+        e.set_soft_breaks(vec![1]);
+        e.take_changes();
+        for how in ["insert", "paste", "return"] {
+            let mut x = e.clone();
+            x.set_caret(2);
+            match how { "insert" => x.insert("\n"), "paste" => { x.paste("\n"); } _ => { x.key(&key(Key::Enter, false), None); } }
+            assert_eq!(x.text, "ab\n\ncd\nef", "{how}");
+            assert_eq!(x.soft_breaks(), &[2], "attributed {attributed} {how}: {}", show(&x));
+            assert_eq!(x.blocks().to_vec(), vec![u, u, u, p], "attributed {attributed} {how}: {}", show(&x));
+            if attributed { assert_eq!((x.paragraph(1).align, x.paragraph(2).align), (ParagraphAlign::Center, ParagraphAlign::Center), "{how}: {}", show(&x)); }
+            assert_eq!(inv(&x), "", "{how}");
+        }
+    }
+}
+
+/// A mark command over code reports nothing: the marks did not change.
+#[test]
+fn a_mark_command_over_code_changes_nothing_and_reports_nothing() {
+    let c = Block::Code;
+    let mut e = TextEdit::from_parts("ab\ncd", vec![], vec![c, c]);
+    e.set_selection(0, 1);
+    e.take_changes();
+    let steps = e.history_len();
+    e.toggle_mark(Mark::Bold);
+    assert!(e.marks().is_empty());
+    assert!(e.take_changes().is_empty(), "nothing reported");
+    assert_eq!(e.history_len(), steps);
+}
+
+/// The atom of an empty line is cleared whichever way round the attributes and the ids come.
+#[test]
+fn an_empty_line_atom_cleared_at_load_gets_an_id_in_either_order() {
+    let p = Block::Paragraph;
+    let attrs = || vec![id(1), id(2).atom(20.0), id(3)];
+    let mut a = TextEdit::from_parts("ab\n\ncd", vec![], vec![p, p, p]);
+    a.set_paragraph_ids(100);
+    a.set_paragraph_attrs(attrs());
+    let mut b = TextEdit::from_parts("ab\n\ncd", vec![], vec![p, p, p]);
+    b.set_paragraph_attrs(attrs());
+    b.set_paragraph_ids(100);
+    for (name, e) in [("ids first", &a), ("attributes first", &b)] {
+        assert_eq!(e.paragraph(1).atom, None, "{name}");
+        let ids: Vec<u64> = (0..3).map(|i| e.paragraph(i).id).collect();
+        assert!(ids.iter().all(|&i| i != 0), "{name}: {ids:?}");
+        let mut u = ids.clone();
+        u.sort();
+        u.dedup();
+        assert_eq!(u.len(), 3, "{name}: {ids:?}");
+    }
+}
+
+/// A whole-document export keeps a trailing empty code line as code: `from_html(to_html())` is the document.
+#[test]
+fn a_document_ending_in_an_empty_code_line_round_trips_through_html() {
+    let (p, c) = (Block::Paragraph, Block::Code);
+    for (text, blocks) in [("ab\nef\n", vec![p, c, c]), ("ab\n", vec![p, c]), ("\n", vec![c, c]), ("ab\n\n", vec![p, c, c])] {
+        let e = TextEdit::from_parts(text, vec![], blocks.clone());
+        let r = TextEdit::from_html(&e.to_html());
+        assert_eq!((r.text.as_str(), r.blocks().to_vec()), (text, blocks), "{text:?}: {}", e.to_html());
+    }
+}
