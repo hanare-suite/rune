@@ -348,7 +348,7 @@ impl RuntimeCore {
             }
             let rest_origin = [origin[0] - off[0], origin[1] - off[1]];
             // Paragraph block backgrounds, quote bars and list markers.
-            if spec.cold.blocks.iter().any(|&b| b != crate::edit::Block::Paragraph) {
+            if spec.cold.blocks.iter().any(|&b| b != crate::edit::Block::Paragraph) || spec.cold.attrs.iter().any(|a| a.atom.is_some()) {
                 emit_block_decorations(
                     &mut self.instances,
                     &mut self.text,

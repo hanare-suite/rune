@@ -27,7 +27,7 @@ pub(crate) fn rebreak_at_y(layout: &mut Layout<Ink>, blocks: &[crate::Block], te
     let indent = indent_px(text_indent, scale);
     layout.set_text_indent(indent, parley::IndentOptions::default());
     if blocks.iter().any(|&b| b != crate::Block::Paragraph) || layout.inline_boxes().next().is_some() {
-        break_lines_with_blocks_at(layout, blocks, indent, font_size, scale, max_width, Vec::new(), y_frac, &[]);
+        break_lines_with_blocks_at(layout, blocks, indent, font_size, scale, max_width, Vec::new(), y_frac, &[], [0.0; 2]);
     } else if y_frac == 0.0 {
         layout.break_all_lines(max_width);
     } else {
@@ -38,15 +38,19 @@ pub(crate) fn rebreak_at_y(layout: &mut Layout<Ink>, blocks: &[crate::Block], te
     layout.align(align, parley::AlignmentOptions::default());
 }
 
-/// [`rebreak`] with room left above some lines: each of `gaps` is a line (counted from the
-/// layout's first) and the device px its top moves down by, the lines after it with it. A paged
-/// field's paragraph that crosses a page's end is broken this way, so its caret, hit tests,
-/// selection boxes and glyphs all land on the page its lines are on.
+/// [`rebreak`] of one paragraph of a document field. `own_indent` is the device px every line
+/// starts in from the left and the first line on top of that, and each of `gaps` is a line
+/// (counted from the layout's first) and the device px its top moves down by, the lines after
+/// it with it. A paged field's paragraph that crosses a page's end is broken this way, so its
+/// caret, hit tests, selection boxes and glyphs all land on the page its lines are on.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn rebreak_gapped(layout: &mut Layout<Ink>, blocks: &[crate::Block], text_indent: f32, font_size: f32, scale: f32, max_width: Option<f32>, align: Alignment, gaps: &[(u32, f32)]) {
+pub(crate) fn rebreak_paragraph(layout: &mut Layout<Ink>, blocks: &[crate::Block], text_indent: f32, font_size: f32, scale: f32, max_width: Option<f32>, align: Alignment, own_indent: [f32; 2], gaps: &[(u32, f32)]) {
+    if gaps.is_empty() && own_indent == [0.0; 2] {
+        return rebreak(layout, blocks, text_indent, font_size, scale, max_width, align);
+    }
     let indent = indent_px(text_indent, scale);
     layout.set_text_indent(indent, parley::IndentOptions::default());
-    break_lines_with_blocks_at(layout, blocks, indent, font_size, scale, max_width, Vec::new(), 0.0, gaps);
+    break_lines_with_blocks_at(layout, blocks, indent, font_size, scale, max_width, Vec::new(), 0.0, gaps, own_indent);
     layout.align(align, parley::AlignmentOptions::default());
 }
 
@@ -73,7 +77,7 @@ pub(crate) fn break_new(layout: &mut Layout<Ink>, text: &str, blocks: &[crate::B
     if let (true, Some(width)) = (pretty, max_width) {
         let caps = super::pretty::caps(layout, text, font_size, scale, width);
         if !caps.is_empty() {
-            break_lines_capped(layout, &[], indent, font_size, scale, max_width, &caps, &mut Vec::new(), 0.0, &[]);
+            break_lines_capped(layout, &[], indent, font_size, scale, max_width, &caps, &mut Vec::new(), 0.0, &[], [0.0; 2]);
         }
     }
 }
@@ -91,7 +95,7 @@ pub(crate) fn break_lines_with_blocks(
     max_width: Option<f32>,
     caps: Vec<((usize, usize), f32)>,
 ) {
-    break_lines_with_blocks_at(layout, blocks, first_indent, font_size, scale, max_width, caps, 0.0, &[]);
+    break_lines_with_blocks_at(layout, blocks, first_indent, font_size, scale, max_width, caps, 0.0, &[], [0.0; 2]);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -105,6 +109,7 @@ fn break_lines_with_blocks_at(
     mut caps: Vec<((usize, usize), f32)>,
     y_frac: f64,
     gaps: &[(u32, f32)],
+    own_indent: [f32; 2],
 ) {
     let pills = layout.inline_boxes().filter(|b| b.id & PILL_BOX != 0).count() / 2;
     let span_boxes = layout.inline_boxes().filter(|b| b.id & SPAN_BOX != 0).count();
@@ -113,7 +118,7 @@ fn break_lines_with_blocks_at(
     // can adjust the first misplaced pill or span-box spacer in every paragraph at once.
     let mut lines_meta = Vec::new();
     for _ in 0..=2 * (pills + span_boxes) {
-        break_lines_capped(layout, blocks, first_indent, font_size, scale, max_width, &caps, &mut lines_meta, y_frac, gaps);
+        break_lines_capped(layout, blocks, first_indent, font_size, scale, max_width, &caps, &mut lines_meta, y_frac, gaps, own_indent);
         if max_width.is_none() || (pills == 0 && span_boxes == 0) || !collect_misplaced_pills(layout, &lines_meta, &mut caps) {
             return;
         }
@@ -135,6 +140,7 @@ fn break_lines_capped(
     out: &mut Vec<((usize, usize), f32)>,
     y_frac: f64,
     gaps: &[(u32, f32)],
+    own_indent: [f32; 2],
 ) {
     out.clear();
     let mut line_no = 0u32;
@@ -147,7 +153,11 @@ fn break_lines_capped(
     let (mut para_idx, mut line_in_para) = (0usize, 0usize);
     while !breaker.is_done() {
         let blk = blocks.get(para_idx).copied().unwrap_or(crate::Block::Paragraph);
-        let [indent, right_pad] = blk.pad_px(font_size, scale);
+        let [block_indent, block_pad] = blk.pad_px(font_size, scale);
+        // A paragraph's own indents add to its block's, its first-line one at its first line.
+        let own = own_indent[0] + if line_in_para == 0 { own_indent[1] } else { 0.0 };
+        let indent = (block_indent + own).max(0.0);
+        let right_pad = if blk == crate::Block::Code { indent } else { block_pad };
         let line_max = max_width
             .map_or(f32::MAX, |w| (w - indent - right_pad).max(1.0))
             .min(layout_max);

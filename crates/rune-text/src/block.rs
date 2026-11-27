@@ -18,13 +18,11 @@ pub enum Block {
     Quote,
     /// Monospace code block line with a background fill; inline marks do not apply.
     Code,
-    /// A paragraph in the field's `n`th [`ParagraphStyle`] (`El::paragraph_styles`), the field's
-    /// own style when it has no such entry.
-    Styled(u16),
 }
 
-/// A paragraph's text style and the room around it, which the app supplies for
-/// [`Block::Styled`]. More fields may come, so build one from [`ParagraphStyle::new`].
+/// A paragraph's text style and the room around it. A field's paragraphs take the entry their
+/// [`ParagraphAttrs::style`] names in `El::paragraph_styles`. More fields may come, so build one
+/// from [`ParagraphStyle::new`].
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[non_exhaustive]
 pub struct ParagraphStyle {
@@ -33,44 +31,164 @@ pub struct ParagraphStyle {
     pub space_before: f32,
     /// Points below it.
     pub space_after: f32,
-    /// Starts the paragraph on a new page of a field with `El::page_flow`.
-    pub page_break_before: bool,
 }
 
 impl std::hash::Hash for ParagraphStyle {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         // `-0.0 + 0.0` is `0.0`, so equal spaces hash alike.
-        (self.text, (self.space_before + 0.0).to_bits(), (self.space_after + 0.0).to_bits(), self.page_break_before).hash(state);
+        (self.text, (self.space_before + 0.0).to_bits(), (self.space_after + 0.0).to_bits()).hash(state);
     }
 }
 
 impl ParagraphStyle {
     pub fn new(text: TextStyle) -> Self {
-        Self { text, space_before: 0.0, space_after: 0.0, page_break_before: false }
+        Self { text, space_before: 0.0, space_after: 0.0 }
     }
 
     pub fn space(mut self, before: f32, after: f32) -> Self {
         (self.space_before, self.space_after) = (before, after);
         self
     }
+}
 
-    pub fn page_break_before(mut self) -> Self {
-        self.page_break_before = true;
+/// Where a paragraph's lines sit between its indents.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum ParagraphAlign {
+    #[default]
+    Left,
+    Center,
+    Right,
+    /// Every line but the last fills the width.
+    Justified,
+}
+
+/// A paragraph's attributes: one per `\n`-delimited line of a field's text, beside its
+/// [`Block`]. More fields may come, so build one from `ParagraphAttrs::default()` and the
+/// methods here. It compares and hashes by its bits.
+#[derive(Clone, Copy, Debug, Default)]
+#[non_exhaustive]
+pub struct ParagraphAttrs {
+    /// Its entry in the field's `El::paragraph_styles`; the field's own style when there is no
+    /// such entry.
+    pub style: u16,
+    pub align: ParagraphAlign,
+    /// Points every line starts in from the left.
+    pub indent: f32,
+    /// Points the first line starts in from the others: negative hangs it out.
+    pub first_line_indent: f32,
+    /// Starts the paragraph on a new page of a field with `El::page_flow`.
+    pub page_break_before: bool,
+    /// A locked atom this many points tall: the paragraph's text is its label, the caret steps
+    /// over it as one character, a selection covers it whole and deleting it is one edit.
+    pub atom: Option<f32>,
+    /// The app's own handle on the paragraph. A split gives the new paragraph the next id of
+    /// `TextEdit::set_paragraph_ids`; 0 without one.
+    pub id: u64,
+}
+
+impl ParagraphAttrs {
+    /// Its left and first-line indents in device px at `scale`, each rounded on its own: what
+    /// layout starts the lines at, and so where a list marker goes.
+    #[doc(hidden)]
+    pub fn indent_px(&self, scale: f32) -> [f32; 2] {
+        [(self.indent * scale).round(), (self.first_line_indent * scale).round()]
+    }
+
+    pub fn style(mut self, style: u16) -> Self {
+        self.style = style;
         self
+    }
+
+    pub fn align(mut self, align: ParagraphAlign) -> Self {
+        self.align = align;
+        self
+    }
+
+    /// The left indent, and the first line's on top of it.
+    pub fn indent(mut self, left: f32, first_line: f32) -> Self {
+        (self.indent, self.first_line_indent) = (left, first_line);
+        self
+    }
+
+    pub fn page_break_before(mut self, on: bool) -> Self {
+        self.page_break_before = on;
+        self
+    }
+
+    /// A locked atom `height` points tall.
+    pub fn atom(mut self, height: f32) -> Self {
+        self.atom = Some(height);
+        self
+    }
+
+    pub fn id(mut self, id: u64) -> Self {
+        self.id = id;
+        self
+    }
+
+    fn bits(&self) -> (u16, ParagraphAlign, u32, u32, bool, Option<u32>, u64) {
+        (self.style, self.align, self.indent.to_bits(), self.first_line_indent.to_bits(), self.page_break_before, self.atom.map(f32::to_bits), self.id)
+    }
+
+    /// What the paragraph's own layout depends on: not its page break or id, which only place
+    /// it or name it.
+    #[doc(hidden)]
+    pub fn layout_bits(&self) -> (u16, ParagraphAlign, u32, u32, bool) {
+        (self.style, self.align, self.indent.to_bits(), self.first_line_indent.to_bits(), self.atom.is_some())
+    }
+
+    /// What the field's layout depends on: everything but the id.
+    #[doc(hidden)]
+    pub fn flow_bits(&self) -> impl std::hash::Hash {
+        (self.layout_bits(), self.page_break_before, self.atom.map(f32::to_bits))
+    }
+
+    /// Finite numbers only, an atom at least a point tall.
+    #[doc(hidden)]
+    pub fn clean(mut self) -> Self {
+        let finite = |v: f32| if v.is_finite() { v } else { 0.0 };
+        self.indent = finite(self.indent).max(0.0);
+        self.first_line_indent = finite(self.first_line_indent);
+        self.atom = self.atom.map(|h| finite(h).max(1.0));
+        self
+    }
+}
+
+impl PartialEq for ParagraphAttrs {
+    fn eq(&self, other: &Self) -> bool {
+        self.bits() == other.bits()
+    }
+}
+
+impl Eq for ParagraphAttrs {}
+
+impl std::hash::Hash for ParagraphAttrs {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        self.bits().hash(h);
     }
 }
 
 /// Lays a field's lines into pages `height` points tall with `gap` points between them
 /// (`El::page_flow`).
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct PageFlow {
     pub height: f32,
     pub gap: f32,
+    /// Keeps a paragraph's first two lines together and its last two (widow and orphan
+    /// control), moving a line to the next page rather than leaving one alone. On by default.
+    pub keep_lines: bool,
 }
 
 impl PageFlow {
     pub fn new(height: f32, gap: f32) -> Self {
-        Self { height, gap }
+        Self { height, gap, keep_lines: true }
+    }
+
+    /// Sets [`Self::keep_lines`].
+    pub fn keep_lines(mut self, on: bool) -> Self {
+        self.keep_lines = on;
+        self
     }
 
     /// How many pages a field `field_height` points tall holds: its height is always whole
@@ -106,21 +224,19 @@ impl Block {
         }
     }
 
-    /// Whether `self` and `other` share the same block kind (ignoring list nesting level). Two
-    /// [`Block::Styled`] share one only when they name the same style.
+    /// Whether `self` and `other` share the same block kind (ignoring list nesting level).
     pub fn same_kind(self, other: Block) -> bool {
-        match (self, other) {
-            (Block::Styled(a), Block::Styled(b)) => a == b,
+        matches!(
+            (self, other),
             (Block::Paragraph, Block::Paragraph)
-            | (Block::Bullet(_), Block::Bullet(_))
-            | (Block::Numbered(_), Block::Numbered(_))
-            | (Block::Quote, Block::Quote)
-            | (Block::Code, Block::Code) => true,
-            _ => false,
-        }
+                | (Block::Bullet(_), Block::Bullet(_))
+                | (Block::Numbered(_), Block::Numbered(_))
+                | (Block::Quote, Block::Quote)
+                | (Block::Code, Block::Code)
+        )
     }
 
-    /// This block's kind as one bit, for `TextEdit::allow_blocks`: every [`Block::Styled`] is one.
+    /// This block's kind as one bit, for `TextEdit::allow_blocks`.
     #[doc(hidden)]
     pub fn kind_bit(self) -> u8 {
         1 << match self {
@@ -129,7 +245,6 @@ impl Block {
             Block::Numbered(_) => 2,
             Block::Quote => 3,
             Block::Code => 4,
-            Block::Styled(_) => 5,
         }
     }
 
@@ -138,7 +253,7 @@ impl Block {
     pub fn indent_pt(self, font_size: f32) -> f32 {
         let unit = (font_size * 1.45).round().max(18.0);
         match self {
-            Block::Paragraph | Block::Styled(_) => 0.0,
+            Block::Paragraph => 0.0,
             Block::Bullet(l) | Block::Numbered(l) => unit * (l.min(MAX_LIST_LEVEL) as f32 + 1.0),
             Block::Quote => (font_size * 1.1).round().max(14.0),
             Block::Code => (font_size * 0.75).round().max(10.0),

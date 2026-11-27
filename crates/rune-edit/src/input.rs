@@ -15,6 +15,7 @@ impl TextEdit {
         let (a, b) = self.range();
         let inserted_marks = self.typing.take_at((self.anchor, self.focus)).unwrap_or_else(|| self.inherited_marks_at(a));
         self.apply_text_and_attr_replace((a, b), "\n", &inserted_marks, Some(block_for_new_line), soft);
+        self.note_kind(EditKind::LineBreak);
         self.record_change(before, EditKind::LineBreak);
     }
 
@@ -177,11 +178,11 @@ impl TextEdit {
                                     self.insert_newline(Block::Quote, false);
                                 }
                             }
+                            // A paragraph of a document breaks; a composer's submits.
+                            Block::Paragraph if self.attributed() => self.insert_newline(blk, false),
                             Block::Paragraph => {
                                 out.submit = true;
                             }
-                            // The new paragraph keeps the style; the app sets the one that follows.
-                            Block::Styled(_) => self.insert_newline(blk, false),
                         }
                     }
                 }
@@ -210,7 +211,7 @@ impl TextEdit {
                     let line_range = self.line_range(line_idx);
                     let blk = self.blocks.get(line_idx).copied().unwrap_or(Block::Paragraph);
                     let is_soft = self.soft_breaks.binary_search(&(line_idx as u32)).is_ok();
-                    if !line && !word && a == line_range.start && !is_soft && !matches!(blk, Block::Paragraph | Block::Styled(_)) {
+                    if !line && !word && a == line_range.start && !is_soft && blk != Block::Paragraph {
                         match blk {
                             Block::Bullet(lvl) | Block::Numbered(lvl) => {
                                 if lvl > 0 {
@@ -227,8 +228,10 @@ impl TextEdit {
                                     self.replace((from, a), "", EditKind::Delete);
                                 }
                             }
-                            Block::Paragraph | Block::Styled(_) => unreachable!(),
+                            Block::Paragraph => unreachable!(),
                         }
+                    } else if let Some(atom) = self.atom_beside(a, false) {
+                        self.select_atom(atom);
                     } else if a > 0 {
                         let from = if line {
                             if self.is_masked() { 0 } else { self.text[..a].rfind('\n').map_or(0, |i| i + 1) }
@@ -246,6 +249,8 @@ impl TextEdit {
                 let (a, b) = self.range();
                 if a != b || (self.is_hidden_multiline() && self.is_pristine()) {
                     self.replace(self.range(), "", EditKind::Delete);
+                } else if let Some(atom) = self.atom_beside(a, true) {
+                    self.select_atom(atom);
                 } else if a < self.text.len() {
                     let to = if word { self.next_word(a) } else { next_char(&self.text, a) };
                     self.replace((a, to), "", if word { EditKind::DeleteRun } else { EditKind::Delete });
@@ -525,6 +530,7 @@ impl TextEdit {
             }
             self.typing = Typing::Inherited;
             self.normalize_marks();
+            if !frag.marks.is_empty() { self.note_marks(a..a + clean.len()); }
             self.record_change(before, EditKind::Other);
             return EditOutcome::default();
         }
@@ -533,13 +539,19 @@ impl TextEdit {
         if a < b {
             self.apply_text_and_attr_replace((a, b), "", &[], None, false);
         }
-        let ins_at = a;
-        let line_idx = self.line_of_byte(ins_at);
-        let line_range = self.line_range(line_idx);
+        // Where the caret landed: deleting an atom takes its line break too, which can be the
+        // one before it.
+        let at = self.range().0;
+        // Beside an atom the text goes on lines of its own, behind a line break (`lead`) or
+        // before one. Its marks and blocks go where its own first byte and line do.
+        let fenced = self.fence(at, at, &frag.text);
+        let (ins_at, line_idx) = (at + fenced.lead, self.line_of_byte(at) + fenced.lead);
+        let own_line = fenced.text.is_some();
+        let line_range = if own_line { ins_at..ins_at } else { self.line_range(line_idx) };
         let line_was_empty = line_range.is_empty();
-        let orig_block = self.blocks.get(line_idx).copied().unwrap_or(Block::Paragraph);
+        let orig_block = if own_line { Block::Paragraph } else { self.blocks.get(line_idx).copied().unwrap_or(Block::Paragraph) };
 
-        self.apply_text_and_attr_replace((ins_at, ins_at), &frag.text, &[], None, false);
+        self.apply_fenced((at, at), fenced.text.as_deref().unwrap_or(&frag.text), &[], None, false, fenced.back);
 
         // Apply `frag.blocks` and `frag.soft_breaks`.
         let frag_lines = frag.blocks.len();
@@ -578,6 +590,12 @@ impl TextEdit {
         }
         self.typing = Typing::Inherited;
         self.sync_invariants();
+        // The pasted text's marks and blocks, as one change over it.
+        let end = (ins_at + frag.text.len()).min(self.text.len());
+        if !frag.marks.is_empty() { self.note_marks(ins_at..end); }
+        if frag_lines > 1 || frag.blocks.first().is_some_and(|&b| b != Block::Paragraph) {
+            self.note_paragraphs(line_idx..line_idx + frag_lines.max(1));
+        }
         self.record_change(before, EditKind::Other);
         EditOutcome::default()
     }

@@ -71,8 +71,9 @@ impl RuntimeCore {
             | crate::edit::Key::Media(_) => false,
             crate::edit::Key::Command(_) => match ev.edit_command() {
                 Some('a') => true,
-                Some('z') => !read_only,
-                Some('y') => !read_only && !cfg!(target_os = "macos"),
+                // A field whose history is off leaves undo and redo to the app's own.
+                Some('z') => !read_only && self.focused_input().is_none_or(|i| i.edit.records_history()),
+                Some('y') => !read_only && !cfg!(target_os = "macos") && self.focused_input().is_none_or(|i| i.edit.records_history()),
                 Some('b' | 'i' | 'u') => !read_only && self.focused_input().is_some_and(|i| i.edit.format_chord(ev).is_some()),
                 _ => false,
             },
@@ -346,11 +347,12 @@ impl RuntimeCore {
     ) -> bool {
         if self.focused_input_disabled() { return false; }
         let Some(path) = self.kbd.focus.owned() else { return false };
-        let Some((access, submit, change, selection_change, animate_layout, single_line, secure, revealed_override, line_home_end_override)) =
+        let Some((access, submit, change, edits, selection_change, animate_layout, single_line, secure, revealed_override, line_home_end_override)) =
             self.focused_input().map(|i| (
                 i.access.clone(),
                 i.submit.clone(),
                 i.change.clone(),
+                i.edits.clone(),
                 i.selection_change.clone(),
                 i.animate_layout,
                 i.single_line,
@@ -381,6 +383,10 @@ impl RuntimeCore {
         // Typing is the user's own hand: no animation.
         tx.commit = tx.commit.snap(!animate_layout);
         self.edit.caret_follow = true;
+        if let Some(edits) = edits {
+            let changes = access(app.states()).take_changes();
+            if !changes.is_empty() { edits(app.states(), &changes, tx); }
+        }
         if let Some(change) = change
             && before.as_ref().map(|s| s.as_str()) != Some(access(app.states()).text.as_str())
         {

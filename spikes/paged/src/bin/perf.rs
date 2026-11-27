@@ -1,7 +1,7 @@
 //! The F0 numbers for the paged field, headless: no window, the same runtime and renderer.
 //!
 //! cargo build --profile perf -p paged-spike --features profile --bin paged-perf
-//! target/perf/paged-perf [--samples 240] [--words 25000] [--gpu] [--only open,type,enter,scroll,undo]
+//! target/perf/paged-perf [--samples 240] [--words 25000] [--page 25] [--gpu] [--only open,type,enter,centre,scroll,undo,pages]
 //!
 //! - `open`: from the document model to the first frame laid out and painted, each time on a
 //!   new runtime with a new text system (nothing shaped yet). The first run also loads fonts.
@@ -9,9 +9,15 @@
 //!   commits, with the document's history step. `enter` and `backspace` are Return there and
 //!   the Backspace that takes it back: every paragraph below moves, so every page below
 //!   breaks again.
+//! - `centre`: F1 and F4 (centre and left) on the paragraph in the middle of page 25, formatting
+//!   alone: the text and its marks stay as they were, and the paragraphs keyed again are the one
+//!   changed.
 //! - `scroll`: each frame of a wheel scroll from the top to the bottom in 120 point steps.
 //! - `undo`: heap and footprint before and after 200 typed characters, each its own step in
 //!   the document's history, then 200 undos back to the text it started from.
+//!
+//! - `pages`: Return typed until the document gains a page, and what the view showed in the
+//!   one frame that followed: the page count it read and the sheets it drew.
 //!
 //! Prints `METRIC case=.. metric=.. p50=.. p95=.. max=.. n=..`. `wall_ms` is the input and its
 //! frame on the wall clock, `cpu_ms` the same in thread CPU; the phases overlap (commit holds
@@ -45,11 +51,12 @@ impl Draw {
     }
 }
 
-const METRICS: &[&str] = &["wall_ms", "cpu_ms", "view_ms", "commit_ms", "layout_ms", "text_ms", "paint_ms", "shaped", "glyphs", "encode_ms"];
+const METRICS: &[&str] = &["wall_ms", "cpu_ms", "view_ms", "commit_ms", "layout_ms", "text_ms", "paint_ms", "shaped", "keyed", "glyphs", "encode_ms"];
 
 /// Times `input` and the one frame that follows it.
 fn timed(rt: &mut Runtime<State>, d: &mut Option<Draw>, input: impl FnOnce(&mut Runtime<State>)) -> Vec<f64> {
     rune::take_frame_phases();
+    let keyed = rt.text.keyed;
     let (t, cpu0) = (Instant::now(), rune::thread_cpu_ms());
     input(rt);
     rt.frame(1.0 / 120.0);
@@ -57,7 +64,7 @@ fn timed(rt: &mut Runtime<State>, d: &mut Option<Draw>, input: impl FnOnce(&mut 
     let p = rune::take_frame_phases();
     let encode = d.as_mut().map_or(0.0, |d| d.draw(rt));
     let q = rune::PHASES;
-    vec![wall, cpu, p[q], p[q + 1], p[q + 2], p[q + 3], p[q + 4], rt.stats.shaped as f64, rt.stats.glyphs as f64, encode]
+    vec![wall, cpu, p[q], p[q + 1], p[q + 2], p[q + 3], p[q + 4], rt.stats.shaped as f64, (rt.text.keyed - keyed) as f64, rt.stats.glyphs as f64, encode]
 }
 
 fn settle(rt: &mut Runtime<State>, d: &mut Option<Draw>) {
@@ -90,6 +97,7 @@ fn runtime(words: usize, caret: usize, fonts: TextSystem) -> Runtime<State> {
     state.edit.focused = true;
     state.edit.set_caret(caret.min(state.edit.text.len()));
     let mut rt = Runtime::with_text(state, view, WINDOW, Env::new(false, 2.0), fonts);
+    rt.on_key = Some(paged_spike::app_key);
     rt.frame(0.0);
     rt
 }
@@ -142,6 +150,7 @@ fn main() {
     let value = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned();
     let samples: usize = value("--samples").map_or(240, |s| s.parse().expect("--samples N"));
     let words: usize = value("--words").map_or(25_000, |s| s.parse().expect("--words N"));
+    let page: usize = value("--page").map_or(25, |s| s.parse().expect("--page N"));
     let only = value("--only");
     let run = |case: &str| only.as_deref().is_none_or(|o| o.split(',').any(|o| o == case));
     assert!(!cfg!(debug_assertions), "paged-perf: time a --profile perf build");
@@ -178,7 +187,7 @@ fn main() {
     if run("type") || run("enter") {
         let mut rt = runtime(words, 0, warm_fonts());
         settle(&mut rt, &mut d);
-        let at = byte_on_page(&mut rt, &mut d, 25);
+        let at = byte_on_page(&mut rt, &mut d, page);
         rt.update(|s, _| s.edit.set_caret(at));
         for _ in 0..3 { rt.ime(Ime::Commit("w".into())); rt.frame(1.0 / 120.0); }
         settle(&mut rt, &mut d);
@@ -190,7 +199,7 @@ fn main() {
                 timed(&mut rt, &mut d, |rt| rt.ime(Ime::Commit(ch.into())))
             }).collect();
             assert_eq!(rt.state.history.len() - steps, samples, "type: one history step per character");
-            assert_eq!(caret_page(&rt), 25, "type: the caret stayed on page 25");
+            assert_eq!(caret_page(&rt), page, "type: the caret stayed on its page");
             report("type", &rows);
         }
         if run("enter") {
@@ -206,6 +215,23 @@ fn main() {
         }
     }
 
+    if run("centre") {
+        let mut rt = runtime(words, 0, warm_fonts());
+        settle(&mut rt, &mut d);
+        let at = byte_on_page(&mut rt, &mut d, page);
+        rt.update(|s, _| s.edit.set_caret(at));
+        settle(&mut rt, &mut d);
+        let rows: Vec<_> = (0..samples).map(|i| {
+            let line = rt.state.edit.text[..at].matches('\n').count();
+            let before = rt.state.edit.paragraph_attrs()[line].align;
+            let row = timed(&mut rt, &mut d, |rt| rt.key(KeyEvent { key: Key::Function(if i % 2 == 0 { 1 } else { 4 }), mods: Mods::default() }));
+            assert_ne!(rt.state.edit.paragraph_attrs()[line].align, before, "centre: the paragraph's alignment changed");
+            row
+        }).collect();
+        println!("CENTRE byte={at} page={} of={}", caret_page(&rt), pages(&rt));
+        report("centre", &rows);
+    }
+
     if run("scroll") {
         let mut rt = runtime(words, 0, warm_fonts());
         settle(&mut rt, &mut d);
@@ -219,10 +245,36 @@ fn main() {
         report("scroll", &rows);
     }
 
+    if run("pages") {
+        let mut rt = runtime(words, 0, warm_fonts());
+        settle(&mut rt, &mut d);
+        let end = rt.state.edit.text.len();
+        rt.update(|s, _| s.edit.set_caret(end));
+        settle(&mut rt, &mut d);
+        let shown = |rt: &Runtime<State>| {
+            let status = find(rt, "status").text.unwrap_or_default();
+            let sheets = rt.elements().iter().filter(|e| e.key.as_deref().is_some_and(|k| k.starts_with("page") && k != "paper")).count();
+            (status.split(' ').next().and_then(|n| n.parse::<usize>().ok()).unwrap_or(0), sheets)
+        };
+        let before = (pages(&rt), shown(&rt));
+        // Return at the document's end until its last line moves onto a new page: the frame
+        // that lays the new page out must already show it.
+        let (mut presses, mut after) = (0, before);
+        while after.0 == before.0 && presses < 200 {
+            press(&mut rt, Key::Enter, false);
+            rt.frame(1.0 / 120.0);
+            presses += 1;
+            after = (pages(&rt), shown(&rt));
+        }
+        println!("PAGES before_field={} before_status={} before_sheets={} returns={presses} after_field={} same_frame_status={} same_frame_sheets={}",
+            before.0, before.1.0, before.1.1, after.0, after.1.0, after.1.1);
+        assert_eq!((after.0, after.1.0, after.1.1), (before.0 + 1, before.0 + 1, before.0 + 1), "pages: the count and the sheets follow in the same frame");
+    }
+
     if run("undo") {
         let mut rt = runtime(words, 0, warm_fonts());
         settle(&mut rt, &mut d);
-        let at = byte_on_page(&mut rt, &mut d, 25);
+        let at = byte_on_page(&mut rt, &mut d, page);
         rt.update(|s, _| s.edit.set_caret(at));
         settle(&mut rt, &mut d);
         let original = rt.state.edit.text.clone();

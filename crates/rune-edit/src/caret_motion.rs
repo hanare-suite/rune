@@ -141,7 +141,8 @@ pub fn next_word_in(s: &str, i: usize, pills: &[(usize, usize)]) -> usize {
 
 impl TextEdit {
     fn pill_ranges(&self) -> Vec<(usize, usize)> {
-        self.marks.iter().filter(|m| m.mark.is_pill()).map(|m| (m.start, m.end)).collect()
+        // A locked atom is one word to the caret, as a pill is.
+        self.marks.iter().filter(|m| m.mark.is_pill()).map(|m| (m.start, m.end)).chain(self.atom_ranges()).collect()
     }
 
     pub(super) fn prev_word(&self, i: usize) -> usize {

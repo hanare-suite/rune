@@ -1,0 +1,41 @@
+{
+ "events": [
+  {
+   "t": 0.2,
+   "type": "key",
+   "name": "Right"
+  },
+  {
+   "t": 0.45,
+   "type": "key",
+   "name": "Left"
+  },
+  {
+   "t": 0.7,
+   "type": "key",
+   "name": "Right",
+   "shift": true
+  },
+  {
+   "t": 0.95,
+   "type": "key",
+   "name": "Right",
+   "shift": true
+  },
+  {
+   "t": 1.2,
+   "type": "mark",
+   "name": "selected"
+  },
+  {
+   "t": 1.45,
+   "type": "type",
+   "text": "x"
+  },
+  {
+   "t": 1.7,
+   "type": "mark",
+   "name": "typed"
+  }
+ ]
+}

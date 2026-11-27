@@ -59,6 +59,20 @@ pub(in crate::runtime) fn emit_block_decorations(
         }
     };
 
+    // A locked atom's box: as tall as the app made it, around its label's lines.
+    let mut atom_run: Option<(f32, f32)> = None;
+    let flush_atom = |instances: &mut Vec<Instance>, run: &mut Option<(f32, f32)>, height: f32| {
+        let Some((top, bot)) = run.take() else { return };
+        let (fill, border) = spec.cold.atom_colors.unwrap_or_else(crate::edit::atom_colors);
+        let (h, edge) = (height * s * tk, (s * tk).round().max(1.0));
+        let (x, y) = (x0 + glide[0], ((top + bot - h) / 2.0).round() + glide[1]);
+        instances.push(rect_inst([x, y, box_w, h], premul(fill, o, srgb), 0.0, clip, fade));
+        let border = premul(border, o, srgb);
+        for r in [[x, y, box_w, edge], [x, y + h - edge, box_w, edge], [x, y + edge, edge, h - 2.0 * edge], [x + box_w - edge, y + edge, edge, h - 2.0 * edge]] {
+            instances.push(rect_inst(r, border, 0.0, clip, fade));
+        }
+    };
+
     let mut had_lines = false;
     for line in layout.block_lines(spec.style.line_px() * s) {
         had_lines = true;
@@ -84,6 +98,13 @@ pub(in crate::runtime) fn emit_block_decorations(
             flush_code(instances, &mut code_run);
             flush_quote(instances, &mut quote_run);
         }
+        if let Some(height) = spec.cold.attrs.get(para_idx).and_then(|a| a.atom) {
+            match &mut atom_run {
+                Some((_, b)) => *b = bot,
+                None => atom_run = Some((top, bot)),
+            }
+            if line.last { flush_atom(instances, &mut atom_run, height); }
+        }
 
         if first_line_of_para {
             match blk {
@@ -94,7 +115,7 @@ pub(in crate::runtime) fn emit_block_decorations(
                     }
                     list_counts[l] = 0;
                     if !is_soft {
-                        let indent = (blk.indent_pt(spec.style.size) * s).round();
+                        let indent = marker_x((blk.indent_pt(para_size(spec, para_idx)) * s).round(), spec.cold.attrs.get(para_idx), s);
                         markers.push((indent, baseline, blk, 0));
                     }
                 }
@@ -105,11 +126,11 @@ pub(in crate::runtime) fn emit_block_decorations(
                     }
                     if !is_soft {
                         list_counts[l] += 1;
-                        let indent = (blk.indent_pt(spec.style.size) * s).round();
+                        let indent = marker_x((blk.indent_pt(para_size(spec, para_idx)) * s).round(), spec.cold.attrs.get(para_idx), s);
                         markers.push((indent, baseline, blk, list_counts[l]));
                     }
                 }
-                Block::Paragraph | Block::Quote | Block::Code | Block::Styled(_) => {
+                Block::Paragraph | Block::Quote | Block::Code => {
                     if !is_soft {
                         list_counts = [0; (MAX_LIST_LEVEL as usize) + 1];
                     }
@@ -142,7 +163,7 @@ pub(in crate::runtime) fn emit_block_decorations(
                 let indent = (blk.indent_pt(spec.style.size) * s).round();
                 markers.push((indent, baseline, blk, 1));
             }
-            Block::Paragraph | Block::Styled(_) => {}
+            Block::Paragraph => {}
         }
     }
 
@@ -410,3 +431,20 @@ pub(in crate::runtime) fn push_spelling_marker(out: &mut Vec<Instance>, x0: f32,
         rect_inst([start + n as f32, (y + wave * k).round(), 1.0, t], color, 0.0, clip, fade)
     }));
 }
+
+/// The font size paragraph `k` is laid out in: its paragraph style's, or the field's.
+fn para_size(spec: &TextSpec, k: usize) -> f32 {
+    // A paragraph with no attributes of its own has the first style, as layout reads them.
+    let style = spec.cold.paragraph_styles.as_ref().and_then(|s| s.get(spec.cold.attrs.get(k).map_or(0, |a| a.style) as usize));
+    style.map_or(spec.style.size, |o| o.text.size)
+}
+
+/// Where a list marker's line starts, in device px: its block's indent and what its paragraph's
+/// own indents add at the first line, as layout rounds and clamps them.
+fn marker_x(block: f32, attrs: Option<&crate::ParagraphAttrs>, scale: f32) -> f32 {
+    (block + attrs.map_or(0.0, |a| a.indent_px(scale).iter().sum::<f32>())).max(0.0)
+}
+
+#[cfg(test)]
+#[path = "helpers_tests.rs"]
+mod tests;

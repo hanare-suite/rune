@@ -125,6 +125,9 @@ impl TextEdit {
                 // The chip and its colours come from `display_pills`.
                 Mark::Pill(_) => {}
                 Mark::Size(size) => spans.push(Span { start: r_start, end: r_end, size: Some(size.get()), ..Span::default() }),
+                Mark::Family(name) => spans.push(Span { start: r_start, end: r_end, family: Some(name.clone()), ..Span::default() }),
+                Mark::Highlight(c) => spans.push(Span { start: r_start, end: r_end, bg: Some(c.get()), bg_flat: true, ..Span::default() }),
+                Mark::Baseline(b) => spans.push(Span { start: r_start, end: r_end, baseline: Some(*b), ..Span::default() }),
             }
         };
 
@@ -241,6 +244,28 @@ impl TextEdit {
             out.drain(line_a + 1..=line_b);
         }
         out.resize(line_count, out.get(line_a).copied().unwrap_or(Block::Paragraph));
+        out
+    }
+
+    /// Each line of `self.display().0` with its paragraph's attributes, as [`Self::display_blocks`]
+    /// gives its block; empty when no paragraph carries any.
+    #[doc(hidden)]
+    pub fn display_attrs(&self) -> Vec<ParagraphAttrs> {
+        if self.attrs.is_empty() || self.secure {
+            return Vec::new();
+        }
+        let mut out = self.attrs.clone();
+        if let Some((p, _)) = self.preedit() {
+            let (a, b) = self.range();
+            let (line_a, line_b) = (self.line_of_byte(a), self.line_of_byte(b));
+            if line_b > line_a && line_b < out.len() {
+                out.drain(line_a + 1..=line_b);
+            }
+            let added = count_newlines(p.as_bytes());
+            let at = (line_a + 1).min(out.len());
+            let own = out.get(line_a).copied().unwrap_or_default();
+            out.splice(at..at, std::iter::repeat_n(own, added));
+        }
         out
     }
 

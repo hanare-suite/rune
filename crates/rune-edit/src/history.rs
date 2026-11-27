@@ -18,6 +18,7 @@ pub(super) struct Snapshot {
     marks: Vec<MarkRange>,
     blocks: Vec<Block>,
     soft_breaks: Vec<u32>,
+    attrs: Vec<ParagraphAttrs>,
 }
 
 
@@ -90,15 +91,22 @@ pub(super) struct Meta {
     marks: Vec<MarkRange>,
     blocks: Vec<Block>,
     soft_breaks: Vec<u32>,
+    attrs: Vec<ParagraphAttrs>,
 }
 
 impl Meta {
     fn of(s: &Snapshot) -> Meta {
-        Meta { anchor: s.anchor, focus: s.focus, marks: s.marks.clone(), blocks: s.blocks.clone(), soft_breaks: s.soft_breaks.clone() }
+        Meta { anchor: s.anchor, focus: s.focus, marks: s.marks.clone(), blocks: s.blocks.clone(), soft_breaks: s.soft_breaks.clone(), attrs: s.attrs.clone() }
     }
 
     fn bytes(&self) -> usize {
         self.marks.len() * std::mem::size_of::<MarkRange>() + self.blocks.len() * std::mem::size_of::<Block>() + self.soft_breaks.len() * std::mem::size_of::<u32>()
+            + self.attrs.len() * std::mem::size_of::<ParagraphAttrs>()
+    }
+
+    /// Whether the two hold the same marks, blocks, soft breaks and attributes.
+    fn same_format(&self, other: &Meta) -> bool {
+        self.marks == other.marks && self.blocks == other.blocks && self.soft_breaks == other.soft_breaks && self.attrs == other.attrs
     }
 }
 
@@ -303,13 +311,13 @@ impl TextEdit {
 
     /// An undo group opened on the document as it is now.
     pub(super) fn group_from_here(&self) -> Group {
-        if self.secure { Group::Unrecorded } else { Group::Open(self.snapshot_now()) }
+        if self.secure || self.history_off { Group::Unrecorded } else { Group::Open(self.snapshot_now()) }
     }
 
-    /// Edits record undo steps: not on a secure field, and not inside an undo group, whose
-    /// edits become one step when it closes.
+    /// Edits record undo steps: not on a secure field, not with the history turned off, and
+    /// not inside an undo group, whose edits become one step when it closes.
     fn recording(&self) -> bool {
-        !self.secure && !self.group.is_open()
+        !self.secure && !self.history_off && !self.group.is_open()
     }
 
     /// End a typing group on a pointer selection or focus change.
@@ -325,6 +333,7 @@ impl TextEdit {
             marks: self.marks.clone(),
             blocks: self.blocks.clone(),
             soft_breaks: self.soft_breaks.clone(),
+            attrs: self.attrs.clone(),
         }
     }
 
@@ -334,12 +343,17 @@ impl TextEdit {
 
     /// Text bytes `at..at + len` become `with`, and the rest of the document `meta`.
     fn restore(&mut self, (at, len, with): (usize, usize, &str), meta: &Meta) {
+        let was = self.meta_now();
         self.text.replace_range(at..at + len, with);
+        if len + with.len() > 0 { self.note_text(at..at + len, with.len()); }
+        if was.marks != meta.marks { self.note_marks(0..self.text.len()); }
+        if was.blocks != meta.blocks || was.attrs != meta.attrs { self.note_paragraphs(0..1 + count_newlines(self.text.as_bytes())); }
         self.anchor = meta.anchor;
         self.focus = meta.focus;
         self.marks = meta.marks.clone();
         self.blocks = meta.blocks.clone();
         self.soft_breaks = meta.soft_breaks.clone();
+        self.attrs = meta.attrs.clone();
         self.typing = Typing::Inherited;
         self.cancel_composition();
         self.sync_invariants();
@@ -352,7 +366,7 @@ impl TextEdit {
         // What the edit left, read in place: copying a long document to compare it costs more
         // than the edit.
         let after = self.meta_now();
-        if before.text.as_str() == self.text && before.marks == after.marks && before.blocks == after.blocks && before.soft_breaks == after.soft_breaks {
+        if before.text.as_str() == self.text && Meta::of(&before).same_format(&after) {
             return;
         }
         let change = Change::to_text(&before, &self.text, after);
@@ -379,7 +393,7 @@ impl TextEdit {
             return;
         };
         let after = self.meta_now();
-        if r.removed.as_str() == inserted && r.meta.marks == after.marks && r.meta.blocks == after.blocks && r.meta.soft_breaks == after.soft_breaks {
+        if r.removed.as_str() == inserted && r.meta.same_format(&after) {
             return;
         }
         // The bytes the replacement really changed, as a diff of the two documents finds them.
@@ -413,7 +427,7 @@ impl TextEdit {
     }
 
     fn meta_now(&self) -> Meta {
-        Meta { anchor: self.anchor, focus: self.focus, marks: self.marks.clone(), blocks: self.blocks.clone(), soft_breaks: self.soft_breaks.clone() }
+        Meta { anchor: self.anchor, focus: self.focus, marks: self.marks.clone(), blocks: self.blocks.clone(), soft_breaks: self.soft_breaks.clone(), attrs: self.attrs.clone() }
     }
 
     /// What the history says of the document `text` an edit starts from, before it records.
@@ -561,7 +575,7 @@ impl TextEdit {
         }
         self.sync_invariants();
         let now = self.snapshot_now();
-        let same = |m: &Meta| *doc == now.text.as_str() && m.marks == now.marks && m.blocks == now.blocks && m.soft_breaks == now.soft_breaks;
+        let same = |m: &Meta| *doc == now.text.as_str() && m.same_format(&Meta::of(&now));
         let leads_here = undo.last().map(|c| &c.after).or_else(|| redo.last().map(|c| &c.before)).is_some_and(same);
         if !leads_here {
             let Some(last) = undo.last().map(|c| c.after.clone()) else { return false };
@@ -569,7 +583,7 @@ impl TextEdit {
                 return false;
             }
             redo.clear();
-            let stored = Snapshot { text: Arc::new(Wiped(doc.to_string())), anchor: last.anchor, focus: last.focus, marks: last.marks, blocks: last.blocks, soft_breaks: last.soft_breaks };
+            let stored = Snapshot { text: Arc::new(Wiped(doc.to_string())), anchor: last.anchor, focus: last.focus, marks: last.marks, blocks: last.blocks, soft_breaks: last.soft_breaks, attrs: last.attrs };
             undo.push(Change::between(&stored, &now));
         }
         let mut h = History { undo: undo.into(), redo, bytes: 0, run: Run::Closed };
@@ -630,6 +644,7 @@ fn meta_holds(m: &Meta, text: &str) -> bool {
     at(m.anchor) && at(m.focus)
         && m.marks.iter().all(|r| at(r.start) && at(r.end) && r.start < r.end)
         && (m.blocks.is_empty() || m.blocks.len() == lines)
+        && (m.attrs.is_empty() || m.attrs.len() == lines)
         && m.soft_breaks.iter().all(|&n| n > 0 && (n as usize) < lines)
 }
 
@@ -664,6 +679,9 @@ fn meta_json(m: &Meta) -> serde_json::Value {
                 Mark::Pill(id) => serde_json::json!(["p", id]),
                 Mark::Color(hex) => serde_json::json!(["fg", hex]),
                 Mark::Size(size) => serde_json::json!(["z", size.get().to_string()]),
+                Mark::Family(name) => serde_json::json!(["f", &**name]),
+                Mark::Highlight(c) => serde_json::json!(["h", c.get().hex()]),
+                Mark::Baseline(b) => serde_json::json!(["v", if *b == Baseline::Sub { "sub" } else { "super" }]),
             };
             serde_json::json!([m.start, m.end, kind])
         })
@@ -677,10 +695,13 @@ fn meta_json(m: &Meta) -> serde_json::Value {
             Block::Code => serde_json::json!("c"),
             Block::Bullet(l) => serde_json::json!(["b", l]),
             Block::Numbered(l) => serde_json::json!(["n", l]),
-            Block::Styled(n) => serde_json::json!(["y", n]),
         })
         .collect();
-    serde_json::json!({ "a": m.anchor, "f": m.focus, "m": marks, "k": blocks, "s": m.soft_breaks })
+    let mut out = serde_json::json!({ "a": m.anchor, "f": m.focus, "m": marks, "k": blocks, "s": m.soft_breaks });
+    if !m.attrs.is_empty() {
+        out["p"] = m.attrs.iter().map(|a| crate::paragraph::attrs_json(*a)).collect();
+    }
+    out
 }
 
 /// A stored document's selection, marks, blocks and soft breaks, as numbers: `meta_holds`
@@ -702,6 +723,9 @@ fn meta_from(v: &serde_json::Value) -> Option<Meta> {
                 (_, Some("p"), Some(id)) => Mark::Pill(id.to_owned()),
                 (_, Some("fg"), Some(hex)) => Mark::Color(crate::html::normalize_hex(hex)?),
                 (_, Some("z"), Some(size)) => Mark::Size(MarkSize::pt(size.parse().ok()?)),
+                (_, Some("f"), Some(name)) => Mark::family(name),
+                (_, Some("h"), Some(c)) => Mark::Highlight(MarkColor::new(rune_core::color::hex(c)?)),
+                (_, Some("v"), Some(b)) => Mark::Baseline(if b == "sub" { Baseline::Sub } else { Baseline::Super }),
                 _ => return None,
             };
             Some(MarkRange { start, end, mark })
@@ -716,12 +740,15 @@ fn meta_from(v: &serde_json::Value) -> Option<Meta> {
             (Some("c"), ..) => Some(Block::Code),
             (_, Some("b"), Some(l)) => Some(Block::Bullet((l as u8).min(MAX_LIST_LEVEL))),
             (_, Some("n"), Some(l)) => Some(Block::Numbered((l as u8).min(MAX_LIST_LEVEL))),
-            (_, Some("y"), Some(n)) => Some(Block::Styled(n as u16)),
             _ => None,
         })
         .collect::<Option<Vec<_>>>()?;
     let soft_breaks = v["s"].as_array()?.iter().map(|n| n.as_u64().map(|n| n as u32)).collect::<Option<Vec<_>>>()?;
-    Some(Meta { anchor: n(&v["a"])?, focus: n(&v["f"])?, marks, blocks, soft_breaks })
+    let attrs = match v["p"].as_array() {
+        Some(list) => list.iter().map(crate::paragraph::attrs_from_json).collect::<Option<Vec<_>>>()?,
+        None => Vec::new(),
+    };
+    Some(Meta { anchor: n(&v["a"])?, focus: n(&v["f"])?, marks, blocks, soft_breaks, attrs })
 }
 
 /// A version-1 snapshot, when every offset in it is on a character boundary of its text.
@@ -729,7 +756,7 @@ fn snapshot_from(v: &serde_json::Value) -> Option<Snapshot> {
     let text = v["t"].as_str()?.to_owned();
     let m = meta_from(v)?;
     if !meta_holds(&m, &text) { return None; }
-    Some(Snapshot { text: Arc::new(Wiped(text)), anchor: m.anchor, focus: m.focus, marks: m.marks, blocks: m.blocks, soft_breaks: m.soft_breaks })
+    Some(Snapshot { text: Arc::new(Wiped(text)), anchor: m.anchor, focus: m.focus, marks: m.marks, blocks: m.blocks, soft_breaks: m.soft_breaks, attrs: m.attrs })
 }
 
 #[cfg(test)]

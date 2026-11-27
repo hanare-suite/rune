@@ -2205,6 +2205,67 @@ newline on `Shift+Return` and pastes plain text. The mark and block methods work
   allows colours, any `Block::Bullet` level allows bullets); `Block::Paragraph` is always allowed.
   `edit.allows_mark(&mark)` and `allows_block(block)` tell a formatting bar which buttons to show.
 
+### Documents: paragraph attributes, pages and locked blocks
+
+A `text_input` can be a word processor's editor: styled, aligned and indented paragraphs flowing
+into pages, with the app's own document and undo history beside it. `spikes/paged` is a working
+example, and `spikes/paged/check.py` checks every point below headless.
+
+- **Run marks**: `Mark::Size(MarkSize::pt(14.0))`, `Mark::Color("#d93025".into())`,
+  `Mark::family("Carlito")`, `Mark::Highlight(MarkColor::new(yellow))` and
+  `Mark::Baseline(Baseline::Sub | Baseline::Super)`. A field keeps them once it is a document
+  field, which keeps all five at once: `TextEdit::from_parts` with any of them makes it one,
+  and so does a paragraph-attribute method (`set_paragraph`, `format_paragraphs`, ...). A field
+  that named its kinds with `allow_marks` keeps what it named. A family draws when the app registered it
+  (`AppSpec::fonts`); any other name keeps the field's family. A highlight is a flat band as
+  tall as its line, with square corners and no padding. Sub- and superscripts are set at 58 % of
+  their size and moved a third of their em, as Word sets them. A later mark of one of these
+  kinds replaces an earlier one where they overlap. `Span` draws the same through
+  `Span::family`, `Span::highlight` and `Span::baseline`.
+- **Paragraph attributes** (`ParagraphAttrs`): beside its `Block`, each paragraph has a `style`
+  (an index into `.paragraph_styles(vec![ParagraphStyle::new(text_style).space(before, after)])`),
+  an `align` (`ParagraphAlign::Left`, `Center`, `Right`, `Justified`), an `indent` and a
+  `first_line_indent` in points, `page_break_before`, an `id` and an `atom`. Read them with
+  `edit.paragraph(line)`, `edit.paragraph_attrs()`, `edit.active_paragraph()` and
+  `edit.paragraphs()`; set all of them with `edit.set_paragraph_attrs(list)` or one with
+  `edit.set_paragraph(line, attrs)` (neither is an edit); and format the paragraphs the
+  selection touches, as one edit, with `edit.format_paragraphs(|a| a.align = ParagraphAlign::Center)`.
+  A list item can be styled and indented too: its indent adds to its level's.
+- **Splitting and merging**: Return copies a paragraph's attributes to the new one, without
+  its page break. After `edit.set_paragraph_ids(next)` the new paragraph takes `next` as its
+  `id`, the one after it `next + 1`, and `edit.next_paragraph_id()` gives the counter back to
+  store. Joining two paragraphs keeps the first one's attributes and id; an empty first
+  paragraph gives way to the second. In a field whose paragraphs carry attributes, plain Return
+  breaks the paragraph rather than submitting.
+- **Pages**: `.page_flow(PageFlow::new(page_height, gap))` lays the field's lines into pages. A
+  line that doesn't fit its page moves whole to the next, and the caret, presses, selection
+  boxes, caret follow and the input method's cursor rectangle follow it. A paragraph with
+  `page_break_before` starts a page. A paragraph's first two lines stay together and so do its
+  last two (`PageFlow::keep_lines(false)` turns that off). The room above a paragraph is dropped
+  at the top of a page it flowed onto and kept after a forced break. The field is always whole
+  pages tall. `cx.pages("editor")` is its page count in the commit that changed it, so the
+  sheets an app draws behind the field are never a frame behind the text;
+  `PageFlow::page_top(n)` is where page `n` starts.
+- **Locked atoms**: a paragraph with `ParagraphAttrs::atom(height)` is one block `height` points
+  tall that shows its text as a label, for content an app keeps but cannot edit. The caret
+  steps over it as one character, a selection that touches it covers it, and Backspace or
+  Delete with the caret at its edge removes it with its line as one edit. From the paragraph
+  after it Backspace selects it whole, and so does Delete from the paragraph before it; a
+  second press deletes it. An empty paragraph beside it goes at the first press instead.
+  Text typed beside it gets a paragraph of its own. `edit.insert_atom(label, height)` adds one. Accessibility exposes it as a group
+  named by its label. `.atom_colors(fill, border)` colours its box.
+- **One history**: `edit.set_history(false)` stops the field recording undo steps. Undo and
+  redo then do nothing in the field and their keys go on to the app (`AppSpec::on_key`). Every
+  edit reports what it changed as `EditChange { range, len, kind }`: bytes `range` of the text
+  before became `len` bytes, and for `EditChangeKind::Marks` and `Paragraphs` the same bytes
+  kept their text and changed their marks, or their attributes and blocks.
+  `.on_input_edits(|s, changes, tx| ..)` hands an event's changes over in one call;
+  `edit.take_changes()` gives them after edits the app makes itself. One event can report
+  several changes, in the order they happened, each range in the text the change before it
+  left. A change carries no text: apply them in order and read what each inserted from
+  `edit.text` as it is now, mapping its bytes forward through the later changes (the docs
+  of `EditChange` have the rule).
+
 #### Spellcheck
 
 `El::spellcheck(true)` (and `rune_kit::TextInput::spellcheck`, `TextArea::spellcheck`) marks

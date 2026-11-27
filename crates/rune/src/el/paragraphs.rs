@@ -4,10 +4,10 @@ use super::*;
 use rune_text::paragraph_ranges as paragraphs;
 
 impl El {
-    /// On a [`text_input`]: the styles its [`Block::Styled`](crate::Block::Styled) paragraphs
-    /// take, by index. Each gives its paragraph's text style and the room above and below it;
-    /// one with [`ParagraphStyle::page_break_before`](crate::ParagraphStyle::page_break_before)
-    /// starts its paragraph on a new page of a field with [`El::page_flow`].
+    /// On a [`text_input`]: the styles its paragraphs take, by
+    /// [`ParagraphAttrs::style`](crate::ParagraphAttrs). Each gives its paragraph's text style
+    /// and the room above and below it. A paragraph whose index has no entry keeps the field's
+    /// own style.
     ///
     /// A field that truncates, caps its lines with `max_lines`, holds inline boxes or is
     /// redacted lays out as one piece and ignores them (a debug build asserts).
@@ -15,6 +15,15 @@ impl El {
         let Some(t) = self.text.as_mut() else { return self };
         t.cold.paragraph_styles = Some(styles.into());
         t.rekey_flow();
+        self
+    }
+
+    /// On a [`text_input`]: the fill and the border of its locked atoms' boxes
+    /// ([`ParagraphAttrs::atom`](crate::ParagraphAttrs)), over the defaults.
+    pub fn atom_colors(mut self, fill: Color, border: Color) -> El {
+        if let Some(t) = self.text.as_mut() {
+            t.cold.atom_colors = Some((fill, border));
+        }
         self
     }
 

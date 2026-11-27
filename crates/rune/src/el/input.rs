@@ -42,6 +42,7 @@ pub struct InputSpec {
     pub(crate) submit: Option<PressFn>,
     pub(crate) key: Option<InputKeyFn>,
     pub(crate) change: Option<PressFn>,
+    pub(crate) edits: Option<InputEditsFn>,
     pub(crate) selection_change: Option<PressFn>,
     pub(crate) paste: Option<InputPasteFn>,
     pub(crate) copy: Option<InputCopyFn>,
@@ -118,6 +119,7 @@ pub fn text_input(edit: &TextEdit, style: TextStyle) -> El {
         submit: None,
         key: None,
         change: None,
+        edits: None,
         selection_change: None,
         paste: None,
         copy: None,
@@ -292,6 +294,26 @@ impl El {
     pub fn on_input_selection<S: 'static>(mut self, f: impl Fn(&mut S, &mut Tx) + 'static) -> Self {
         if let Some(input) = self.cold.get_mut_if_some().and_then(|c| c.input.as_deref_mut()) {
             input.selection_change = Some(Rc::new(move |s, tx| f(downcast::<S>(s), tx)));
+        }
+        self
+    }
+    /// Called after each event the focused field took, with every change it made
+    /// ([`TextEdit::take_changes`](crate::TextEdit::take_changes)): the bytes each replaced and
+    /// how many took their place, and changes of marks or paragraph attributes alone. One call
+    /// an event, so an app that keeps its own history ([`TextEdit::set_history`](crate::TextEdit::set_history))
+    /// makes one step of it. An event that changed nothing calls nothing.
+    ///
+    /// The slice can hold several changes (a rich paste over a selection deletes, inserts and
+    /// then sets marks and paragraphs). They are in the order they happened, each range in the
+    /// text the change before it left. Apply them in order, and read inserted text from the
+    /// field's text now as [`EditChange`](crate::EditChange) describes.
+    ///
+    /// A [`secure`](crate::TextEdit::secure) field's edits are not reported, and neither is
+    /// [`TextEdit::replace_text`](crate::TextEdit::replace_text) (see
+    /// [`TextEdit::take_changes`](crate::TextEdit::take_changes)).
+    pub fn on_input_edits<S: 'static>(mut self, f: impl Fn(&mut S, &[crate::EditChange], &mut Tx) + 'static) -> Self {
+        if let Some(input) = self.cold.get_mut_if_some().and_then(|c| c.input.as_deref_mut()) {
+            input.edits = Some(Rc::new(move |s, changes, tx| f(downcast::<S>(s), changes, tx)));
         }
         self
     }

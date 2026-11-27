@@ -17,7 +17,7 @@ use crate::{
 use rune_core::tok::{Family, OpticalSize, TextStyle};
 
 use super::span_map::SpanMap;
-use super::{hash, inline_fit, line_break};
+use super::{hash, inline_fit, line_break, shape_style};
 
 /// How strictly Japanese and Chinese lines break, one switch. `Strict` (JIS X 4051, UAX #14's
 /// default) never starts a line with a small kana (ぁ ッ ャ), ー or 々. `Normal` is Chromium's
@@ -313,6 +313,8 @@ impl TextSystem {
             }
         };
         let mono = if has_mono_span { with_symbols(self.mono.as_str(), mono_scripts) } else { Vec::new() };
+        // A span's own family, when the app registered it, ahead of the text's stack.
+        let span_families = shape_style::families(spans, &mut self.font_cx.collection, &sans);
         // Routed clusters try their preferred font(s) first, then the run's own stack (mono spans
         // included). For `Route::Emoji`, any colour emoji family explicitly selected by the app
         // precedes the system emoji fallback so monochrome text fonts still cannot steal emoji.
@@ -432,6 +434,9 @@ impl TextSystem {
                 if s.italic {
                     b.push(StyleProperty::FontStyle(FontStyle::Italic), r.clone());
                 }
+                if let Some(list) = s.family.as_deref().and_then(|name| span_families.get(name)) {
+                    b.push(FontFamily::from(list.as_slice()), r.clone());
+                }
                 if let Some(sz) = s.size {
                     b.push(StyleProperty::FontSize(sz), r.clone());
                     // CSS's unitless line-height: a span of its own size (inline code, a smaller run) keeps the
@@ -447,6 +452,7 @@ impl TextSystem {
                     b.push(StyleProperty::LetterSpacing(v), r.clone());
                 }
             }
+            shape_style::push_baselines(&mut b, spans, style.size, text.len());
             for (range, w) in weights {
                 b.push(StyleProperty::FontWeight(FontWeight::new(*w)), range.clone());
             }

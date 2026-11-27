@@ -26,14 +26,20 @@ pub struct TextInput<'a> {
     pub flow: Option<Flowed<'a>>,
 }
 
-/// A field's paragraph styles (`El::paragraph_styles`) and pages (`El::page_flow`).
+/// A field's paragraph styles (`El::paragraph_styles`), pages (`El::page_flow`) and paragraph
+/// attributes.
 #[doc(hidden)]
 #[derive(Clone, Copy)]
 pub struct Flowed<'a> {
     pub styles: &'a [ParagraphStyle],
     pub page: Option<PageFlow>,
-    /// A hash of the two, part of the text's shape key.
+    /// Each paragraph's attributes; empty when none carries any.
+    pub attrs: &'a [ParagraphAttrs],
+    /// A hash of the three, part of the text's shape key.
     pub key: u64,
+    /// A hash of the styles and the page flow alone, which every paragraph's own key takes: an
+    /// attribute changed on one paragraph then shapes that paragraph, not the text.
+    pub styles_key: u64,
 }
 
 impl TextInput<'_> {

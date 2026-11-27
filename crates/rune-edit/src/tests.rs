@@ -984,13 +984,3 @@ fn word_moves_stop_where_chromium_stops() {
         assert_eq!(e.text.chars().count(), left[0], "word delete in {text:?}");
     }
 }
-#[test]
-fn toggle_block_styled_toggles_off_only_the_same_style() {
-    let mut e = TextEdit::new("one").rich();
-    e.toggle_block(Block::Styled(1));
-    assert_eq!(e.blocks(), &[Block::Styled(1)]);
-    e.toggle_block(Block::Styled(2));
-    assert_eq!(e.blocks(), &[Block::Styled(2)], "another style switches to it");
-    e.toggle_block(Block::Styled(2));
-    assert_eq!(e.blocks(), &[Block::Paragraph], "the same style toggles off");
-}

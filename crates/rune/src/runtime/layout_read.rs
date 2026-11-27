@@ -30,6 +30,7 @@ use std::rc::Rc;
 
 use super::*;
 use super::key_index::{self, KeyIndex};
+use super::pages_read::PAGES;
 
 #[path = "selection/rects.rs"]
 mod selection_rects;
@@ -463,6 +464,7 @@ impl RuntimeCore {
 
     pub(super) fn layout_of(&self, nodes: &[Node], index: Option<&KeyIndex>, key: &str) -> Option<[f32; 4]> {
         if key == SELECTION || key.starts_with(ANCHOR) || field_selection_read_key(key).is_some() { return None; }
+        if let Some(key) = key.strip_prefix(PAGES) { return self.pages_of(nodes, index, key); }
         let (key, scrolled) = key.strip_prefix(WINDOW).map_or((key, false), |key| (key, true));
         let first = match index {
             Some(index) => index.first(nodes, key),

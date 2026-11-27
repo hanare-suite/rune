@@ -2,9 +2,9 @@
 
 use std::ops::Range;
 
-use rune_core::color::{Color, oklch, oklcha};
+use rune_core::color::{Color, oklch, oklcha, srgb_decode, srgb_encode};
 
-pub use rune_text::{Block, MAX_LIST_LEVEL, PageFlow, ParagraphStyle};
+pub use rune_text::{Baseline, Block, MAX_LIST_LEVEL, PageFlow, ParagraphAlign, ParagraphAttrs, ParagraphStyle};
 
 /// An inline formatting mark stored alongside [`TextEdit::text`](super::TextEdit::text). More
 /// marks may come, so a `match` needs a `_` arm.
@@ -30,9 +30,36 @@ pub enum Mark {
     /// [`TextEdit::active_color`](super::TextEdit::active_color).
     Color(String),
     /// The run's font size in points, over the field's or its paragraph style's. A field keeps
-    /// it as it keeps [`Mark::Color`]: only once it is allowed (a [`TextEdit::from_parts`](super::TextEdit::from_parts)
-    /// with one, or [`TextEdit::allow_marks`](super::TextEdit::allow_marks) naming one).
+    /// it as it keeps [`Mark::Color`]: only once it is allowed, as a document field's paragraph
+    /// attributes and a [`TextEdit::from_parts`](super::TextEdit::from_parts) holding one do, or
+    /// [`TextEdit::allow_marks`](super::TextEdit::allow_marks) naming one.
     Size(MarkSize),
+    /// The run's font family by name, when the app registered it; the field's family otherwise.
+    Family(std::sync::Arc<str>),
+    /// A flat background behind the run, as a highlighter pen leaves: no rounding, no padding.
+    Highlight(MarkColor),
+    /// The run as a subscript or superscript.
+    Baseline(Baseline),
+}
+
+/// A colour that compares and hashes by its bits, so a [`Mark`] can carry it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct MarkColor([u32; 4]);
+
+impl MarkColor {
+    /// `c` snapped to the 8-bit sRGB grid, alpha included, which is the precision its hex form
+    /// (`Color::hex`, in a saved history and in HTML) keeps. Snapping again changes nothing, so a
+    /// colour read back from hex is the colour that was written.
+    pub fn new(c: Color) -> Self {
+        let snap = |v: f32| srgb_decode((srgb_encode(v) * 255.0).round().clamp(0.0, 255.0) / 255.0);
+        let a = (c.a * 255.0).round().clamp(0.0, 255.0) / 255.0;
+        Self([snap(c.r), snap(c.g), snap(c.b), a].map(f32::to_bits))
+    }
+
+    pub fn get(self) -> Color {
+        let [r, g, b, a] = self.0.map(f32::from_bits);
+        Color { r, g, b, a }
+    }
 }
 
 /// A font size in points that compares and hashes by its bits, so a [`Mark`] can carry it.
@@ -50,21 +77,15 @@ impl MarkSize {
 }
 
 impl Mark {
+    /// [`Mark::Family`] of `name`.
+    pub fn family(name: &str) -> Mark {
+        Mark::Family(name.into())
+    }
+
     /// Whether `self` and `other` are the same kind of mark (`Link(_)` matches any `Link(_)`,
     /// `Color(_)` matches any `Color(_)`).
     pub fn same_kind(&self, other: &Mark) -> bool {
-        match (self, other) {
-            (Mark::Bold, Mark::Bold)
-            | (Mark::Italic, Mark::Italic)
-            | (Mark::Underline, Mark::Underline)
-            | (Mark::Strike, Mark::Strike)
-            | (Mark::Code, Mark::Code)
-            | (Mark::Link(_), Mark::Link(_))
-            | (Mark::Pill(_), Mark::Pill(_))
-            | (Mark::Color(_), Mark::Color(_))
-            | (Mark::Size(_), Mark::Size(_)) => true,
-            _ => false,
-        }
+        self.kind_order() == other.kind_order()
     }
 
     /// The URL when `self` is [`Mark::Link`].
@@ -100,7 +121,7 @@ impl Mark {
     /// Whether one range of the kind carries one value, so a later mark replaces an earlier one
     /// where they overlap rather than joining it.
     pub(crate) fn is_valued(&self) -> bool {
-        matches!(self, Mark::Link(_) | Mark::Color(_) | Mark::Size(_))
+        matches!(self, Mark::Link(_) | Mark::Color(_) | Mark::Size(_) | Mark::Family(_) | Mark::Highlight(_) | Mark::Baseline(_))
     }
 
     pub(crate) fn is_pill(&self) -> bool {
@@ -118,12 +139,15 @@ impl Mark {
             Mark::Pill(_) => 6,
             Mark::Color(_) => 7,
             Mark::Size(_) => 8,
+            Mark::Family(_) => 9,
+            Mark::Highlight(_) => 10,
+            Mark::Baseline(_) => 11,
         }
     }
 }
 
 /// How many kinds [`Mark::kind_order`] numbers.
-pub(crate) const MARK_KINDS: usize = 9;
+pub(crate) const MARK_KINDS: usize = 12;
 
 /// A non-empty byte range `[start, end)` in [`TextEdit::text`](super::TextEdit::text) carrying an
 /// inline [`Mark`].
@@ -154,6 +178,8 @@ pub struct ParagraphInfo {
     pub block: Block,
     /// True when this line was split from the previous line by `Shift+Return` (`<br>`).
     pub soft_break: bool,
+    /// Its style, alignment, indents, page break, atom and id.
+    pub attrs: ParagraphAttrs,
 }
 
 /// Visual palette for rich marks and block attributes inside `text_input`.
@@ -165,6 +191,13 @@ pub struct RichStyle {
     pub link: Color,
     pub quote_bar: Color,
     pub marker: Option<Color>,
+}
+
+/// A locked atom's box when the field sets no colours of its own (`El::atom_colors`): its
+/// fill and its border.
+#[doc(hidden)]
+pub fn atom_colors() -> (Color, Color) {
+    (oklcha(0.55, 0.02, 260.0, 0.10), oklcha(0.55, 0.02, 260.0, 0.45))
 }
 
 impl Default for RichStyle {

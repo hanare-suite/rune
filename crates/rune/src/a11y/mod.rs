@@ -12,6 +12,7 @@ use accesskit::{ActionHandler, ActionRequest, ActivationHandler, DeactivationHan
 use crate::runtime::Runtime;
 
 pub(crate) mod actions;
+mod atoms;
 #[cfg(test)]
 mod actions_tests;
 #[cfg(test)]

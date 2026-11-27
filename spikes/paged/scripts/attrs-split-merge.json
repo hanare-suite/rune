@@ -1,0 +1,110 @@
+{
+ "events": [
+  {
+   "t": 0.2,
+   "type": "key",
+   "name": "Right"
+  },
+  {
+   "t": 0.45,
+   "type": "key",
+   "name": "Right"
+  },
+  {
+   "t": 0.7,
+   "type": "key",
+   "name": "Right"
+  },
+  {
+   "t": 0.95,
+   "type": "key",
+   "name": "Right"
+  },
+  {
+   "t": 1.2,
+   "type": "key",
+   "name": "Right"
+  },
+  {
+   "t": 1.45,
+   "type": "key",
+   "name": "Right"
+  },
+  {
+   "t": 1.7,
+   "type": "key",
+   "name": "Right"
+  },
+  {
+   "t": 1.95,
+   "type": "key",
+   "name": "Right"
+  },
+  {
+   "t": 2.2,
+   "type": "key",
+   "name": "Right"
+  },
+  {
+   "t": 2.45,
+   "type": "key",
+   "name": "Right"
+  },
+  {
+   "t": 2.7,
+   "type": "key",
+   "name": "Right"
+  },
+  {
+   "t": 2.95,
+   "type": "key",
+   "name": "Right"
+  },
+  {
+   "t": 3.2,
+   "type": "mark",
+   "name": "whole"
+  },
+  {
+   "t": 3.45,
+   "type": "key",
+   "name": "Enter"
+  },
+  {
+   "t": 3.7,
+   "type": "mark",
+   "name": "second"
+  },
+  {
+   "t": 3.95,
+   "type": "key",
+   "name": "Up"
+  },
+  {
+   "t": 4.2,
+   "type": "mark",
+   "name": "first"
+  },
+  {
+   "t": 4.45,
+   "type": "key",
+   "name": "Down"
+  },
+  {
+   "t": 4.7,
+   "type": "key",
+   "name": "Left",
+   "cmd": true
+  },
+  {
+   "t": 4.95,
+   "type": "key",
+   "name": "Backspace"
+  },
+  {
+   "t": 5.2,
+   "type": "mark",
+   "name": "merged"
+  }
+ ]
+}

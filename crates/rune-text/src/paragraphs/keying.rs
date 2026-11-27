@@ -133,7 +133,10 @@ pub(super) fn key_paragraphs(spec: &TextInput<'_>, layout_spans: &[Span], style_
         let isolates: Box<[(u32, u32)]> = spec.pills.iter().filter(|p| inside(p, a, b)).map(|p| (p.start - a as u32, p.end - a as u32)).collect();
         let flow = forced.or_else(|| flow_of(words, &isolates)).unwrap_or(last_flow);
         let mut h = hash::KeyHasher::default();
-        (words, style_key, flow == Flow::Rtl, spec.blocks.get(k).copied().unwrap_or(Block::Paragraph)).hash(&mut h);
+        // A paragraph with no attributes of its own keys as it did before there were any.
+        let (block, attrs) = paged::line_key(spec, k);
+        (words, style_key, flow == Flow::Rtl, block).hash(&mut h);
+        if attrs != ParagraphAttrs::default().layout_bits() { attrs.hash(&mut h); }
         let line_spans: Vec<Span> = spans_in(layout_spans, a, b, &isolates, disjoint_spans).collect();
         for s in span::layout_spans(&line_spans) {
             s.hash_layout(&mut h);

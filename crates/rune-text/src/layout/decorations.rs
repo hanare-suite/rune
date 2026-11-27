@@ -113,13 +113,18 @@ impl TextSystem {
                     let fm = gr.run().font_metrics();
                     let cap = fm.cap_height.unwrap_or(gr.run().font_size() * 0.7);
                     let base = origin[1] + m.baseline;
-                    let (top, bot) = if s.mono {
+                    let (top, bot) = if s.bg_flat {
+                        // A highlighter's band: the line's own height, so runs of different
+                        // sizes on one line join into one flat stripe.
+                        ((origin[1] + m.block_min_coord).round(), (origin[1] + m.block_max_coord).round())
+                    } else if s.mono {
                         (base.round() - fm.ascent.round(), base.round() + fm.descent.round())
                     } else {
                         ((base - cap * 1.35).round(), (base + cap * 0.55).round())
                     };
                     let (l, r) = ((x0 - pad).round(), (x0 + w + pad).round());
                     let rect = [l, top, r - l, bot - top];
+                    let radius = if s.bg_flat { 0.0 } else { radius };
                     // Touching runs with the same background and ring on one line (a span split by
                     // style, or inline code and its padding spaces in the body font) share one rect,
                     // as tall as its widest run, so a thin run in another font doesn't poke out as a sliver.

@@ -964,3 +964,18 @@ fn a11y_show_context_menu_on_link_lays_out_only_that_link() {
     assert!(!queued, "out-of-range link should not queue");
     assert_eq!(queries, 0, "out-of-range link should query 0 spans");
 }
+
+#[test]
+fn an_atoms_id_is_never_a_links_id() {
+    use super::tree::{LINK_BASE, atom_id, link_id, split_id, sub_link};
+    let node = rune_motion::NodeId(7);
+    let links: std::collections::HashSet<_> = (0..0x1_0000).map(|k| link_id(node, k)).collect();
+    let atoms: std::collections::HashSet<_> = (0..300).map(|k| atom_id(node, k)).collect();
+    assert_eq!(atoms.len(), 256, "one id for each atom a field publishes");
+    assert!(atoms.is_disjoint(&links), "an atom shares an id with a link");
+    for &id in &atoms {
+        let (owner, sub) = split_id(id);
+        assert_eq!((owner, sub_link(sub)), (node, None), "an action on an atom is not one on a link");
+    }
+    assert_eq!(split_id(link_id(node, 5)), (node, LINK_BASE + 5));
+}

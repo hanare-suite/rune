@@ -137,11 +137,14 @@ fn scroll_xy_with_direct_children_scrolls_both_axes_and_warns_on_trailing_growth
     rt.frame(1.0 / 60.0);
     let r19 = rt.elements().into_iter().find(|e| e.key.as_deref() == Some("r19")).unwrap();
     assert_eq!((r19.rect[0] + r19.rect[2], r19.rect[1] + r19.rect[3]), (200.0, 200.0));
-    assert!(!layout_diagnostics::warned_at("growth-sibling:"));
+    // The warnings are one set for the whole process, and other tests put a growth stack
+    // before a sibling too: only this file's viewport counts here.
+    let here = concat!("growth-sibling:", file!());
+    assert!(!layout_diagnostics::warned_at(here));
 
     rt.update(|bad, _| *bad = true);
     rt.frame(1.0 / 60.0);
-    assert!(layout_diagnostics::warned_at("growth-sibling:"));
+    assert!(layout_diagnostics::warned_at(here));
 }
 
 #[test]

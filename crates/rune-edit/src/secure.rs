@@ -63,6 +63,7 @@ impl TextEdit {
             }
             self.marks.clear();
             self.blocks.clear();
+            self.attrs.clear();
             self.soft_breaks.clear();
             self.typing = Typing::Inherited;
             self.cancel_composition();

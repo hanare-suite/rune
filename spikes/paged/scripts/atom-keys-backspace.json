@@ -1,0 +1,50 @@
+{
+ "events": [
+  {
+   "t": 0.2,
+   "type": "key",
+   "name": "Right"
+  },
+  {
+   "t": 0.45,
+   "type": "key",
+   "name": "Left"
+  },
+  {
+   "t": 0.7,
+   "type": "mark",
+   "name": "at"
+  },
+  {
+   "t": 0.95,
+   "type": "key",
+   "name": "Backspace"
+  },
+  {
+   "t": 1.2,
+   "type": "mark",
+   "name": "selected"
+  },
+  {
+   "t": 1.45,
+   "type": "key",
+   "name": "Backspace"
+  },
+  {
+   "t": 1.7,
+   "type": "mark",
+   "name": "deleted"
+  },
+  {
+   "t": 1.95,
+   "type": "key",
+   "name": "z",
+   "cmd": true
+  },
+  {
+   "t": 2.2,
+   "type": "mark",
+   "name": "undone"
+  }
+ ]
+}

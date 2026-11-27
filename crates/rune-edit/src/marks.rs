@@ -8,13 +8,13 @@ impl TextEdit {
     /// Construct a [`TextEdit`] from plain text, inline [`MarkRange`]s, and per-line [`Block`]s.
     /// Caret starts at the end of `text`. Ranges are clamped to char boundaries and canonicalized,
     /// and `blocks` is padded or truncated to match the number of `\n`-separated lines in `text`.
-    /// Passing any [`Mark::Color`] or [`Mark::Size`] in `marks` enables text colours or sizes on
-    /// the returned field.
+    /// Passing any run style in `marks` ([`Mark::Color`], [`Mark::Size`], [`Mark::Family`],
+    /// [`Mark::Highlight`] or [`Mark::Baseline`]) makes the returned field a document field,
+    /// which keeps all of them.
     pub fn from_parts(text: impl Into<String>, marks: Vec<MarkRange>, blocks: Vec<Block>) -> TextEdit {
         let mut edit = Self::new(text).rich();
-        let opted_in = marks.iter().filter(|m| matches!(m.mark, Mark::Color(_) | Mark::Size(_))).fold(0, |bits, m| bits | 1 << m.mark.kind_order());
-        if opted_in != 0 {
-            edit.allowed_marks = Some(Self::DEFAULT_ALLOWED_MARKS | opted_in);
+        if marks.iter().any(|m| Self::DOCUMENT_MARKS & 1 << m.mark.kind_order() != 0) {
+            edit.open_document();
         }
         edit.marks = marks;
         edit.blocks = blocks;
@@ -32,6 +32,7 @@ impl TextEdit {
             self.marks.clear();
             self.blocks.clear();
             self.soft_breaks.clear();
+            self.attrs.clear();
             self.typing = Typing::Inherited;
             return;
         }
@@ -48,6 +49,7 @@ impl TextEdit {
                 }
             }
         }
+        self.sync_attrs(line_count);
         self.soft_breaks.sort_unstable();
         self.soft_breaks.dedup();
         self.soft_breaks.retain(|&idx| idx > 0 && (idx as usize) < line_count);
@@ -422,12 +424,14 @@ impl TextEdit {
         }
         self.break_history_group();
         let before = self.snapshot();
+        let was = self.marks.clone();
         if mark.is_pill() {
             self.marks.retain(|m| !m.mark.is_pill() || m.end <= a || m.start >= b);
         }
         self.marks.push(MarkRange { start: a, end: b, mark });
         self.typing = Typing::Inherited;
         self.normalize_marks();
+        if self.marks != was { self.note_marks(a..b); }
         self.record_change(before, EditKind::Other);
     }
 
@@ -447,6 +451,7 @@ impl TextEdit {
         }
         self.break_history_group();
         let before = self.snapshot();
+        let was = self.marks.clone();
         let mut out = Vec::with_capacity(self.marks.len());
         for m in self.marks.drain(..) {
             if !m.mark.same_kind(mark) || m.end <= a || m.start >= b {
@@ -465,6 +470,7 @@ impl TextEdit {
         self.marks = out;
         self.typing = Typing::Inherited;
         self.normalize_marks();
+        if self.marks != was { self.note_marks(a..b); }
         self.record_change(before, EditKind::Other);
     }
 
@@ -505,7 +511,7 @@ impl TextEdit {
     }
 
     /// Line index range `first_line..=last_line` covered by the current selection.
-    fn selected_line_range(&self) -> (usize, usize) {
+    pub(super) fn selected_line_range(&self) -> (usize, usize) {
         let (a, b) = self.range();
         let first = self.line_of_byte(a);
         let last = if b > a && self.text.as_bytes().get(b - 1) == Some(&b'\n') {
@@ -543,6 +549,7 @@ impl TextEdit {
         self.sync_invariants();
         self.break_history_group();
         let before = self.snapshot();
+        let was = self.blocks.clone();
         let (first, last) = self.selected_line_range();
         for i in first..=last {
             if let Some(slot) = self.blocks.get_mut(i) {
@@ -553,6 +560,7 @@ impl TextEdit {
             self.typing = Typing::Inherited;
         }
         self.normalize_marks();
+        if self.blocks != was { self.note_paragraphs(first..last + 1); }
         self.record_change(before, EditKind::Other);
     }
 
@@ -573,6 +581,7 @@ impl TextEdit {
         } else {
             self.break_history_group();
             let before = self.snapshot();
+            let was = self.blocks.clone();
             for i in first..=last {
                 if let Some(slot) = self.blocks.get_mut(i) {
                     *slot = match (slot.list_level(), block) {
@@ -586,6 +595,7 @@ impl TextEdit {
                 self.typing = Typing::Inherited;
             }
             self.normalize_marks();
+            if self.blocks != was { self.note_paragraphs(first..last + 1); }
             self.record_change(before, EditKind::Other);
         }
     }
@@ -602,6 +612,7 @@ impl TextEdit {
         }
         self.break_history_group();
         let before = self.snapshot();
+        let was = self.blocks.clone();
         let (first, last) = self.selected_line_range();
         for i in first..=last {
             if let Some(slot) = self.blocks.get_mut(i)
@@ -610,6 +621,7 @@ impl TextEdit {
                 *slot = slot.with_level((lvl + 1).min(MAX_LIST_LEVEL));
             }
         }
+        if self.blocks != was { self.note_paragraphs(first..last + 1); }
         self.record_change(before, EditKind::Other);
         true
     }
@@ -626,6 +638,7 @@ impl TextEdit {
         }
         self.break_history_group();
         let before = self.snapshot();
+        let was = self.blocks.clone();
         let (first, last) = self.selected_line_range();
         for i in first..=last {
             if let Some(slot) = self.blocks.get_mut(i)
@@ -634,6 +647,7 @@ impl TextEdit {
                 *slot = slot.with_level(lvl.saturating_sub(1));
             }
         }
+        if self.blocks != was { self.note_paragraphs(first..last + 1); }
         self.record_change(before, EditKind::Other);
         true
     }

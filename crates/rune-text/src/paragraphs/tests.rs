@@ -23,6 +23,32 @@ fn input<'a>(content: &'a str, blocks: &'a [Block], style: TextStyle, dir: TextD
     }
 }
 
+/// `inp` as a document field's: paragraph attributes, one for each paragraph, and the key a
+/// field takes from them (text laid out under the same key is the same layout).
+fn document<'a>(mut inp: TextInput<'a>, attrs: &'a [ParagraphAttrs], key: u64) -> TextInput<'a> {
+    inp.flow = Some(Flowed { styles: &[], page: None, attrs, key, styles_key: 1 });
+    inp
+}
+
+#[test]
+fn an_empty_line_stays_at_the_left_in_a_field_without_paragraph_attributes() {
+    let mut ts = TextSystem::default();
+    let style = TextStyle::new(14.0, 400.0);
+    let (scale, max_w, caret_w) = (2.0, 400.0, 3.0);
+    let text = "one\n\ntwo";
+    for align in [Alignment::Center, Alignment::End, Alignment::Right] {
+        let laid = ts.layout_text(&input(text, &[], style, TextDir::Fixed(Flow::Ltr)), true, scale, Some(max_w), align, None);
+        assert_eq!(laid.view().caret(4, Affinity::Downstream, caret_w).x0 as f32, 0.0, "{align:?}: a plain field's empty line starts at its left edge");
+    }
+
+    // A document field places it by the paragraph's own alignment.
+    for (key, (align, want)) in [(ParagraphAlign::Center, max_w / 2.0), (ParagraphAlign::Right, max_w - caret_w), (ParagraphAlign::Left, 0.0)].into_iter().enumerate() {
+        let attrs = [ParagraphAttrs::default(), ParagraphAttrs::default().align(align), ParagraphAttrs::default()];
+        let laid = ts.layout_text(&document(input(text, &[], style, TextDir::Fixed(Flow::Ltr)), &attrs, key as u64 + 10), true, scale, Some(max_w), Alignment::Start, None);
+        assert_eq!(laid.view().caret(4, Affinity::Downstream, caret_w).x0 as f32, want, "{align:?}");
+    }
+}
+
 #[test]
 fn caret_on_empty_indented_block_matches_filled_block_start() {
     let mut ts = TextSystem::default();
@@ -65,6 +91,11 @@ x", &blocks, style, TextDir::Fixed(Flow::Ltr)), true, scale, Some(max_w), Alignm
         let right_pad = if blk == Block::Code { indent } else { 0.0 };
         assert_eq!(rtl_x, (max_w - right_pad - caret_w).max(indent), "RTL {blk:?}");
     }
+
+    // A centred paragraph of a document field is centred when it reads right to left too.
+    let attrs = [ParagraphAttrs::default(), ParagraphAttrs::default().align(ParagraphAlign::Center)];
+    let centred = ts.layout_text(&document(input("א\n", &[], style, TextDir::Fixed(Flow::Rtl)), &attrs, 20), true, scale, Some(max_w), Alignment::Start, None);
+    assert_eq!(centred.view().caret("א\n".len(), Affinity::Downstream, caret_w).x0 as f32, max_w / 2.0, "RTL centred");
 
     // Each paragraph uses its own block indent rather than the previous paragraph's.
     let to_list = ts.layout_text(&input("one
@@ -437,14 +468,132 @@ fn room_below_a_paragraph_that_runs_past_its_pages_end_starts_the_next_paragraph
     // above and 25 px below, so the third one's room below carries y from 89 to 114.
     let style = TextStyle::new(8.0, 400.0).lh(10.0).mono();
     let styles = [ParagraphStyle::new(style).space(3.0, 25.0)];
-    let blocks = [Block::Styled(0); 4];
     let mut spec = rich_input("a\nb\nc\nd", &[], style, false, TextDir::Auto);
-    spec.blocks = &blocks;
-    spec.flow = Some(Flowed { styles: &styles, page: Some(PageFlow::new(100.0, 0.0)), key: 1 });
+    spec.flow = Some(Flowed { styles: &styles, page: Some(PageFlow::new(100.0, 0.0)), attrs: &[], key: 1, styles_key: 1 });
     let mut ts = mono_text_system();
     let tl = ts.layout_text(&spec, true, 1.0, Some(300.0), Alignment::Start, None);
     let p = &as_paragraphs(&tl).paragraphs;
     assert_eq!(p.len(), 4);
     assert!(p[2].y + p[2].height < 100.0 && p[3].y >= 100.0, "the third ends on page 1: {} + {}", p[2].y, p[2].height);
     assert_eq!(p[3].y, 100.0, "the fourth starts at page 2's top, both rooms dropped");
+}
+
+/// Every caret of `laid`, and its height.
+fn carets(laid: &TextLayout, content: &str) -> Vec<(usize, [f64; 3])> {
+    let view = laid.view();
+    content.char_indices().map(|(i, _)| i).chain([content.len()])
+        .map(|i| { let c = view.caret(i, Affinity::Downstream, 2.0); (i, [c.x0, c.y0, c.y1]) }).collect()
+}
+
+/// An app that keeps its span's numbers through an edit that shifts the text: laid out again
+/// from the last layout, the text must come out as a fresh layout of it does.
+#[test]
+fn a_span_that_keeps_its_numbers_through_a_shifting_edit_lays_out_as_a_fresh_text_does() {
+    let style = TextStyle::new(14.0, 400.0);
+    let before = "alpha and so gamma alpha alpha beta longerword x beta x\nlongerword gamma and beta δέλτα beta longerword beta\nlongerword so δέλτα x beta δέλτα longerword\nx δέλτα δέλτα longerword x beta beta x x alpha\nlongerword so δέλτα gamma longerword so δέλτα and x δέλτα\n";
+    let after = before.replacen("longerword gamma", "lorword gamma", 1);
+    let spans = [Span::new(109, 113).size(22.0)];
+    let blocks: Vec<Block> = (0..6).map(|k| [Block::Quote, Block::Paragraph, Block::Bullet(0), Block::Paragraph][k % 4]).collect();
+    let attrs = vec![ParagraphAttrs::default(); 6];
+    for attributed in [false, true] {
+        let mut ts = TextSystem::default();
+        let lay = |ts: &mut TextSystem, content: &str, key: u64, prev: Option<&TextLayout>| {
+            let mut inp = TextInput { blocks: &blocks, ..rich_input(content, &spans, style, false, TextDir::Fixed(Flow::Ltr)) };
+            if attributed { inp = document(inp, &attrs, key); }
+            ts.layout_text(&inp, true, 1.5, Some(300.0), Alignment::Start, prev)
+        };
+        let first = lay(&mut ts, before, 1, None);
+        let next = lay(&mut ts, &after, 2, Some(&first));
+        let fresh = lay(&mut TextSystem::default(), &after, 2, None);
+        let (a, b) = (carets(&next, &after), carets(&fresh, &after));
+        let at = a.iter().zip(&b).position(|(x, y)| x != y);
+        assert!(at.is_none(), "attributed {attributed}: the caret at byte {:?} is {:?} laid out again and {:?} fresh", at.map(|i| a[i].0), at.map(|i| a[i].1), at.map(|i| b[i].1));
+    }
+}
+
+#[test]
+fn an_empty_rtl_paragraph_of_a_document_field_stands_where_its_typed_text_does() {
+    let style = TextStyle::new(14.0, 400.0);
+    let (scale, max_w, caret_w) = (2.0, 400.0, 3.0);
+    let mut key = 100;
+    let mut laid_out = |ts: &mut TextSystem, text: &str, field: Alignment, para: ParagraphAlign| {
+        key += 1;
+        let attrs = [ParagraphAttrs::default(), ParagraphAttrs::default().align(para)];
+        ts.layout_text(&document(input(text, &[], style, TextDir::Fixed(Flow::Rtl)), &attrs, key), true, scale, Some(max_w), field, None)
+    };
+    // Typed text goes to the right edge, or to the left one: the caret is where it will start
+    // (its right side) or where it ends (its left).
+    for (field, para, right) in [
+        (Alignment::Start, ParagraphAlign::Left, true),
+        (Alignment::End, ParagraphAlign::Left, false),
+        (Alignment::Left, ParagraphAlign::Left, false),
+        (Alignment::Start, ParagraphAlign::Right, true),
+        (Alignment::Start, ParagraphAlign::Justified, true),
+    ] {
+        let mut ts = TextSystem::default();
+        let empty = laid_out(&mut ts, "א\n", field, para).view().caret(3, Affinity::Downstream, caret_w).x0;
+        let typed = laid_out(&mut ts, "א\nא", field, para);
+        let typed_at = typed.view().caret(if right { 3 } else { 5 }, Affinity::Downstream, caret_w).x0;
+        assert!((empty - typed_at).abs() <= f64::from(caret_w), "{field:?} {para:?}: empty caret at {empty}, typed text at {typed_at}");
+    }
+}
+
+#[test]
+fn an_empty_rtl_code_block_with_an_indent_of_its_own_keeps_the_right_padding_line_breaking_uses() {
+    let style = TextStyle::new(14.0, 400.0);
+    let (scale, max_w, caret_w) = (2.0, 400.0, 3.0);
+    let attrs = [ParagraphAttrs::default(), ParagraphAttrs::default().indent(20.0, 0.0)];
+    let blocks = [Block::Code, Block::Code];
+    let mut ts = TextSystem::default();
+    let laid = ts.layout_text(&document(input("א\n", &blocks, style, TextDir::Fixed(Flow::Rtl)), &attrs, 200), true, scale, Some(max_w), Alignment::Start, None);
+    let pad = (Block::Code.indent_pt(style.size) * scale).round() + (20.0 * scale).round();
+    assert_eq!(laid.view().caret(3, Affinity::Downstream, caret_w).x0 as f32, max_w - pad - caret_w);
+}
+
+#[test]
+fn a_selected_line_break_of_an_empty_paragraph_stays_inside_the_wrap_width() {
+    let style = TextStyle::new(14.0, 400.0);
+    let (scale, max_w) = (2.0, 400.0);
+    let mut key = 300;
+    for (flow, text) in [(Flow::Ltr, "a\n\nb"), (Flow::Rtl, "א\n\nב")] {
+        for (field, para) in [
+            (Alignment::Start, ParagraphAlign::Left),
+            (Alignment::End, ParagraphAlign::Left),
+            (Alignment::Left, ParagraphAlign::Left),
+            (Alignment::Start, ParagraphAlign::Right),
+            (Alignment::Start, ParagraphAlign::Center),
+        ] {
+            key += 1;
+            let attrs = [ParagraphAttrs::default(), ParagraphAttrs::default().align(para), ParagraphAttrs::default()];
+            let mut ts = TextSystem::default();
+            let laid = ts.layout_text(&document(input(text, &[], style, TextDir::Fixed(flow)), &attrs, key), true, scale, Some(max_w), field, None);
+            // The boxes of the empty paragraph's line: the break after the text before it may
+            // stand past the wrap width, as the text it follows does.
+            let empty = laid.view().caret(text.find('\n').unwrap() + 1, Affinity::Downstream, 3.0).y0;
+            for (bb, _) in laid.view().range_boxes(0, text.len(), false).into_iter().filter(|(bb, _)| (bb.y0 - empty).abs() < 1.0) {
+                let (left, right) = (bb.x0, bb.x1);
+                assert!(left >= 0.0 && right <= f64::from(max_w), "{flow:?} {field:?} {para:?}: a box spans {left}..{right}, outside 0..{max_w}");
+            }
+        }
+    }
+}
+
+/// An app that hands a span over at the numbers its text moved to: laid out again from the last
+/// layout, the paragraph the span now starts in must come out as a fresh layout of it does.
+#[test]
+fn a_span_moved_with_the_tail_that_now_starts_before_the_edit_lays_out_as_a_fresh_text_does() {
+    let style = TextStyle::new(14.0, 400.0);
+    let (old, new) = ("aaaa\nbbbb\ncccc", "aaaa\nbbbb\ncc");
+    let attrs = vec![ParagraphAttrs::default(); 3];
+    let mut ts = TextSystem::default();
+    let lay = |ts: &mut TextSystem, content: &str, spans: &[Span], prev: Option<&TextLayout>| {
+        let inp = document(rich_input(content, spans, style, false, TextDir::Fixed(Flow::Ltr)), &attrs, 1);
+        ts.layout_text(&inp, true, 2.0, Some(400.0), Alignment::Start, prev)
+    };
+    let first = lay(&mut ts, old, &[Span::new(5, 9).size(28.0)], None);
+    let spans = [Span::new(3, 7).size(28.0)];
+    let next = lay(&mut ts, new, &spans, Some(&first));
+    let fresh = lay(&mut TextSystem::default(), new, &spans, None);
+    assert_eq!(carets(&next, new), carets(&fresh, new));
+    assert_eq!(next.view().height(), fresh.view().height());
 }

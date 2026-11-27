@@ -74,14 +74,22 @@ impl TextEdit {
         out
     }
 
-    /// Core replacement engine updating `text`, `marks`, `blocks`, and `soft_breaks` together.
-    pub(crate) fn apply_text_and_attr_replace(
+    /// Replaces `a..b` with `s` as the atoms beside it allow ([`Self::fence`]), updating `text`,
+    /// `marks`, `blocks`, `soft_breaks` and the paragraph attributes together.
+    pub(crate) fn apply_text_and_attr_replace(&mut self, (a, b): (usize, usize), s: &str, inserted_marks: &[Mark], new_line_block: Option<Block>, mark_new_lines_soft: bool) {
+        let f = self.fence(a, b, s);
+        self.apply_fenced((f.a, f.b), f.text.as_deref().unwrap_or(s), inserted_marks, new_line_block, mark_new_lines_soft, f.back);
+    }
+
+    /// Core replacement engine. `back` is how far before the inserted text's end the caret goes.
+    pub(crate) fn apply_fenced(
         &mut self,
         (a, b): (usize, usize),
         s: &str,
         inserted_marks: &[Mark],
         new_line_block: Option<Block>,
         mark_new_lines_soft: bool,
+        back: usize,
     ) {
         // Callers sync first; a second whole-text pass here would show on every keystroke.
         self.column = Column::Free;
@@ -93,6 +101,7 @@ impl TextEdit {
             && self.soft_breaks.is_empty()
             && !mark_new_lines_soft
             && new_line_block.is_none_or(|b| b == Block::Paragraph)
+            && self.attrs.is_empty()
             && self.blocks.iter().all(|&b| b == Block::Paragraph)
         {
             // Plain text: no per-line passes, so a keystroke in a long plain field costs what
@@ -104,6 +113,7 @@ impl TextEdit {
             self.anchor = a + ins_len;
             self.focus = self.anchor;
             self.cancel_composition();
+            if del_len + ins_len > 0 { self.note_text(a..b, ins_len); }
             return;
         }
         let line_a = self.line_of_byte(a);
@@ -111,12 +121,20 @@ impl TextEdit {
         let line_a_range = self.line_range(line_a);
         let line_b_range = self.line_range(line_b);
 
+        let removed_lines = line_b - line_a;
+        let added_lines = count_newlines(s.as_bytes());
+        // An empty first paragraph gives way to the one merged into it; an atom the edit ends
+        // before keeps its line.
+        let kept = self.kept_atoms((a, b), (line_a, line_b), s);
+        // So does an atom deleted from its start: what follows it is not the atom.
+        let atom_gone = line_a < line_b && a == line_a_range.start && !kept.head && self.paragraph(line_a).atom.is_some();
+        // An atom that stays on a line of its own behind the new text gives nothing to the
+        // line before it.
+        let take_b = !(kept.tail && added_lines > 0)
+            && (atom_gone || (line_a < line_b && line_a_range.is_empty() && a == line_a_range.start && b == line_b_range.start));
+        self.splice_attrs(line_a, line_b, added_lines, take_b, kept);
         // Determine the surviving block for `line_a` when `a..b` merges `line_a..=line_b`.
-        let merged_block = if line_a < line_b
-            && line_a_range.is_empty()
-            && a == line_a_range.start
-            && b == line_b_range.start
-        {
+        let merged_block = if take_b || (kept.tail && added_lines == 0) {
             self.blocks.get(line_b).copied().unwrap_or(Block::Paragraph)
         } else {
             self.blocks.get(line_a).copied().unwrap_or(Block::Paragraph)
@@ -131,8 +149,6 @@ impl TextEdit {
             self.soft_breaks.binary_search(&(line_a as u32)).is_ok()
         };
 
-        let removed_lines = line_b - line_a;
-        let added_lines = count_newlines(s.as_bytes());
         let next_line_blk = new_line_block.unwrap_or(match merged_block {
             Block::Code => Block::Code,
             _ => Block::Paragraph,
@@ -223,7 +239,8 @@ impl TextEdit {
         }
         self.marks = updated_marks;
         self.text.replace_range(a..b, s);
-        self.anchor = a + ins_len;
+        if del_len + ins_len > 0 { self.note_text(a..b, ins_len); }
+        self.anchor = a + ins_len - back;
         self.focus = self.anchor;
         self.cancel_composition();
         self.sync_invariants();
@@ -248,12 +265,15 @@ impl TextEdit {
         self.sync_invariants();
         // Backspace or Delete next to a pill, or a selection into one, takes it whole.
         let (a, b) = self.cover_pills(a, b);
+        let fenced = self.fence(a, b, s);
+        let (a, b, back) = (fenced.a, fenced.b, fenced.back);
+        let s = fenced.text.as_deref().unwrap_or(s);
         if kind == EditKind::Other { self.break_history_group(); }
         if &self.text[a..b] == s
             && self.typing == Typing::Inherited
             && !self.marks.iter().any(|m| m.mark.is_pill() && m.start < b && a < m.end)
         {
-            self.anchor = a + s.len();
+            self.anchor = a + s.len() - back;
             self.focus = self.anchor;
             self.cancel_composition();
             self.mark_edited();
@@ -282,7 +302,8 @@ impl TextEdit {
             self.inherited_marks_at(a)
         };
 
-        self.apply_text_and_attr_replace((a, b), s, &inserted_marks, None, false);
+        self.apply_fenced((a, b), s, &inserted_marks, None, false, back);
+        self.note_kind(kind);
         self.record_ranged(before, s, kind);
     }
 }
