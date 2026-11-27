@@ -36,11 +36,10 @@ pub(super) fn quit_hosts(
     exit
 }
 
-/// A quit asks the windows that hold back their close (`App::on_close_guard`): a macOS Quit asks
-/// each time, the app's end (`once`) asks a window whose question is not up already. True when
-/// a window holds.
-pub(super) fn hold_quit(hosts: &mut [Option<Box<dyn AnyHost>>], once: bool) -> bool {
-    hosts.iter_mut().flatten().fold(false, |held, host| host.hold_quit(once) | held)
+/// A macOS Quit, or the close of the last main window held for another window's guard, asks the
+/// windows that hold back their close (`App::on_close_guard`), each time. True when a window holds.
+pub(super) fn hold_quit(hosts: &mut [Option<Box<dyn AnyHost>>]) -> bool {
+    hosts.iter_mut().flatten().fold(false, |held, host| host.hold_quit() | held)
 }
 
 /// Runs every registered `App::on_display_close` hook once on the UI thread, in registration
@@ -64,8 +63,6 @@ pub(super) fn cleanup_hosts(
     mut send: impl FnMut(crate::quit::Event) -> Vec<crate::quit::Effect>,
 ) -> bool {
     let no_main = !hosts.iter().flatten().any(|h| h.keeps_loop() && !h.finished());
-    // The app ends with its last main window, but a window that holds back its close asks first.
-    let no_main = no_main && !(run_quit && hold_quit(hosts, true));
     if no_main && run_quit {
         for host in hosts.iter_mut().flatten() {
             if host.finished() { host.cancel_menus(); }

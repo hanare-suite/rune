@@ -276,35 +276,77 @@ pub fn quitting() -> bool {
 
 /// Hooks the system's quit requests into the loop: `send` delivers a quit (`true` when the
 /// session ends now and the windows must close) to `Windows`. Once per process, on the UI thread.
-/// `held` wakes `Windows` when a macOS Quit was held back for a guarded window (`take_held`).
+/// `held` wakes `Windows` when a close or a macOS Quit was held back for a guarded window (`hold`).
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn install(send: impl Fn(bool) -> bool + 'static, held: impl Fn() + 'static) {
+    HELD_WAKE.set(Some(Box::new(held)));
     #[cfg(target_os = "windows")]
-    { let _ = held; win32::install(send); }
+    win32::install(send);
     #[cfg(target_os = "macos")]
-    { let _ = send; mac::install(held); }
+    { let _ = send; mac::install(); }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-    let _ = (send, held);
+    let _ = send;
 }
 
-/// macOS: how many windows hold back their close (`App::on_close_guard`) as of their last
-/// handler. AppKit asks about a quit between handlers, with no way to the windows.
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+/// How many windows hold back their close (`App::on_close_guard`) as of their last handler.
+/// AppKit asks about a quit between handlers, with no way to the windows; a window closing asks
+/// how many others hold.
+#[cfg(not(target_arch = "wasm32"))]
 static GUARDED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
-/// A macOS Quit was held back and not yet put to the windows (`take_held`).
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+/// How many windows keep the loop (the main windows) and have not finished, as of their last
+/// handler: the app ends with the last of them.
+#[cfg(not(target_arch = "wasm32"))]
+static MAINS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// A Quit, or the close of the last main window, was held back and not yet put to the windows
+/// (`take_held`).
+#[cfg(not(target_arch = "wasm32"))]
 static HELD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// A window now holds back its close (`true`) or no longer does.
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn guarded_by(on: bool) {
     use std::sync::atomic::Ordering::Relaxed;
     if on { GUARDED.fetch_add(1, Relaxed); } else { GUARDED.fetch_sub(1, Relaxed); }
 }
 
-/// Whether a Quit was held back since the last call: the windows that hold ask now.
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+/// Whether any window holds back its close now.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn any_guarded() -> bool { GUARDED.load(std::sync::atomic::Ordering::Relaxed) > 0 }
+
+/// How many windows other than the caller hold back their close; `own` says whether the caller is
+/// counted among them.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn other_guarded(own: bool) -> usize { GUARDED.load(std::sync::atomic::Ordering::Relaxed).saturating_sub(usize::from(own)) }
+
+/// A main window is open (`true`) or no longer is.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn main_open(on: bool) {
+    use std::sync::atomic::Ordering::Relaxed;
+    if on { MAINS.fetch_add(1, Relaxed); } else { MAINS.fetch_sub(1, Relaxed); }
+}
+
+/// How many main windows other than the caller are open; `own` says whether the caller is counted.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn other_mains(own: bool) -> usize { MAINS.load(std::sync::atomic::Ordering::Relaxed).saturating_sub(usize::from(own)) }
+
+#[cfg(not(target_arch = "wasm32"))]
+thread_local! {
+    /// Wakes the loop when a close or a Quit was held back (`take_held`).
+    static HELD_WAKE: std::cell::RefCell<Option<Box<dyn Fn()>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// A Quit, or the close of the last main window, was held back for the windows that hold back
+/// theirs: they ask at the loop's next turn. On the UI thread.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn hold() {
+    HELD.store(true, std::sync::atomic::Ordering::Relaxed);
+    HELD_WAKE.with_borrow(|held| if let Some(held) = held { held() });
+}
+
+/// Whether a Quit or a close was held back since the last call: the windows that hold ask now.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn take_held() -> bool { HELD.swap(false, std::sync::atomic::Ordering::Relaxed) }
 
 /// Whether the event loop is inside one of its handlers, on the UI thread: a session message

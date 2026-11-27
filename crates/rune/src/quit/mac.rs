@@ -29,17 +29,11 @@ const TERMINATE_NOW: usize = 1;
 /// `NSTerminateCancel`.
 const TERMINATE_CANCEL: usize = 0;
 
-thread_local! {
-    /// Wakes the loop when a quit was held back (`super::take_held`).
-    static HELD_WAKE: std::cell::RefCell<Option<Box<dyn Fn()>>> = const { std::cell::RefCell::new(None) };
-}
-
 extern "C" fn should_terminate(_: *mut AnyObject, _: Sel, _: *mut AnyObject) -> usize {
     // A guarded window (`App::on_close_guard`) holds the quit back, and a logout with it:
     // the loop has the guarded windows ask.
-    if super::GUARDED.load(std::sync::atomic::Ordering::Relaxed) > 0 {
-        super::HELD.store(true, std::sync::atomic::Ordering::Relaxed);
-        HELD_WAKE.with_borrow(|held| if let Some(held) = held { held() });
+    if super::any_guarded() {
+        super::hold();
         return TERMINATE_CANCEL;
     }
     // Windows::exiting carries out the quit's effects.
@@ -47,8 +41,7 @@ extern "C" fn should_terminate(_: *mut AnyObject, _: Sel, _: *mut AnyObject) -> 
     TERMINATE_NOW
 }
 
-pub(super) fn install(held: impl Fn() + 'static) {
-    HELD_WAKE.set(Some(Box::new(held)));
+pub(super) fn install() {
     let Some(mtm) = MainThreadMarker::new() else { return };
     let app = NSApplication::sharedApplication(mtm);
     let selector = sel!(applicationShouldTerminate:);
