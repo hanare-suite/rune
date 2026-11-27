@@ -2258,6 +2258,11 @@ example, and `spikes/paged/check.py` checks every point below headless.
     its block. A pasted atom is an atom on a line of its own, with an id of its own and its
     block, in a code block too (the code line splits around it, and the fragment's text goes in
     as plain text). A paste that holds what the selection holds changes nothing, on every path.
+  - Position decides, and code wins: a line a paste creates or joins in a code block (on an empty code
+    line, at a line's start or end, inside a run) is code, plain text with the whitespace of the plain
+    fallback, no marks and no style; a line of the same paste that ends up in a paragraph keeps the
+    fragment's formatting. Cutting a paragraph that stands next to a code block and pasting it back
+    therefore makes a code line of it.
 - **Pages**: `.page_flow(PageFlow::new(page_height, gap))` lays the field's lines into pages. A
   line that doesn't fit its page moves whole to the next, and the caret, presses, selection
   boxes, caret follow and the input method's cursor rectangle follow it. A paragraph with

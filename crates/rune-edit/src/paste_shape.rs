@@ -14,26 +14,63 @@ impl TextEdit {
         if la < lb && a == ra.start && (b == rb.start || self.paragraph(la).atom.is_some()) { lb } else { la }
     }
 
-    /// Whether the line a paste over the selection lands in is a line of code (not an atom's).
-    pub(super) fn landing_in_code(&self) -> bool {
-        let line = self.landing_line();
-        !self.is_single_line() && self.blocks.get(line) == Some(&Block::Code) && self.paragraph(line).atom.is_none()
-    }
-
-    /// Whether the text of `frag`, pasted over the selection, joins a line of code: its first line
-    /// joins the line before it and its last the line after it, and either may be code.
-    pub(super) fn joins_code(&self, frag: &TextEdit) -> bool {
+    /// Which lines of `frag` land on a line of code, as the paste puts them: one that joins a line joins
+    /// the line before or after it (its first the line the text goes into, its last the one that
+    /// follows), and one that is new is code where the line it splits from is, as typed text is.
+    /// An atom's label is never code.
+    pub(super) fn code_lines(&self, frag: &TextEdit) -> Vec<bool> {
         let (a, b) = self.range();
         let f = self.fence(a, b, &frag.text);
         let p = self.edit_plan((f.a, f.b), f.text.as_deref().unwrap_or(&frag.text), None, false);
         let new = new_lines(p.added_lines, p.kept, p.edge, p.line_a == p.line_b);
         let code = |l: usize| self.blocks.get(l) == Some(&Block::Code) && self.paragraph(l).atom.is_none();
         let kept = if p.take_b { p.line_b } else { p.line_a };
-        let first = frag.text.split('\n').next().is_some_and(|t| !t.is_empty());
-        let last = frag.text.rsplit('\n').next().is_some_and(|t| !t.is_empty());
-        let first_joins = first && !new.get(f.lead).copied().unwrap_or(true) && code(kept);
-        let last_joins = last && !new.get(p.added_lines.saturating_sub(f.back)).copied().unwrap_or(true) && code(if p.edge == Edge::Tail || (p.kept.head && p.line_a < p.line_b) { p.line_b } else { kept });
-        first_joins || last_joins
+        let last_line = if p.edge == Edge::Tail || (p.kept.head && p.line_a < p.line_b) { p.line_b } else { kept };
+        let n = frag.text.split('\n').count();
+        (0..n).map(|k| {
+            if new.get(f.lead + k).copied().unwrap_or(false) { code(kept) } else if k + 1 == n && n > 1 { code(last_line) } else { code(kept) }
+        }).collect()
+    }
+
+    /// `frag` with the text of the lines `code` flags taken from `plain`, line for line, where `plain` has
+    /// the same lines: a code line keeps the whitespace the HTML collapsed. Marks of those lines go.
+    pub(super) fn with_plain_code_lines(frag: &TextEdit, plain: &str, code: &[bool]) -> Option<TextEdit> {
+        let (old, pl): (Vec<&str>, Vec<&str>) = (frag.text.split('\n').collect(), plain.split('\n').collect());
+        if old.len() != pl.len() || old.len() != code.len() || !code.iter().any(|&c| c) { return None; }
+        // Where each byte of the fragment's text goes: a plain line's own bytes are no one's.
+        let mut map: Vec<Option<usize>> = vec![None; frag.text.len() + 1];
+        let (mut text, mut at) = (String::new(), 0usize);
+        for (k, line) in old.iter().enumerate() {
+            let from = if code[k] { pl[k] } else { line };
+            if !code[k] {
+                for i in 0..line.len() { map[at + i] = Some(text.len() + i); }
+            }
+            // the break after a line stays between two lines that keep their text
+            if k + 1 < old.len() && !code[k] && !code[k + 1] { map[at + line.len()] = Some(text.len() + from.len()); }
+            text.push_str(from);
+            if k + 1 < old.len() { text.push('\n'); }
+            at += line.len() + 1;
+        }
+        let mut out = frag.clone();
+        out.text = text;
+        let mut marks: Vec<MarkRange> = Vec::new();
+        for m in &frag.marks {
+            let mut run: Option<(usize, usize)> = None;
+            let mut pieces: Vec<(usize, usize)> = Vec::new();
+            for i in m.start..m.end {
+                match map.get(i).copied().flatten() {
+                    Some(n) if run.is_some_and(|(_, e)| e == n) => run = run.map(|(s, _)| (s, n + 1)),
+                    Some(n) => { pieces.extend(run); run = Some((n, n + 1)); }
+                    None => { pieces.extend(run.take()); }
+                }
+            }
+            pieces.extend(run);
+            // A pill is whole or gone.
+            if m.mark.is_pill() && !(pieces.len() == 1 && pieces[0].1 - pieces[0].0 == m.end - m.start) { continue; }
+            marks.extend(pieces.into_iter().map(|(s, e)| MarkRange { start: s, end: e, mark: m.mark.clone() }));
+        }
+        out.marks = marks;
+        Some(out)
     }
 
     /// Whether `frag` is the selection: its text and marks, and for each line it covers whole its

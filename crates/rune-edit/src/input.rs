@@ -6,10 +6,6 @@ use super::*;
 use rune_text::{Flow, Ink, TextFlow};
 
 impl TextEdit {
-
-
-
-
     /// Inserts `s` at `at` as no one's text: it inherits no marks.
     fn insert_plain_at(&mut self, at: usize, s: &str) {
         self.apply_text_and_attr_replace((at, at), s, &[], None, false);
@@ -497,7 +493,8 @@ impl TextEdit {
 
     /// Paste rich HTML (`html`) with plain-text fallback (`plain`) into `self` at the current
     /// selection, recorded as a single undo step. Does not touch the OS clipboard. A plain field,
-    /// or HTML with no marks or blocks this model keeps, pastes `plain` instead. Pills
+    /// or HTML with no marks or blocks this model keeps, pastes `plain` instead, and a line in a code
+    /// block is code whatever the HTML says: plain text, with the whitespace of `plain`. Pills
     /// (`<span data-pill="id">`) paste as their plain labels: a field restores them only from
     /// its app's own copies, and an app's paste hook can with
     /// [`paste_html_with_pills`](Self::paste_html_with_pills).
@@ -533,7 +530,13 @@ impl TextEdit {
     /// or gives a pill an id of its own, and hands the result to
     /// [`paste_fragment`](Self::paste_fragment).
     pub fn html_fragment(&self, html_str: &str) -> TextEdit {
-        html::parse_html(html_str, self.html_styles()).rich()
+        let mut frag = html::parse_html(html_str, self.html_styles()).rich();
+        // An element that says it is an atom but holds nothing is none: an atom is its label.
+        let empty: Vec<usize> = frag.text.split('\n').enumerate().filter(|(i, t)| t.is_empty() && frag.attrs.get(*i).is_some_and(|a| a.atom.is_some())).map(|(i, _)| i).collect();
+        for i in empty {
+            (frag.attrs[i].atom, frag.attrs[i].id) = (None, 0);
+        }
+        frag
     }
 
     /// Pastes `frag`, a fragment [`html_fragment`](Self::html_fragment) made, with the plain
@@ -547,7 +550,9 @@ impl TextEdit {
     /// selection exactly where the HTML can say it; it cannot say an indent, a page break, a paragraph style on
     /// a list item, quote or code line, so a paste of such a copy follows the rules instead. A fragment with no
     /// text changes nothing at a caret (but for a single line pasted into an empty plain line), and over a
-    /// selection is the plain deletion; a fragment that joins no line of code keeps its own blocks.
+    /// selection is the plain deletion. A line the paste creates or joins in a code block is code, as typed
+    /// text is: where all of them are, it is `plain` (or the fragment's text) pasted as text; where some are,
+    /// those take their text from `plain` line for line and the others keep the fragment's formatting.
     pub fn paste_fragment(&mut self, mut frag: TextEdit, plain: &str) -> EditOutcome {
         if self.secure {
             return self.paste(plain);
@@ -563,13 +568,11 @@ impl TextEdit {
         // whitespace for nothing.
         let mut frag = self.keep_allowed(frag);
         let unformatted = frag.marks.is_empty() && frag.attrs.is_empty() && frag.blocks.iter().all(|&b| b == Block::Paragraph);
-        // (Not where it lands before a line of code and joins none: pasted as text it would be code.)
-        let apart = self.landing_in_code() && !self.joins_code(&frag);
-        if !plain.is_empty() && (frag.text.is_empty() || (unformatted && !apart)) {
+        if !plain.is_empty() && (frag.text.is_empty() || unformatted) {
             return self.paste(plain);
         }
         // A fragment with nothing to keep is the text it holds.
-        if plain.is_empty() && unformatted && !apart {
+        if plain.is_empty() && unformatted {
             // The text is no one's: it takes no marks from the caret (pasting what is selected
             // changes nothing, marks included).
             let (a, b) = self.range();
@@ -582,15 +585,20 @@ impl TextEdit {
             return self.paste(if plain.is_empty() { frag.text.as_str() } else { plain });
         }
         self.sync_invariants();
-        // A code block takes the plain text, whose whitespace HTML would have collapsed; a
-        // fragment's atoms still go in as atoms, on lines of their own, and the code line splits
-        // around them.
+        // A line in a code block is code: plain text, with the whitespace of `plain`, no marks, no style,
+        // whatever line of it the paste creates or joins. Where all of the paste's lines are code it is the
+        // plain text; where some are, those lines take theirs from `plain` and the others keep the
+        // fragment's formatting. A fragment's atoms still go in as atoms, on lines of their own.
         let atoms = frag.attrs.iter().any(|a| a.atom.is_some());
-        // Only text that joins a code line goes in as code: a fragment that ends in a break at a code
-        // line's start joins nothing, and keeps its own blocks.
-        let in_code = !self.is_single_line() && self.joins_code(&frag);
+        let code = if self.is_single_line() { Vec::new() } else { self.code_lines(&frag) };
+        let in_code = !code.is_empty() && code.iter().all(|&c| c);
         if in_code && !atoms {
             return self.paste(if plain.is_empty() { frag.text.as_str() } else { plain });
+        }
+        if !plain.is_empty() {
+            // (An atom's label is no code.)
+            let text_code: Vec<bool> = code.iter().enumerate().map(|(k, &c)| c && !frag.attrs.get(k).is_some_and(|x| x.atom.is_some())).collect();
+            if let Some(f) = Self::with_plain_code_lines(&frag, plain, &text_code) { frag = f; }
         }
         // A fragment with no text is nothing to paste: a caret takes no more than a single line
         // pasted into an empty plain line gives it, and a selection is the plain deletion.
@@ -623,12 +631,17 @@ impl TextEdit {
             // Single-line field: strip line breaks from `frag.text` while keeping inline marks.
             let mut clean = String::with_capacity(frag.text.len());
             let mut byte_map = vec![0usize; frag.text.len() + 1];
+            // A run of line breaks between text is one space; at the end of the text it is none.
+            let mut pending = false;
             for (i, ch) in frag.text.char_indices() {
                 byte_map[i] = clean.len();
-                if !ch.is_control() && !matches!(ch, '\u{2028}' | '\u{2029}') {
+                if ch == '\n' {
+                    pending = true;
+                } else if !ch.is_control() && !matches!(ch, '\u{2028}' | '\u{2029}') {
+                    if pending && !clean.is_empty() && !clean.ends_with(' ') { clean.push(' '); }
+                    pending = false;
+                    byte_map[i] = clean.len();
                     clean.push(ch);
-                } else if ch == '\n' && !clean.ends_with(' ') && !clean.is_empty() && i + 1 < frag.text.len() {
-                    clean.push(' ');
                 }
             }
             byte_map[frag.text.len()] = clean.len();
@@ -707,7 +720,7 @@ impl TextEdit {
             if !is_new(j) && !single { continue; }
             // Text of a fragment that joins code goes in as plain text: the lines it makes stay code lines,
             // with no style of the fragment's.
-            if in_code && from.atom.is_none() { continue; }
+            if self.blocks.get(line) == Some(&Block::Code) && from.atom.is_none() { continue; }
             // A pasted atom that takes an empty line gets a new id: its id never named text.
             let atom_id = if single && from.atom.is_some() { self.fresh_id() } else { 0 };
             if self.attributed() {
@@ -746,7 +759,7 @@ impl TextEdit {
         }
 
         // Add `frag.marks` shifted by `ins_at`.
-        for m in frag.marks.iter().filter(|_| !in_code) {
+        for m in &frag.marks {
             self.marks.push(MarkRange {
                 start: ins_at + m.start,
                 end: ins_at + m.end,
@@ -757,7 +770,7 @@ impl TextEdit {
         self.sync_invariants();
         // The pasted text's marks and blocks, as one change over it.
         let end = (ins_at + frag.text.len()).min(self.text.len());
-        if !frag.marks.is_empty() && !in_code { self.note_marks(ins_at..end); }
+        if !frag.marks.is_empty() { self.note_marks(ins_at..end); }
         if styled || frag_lines > 1 || frag.blocks.first().is_some_and(|&b| b != Block::Paragraph) {
             self.note_paragraphs(first..first + new.len().max(frag_lines));
         }

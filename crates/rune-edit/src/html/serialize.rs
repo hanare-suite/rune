@@ -33,6 +33,12 @@ pub(crate) fn serialize_html(edit: &TextEdit, range: Range<usize>) -> String {
         }
     }
 
+    // An empty code line the selection ends at the start of is no part of it: a `<pre>` cannot say its
+    // break, so the copy ends behind the break before it, in a paragraph.
+    while paras.len() > 1 && paras.last().is_some_and(|p| p.2 == Block::Code && p.1.is_empty() && p.1.start == end && edit.line_range(p.0).start == end) {
+        paras.pop();
+    }
+
     // A copy that ends behind a line break, at the start of a paragraph it takes nothing of,
     // ends in an empty paragraph, so a paste breaks the line there as the copy did.
     let open_end = end > start && edit.text.as_bytes()[end - 1] == b'\n' && paras.last().is_some_and(|p| p.1.end < end);

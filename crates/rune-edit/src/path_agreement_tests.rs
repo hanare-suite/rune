@@ -151,34 +151,36 @@ pub(super) fn mkfrag(f: &Frag) -> TextEdit {
 
 fn la_line(e: &TextEdit, a: usize) -> usize { e.line_of_byte(a) }
 
-/// Whether text `ft` pasted over `a..b` joins a line of code: its first line the paragraph before it and
-/// its last the one after it. A paste that joins none (a fragment ending in a break at a code line's start)
-/// keeps its own blocks, where typed and plain text take the code block.
+/// Whether every line of text `ft` pasted over `a..b` lands on a line of code: the first joins the paragraph
+/// before it (or goes before the line it is pasted at), the last joins the one after it, and a line the paste
+/// makes is code where the line it splits from is. Position decides, and code wins.
 pub(super) fn joins_code_obs(e: &TextEdit, a: usize, b: usize, ft: &str) -> bool {
     let ol = line_ranges(&e.text);
     let (la, lb) = (e.line_of_byte(a), e.line_of_byte(b));
     let code = |l: usize| e.blocks()[l] == Block::Code && e.paragraph(l).atom.is_none();
     let nl = ft.matches('\n').count();
-    let (kept_head, kept_tail) = (e.paragraph(la).atom.is_some() && a == ol[la].1, e.paragraph(lb).atom.is_some() && b == ol[lb].0 && nl + 1 > 0);
+    let (kept_head, kept_tail) = (e.paragraph(la).atom.is_some() && a == ol[la].1, e.paragraph(lb).atom.is_some() && b == ol[lb].0);
     let whole = la < lb && a == ol[la].0 && (b == ol[lb].0 || e.paragraph(la).atom.is_some());
     // (An atom left whole after the paste keeps its own line: the line before it stays the first.)
     let kept = if whole && !kept_tail { lb } else { la };
     let (front, tail) = (a == ol[la].0 && nl > 0 && !kept_head && !kept_tail, la < lb && a > ol[la].0 && nl > 0);
-    let first = ft.split('\n').next().is_some_and(|t| !t.is_empty());
-    let last = ft.rsplit('\n').next().is_some_and(|t| !t.is_empty());
-    // The last line joins the rest of the line after the paste, or the receiver it goes before.
-    let rest = (nl == 0 || front || tail || b < ol[lb].1) && !(kept_tail && nl > 0);
-    // (An edit that starts at an atom's end leaves the line it ends in as the last line.)
     let behind_atom = la < lb && e.paragraph(la).atom.is_some() && a == ol[la].1;
-    (first && !front && code(kept)) || (last && rest && code(if tail || behind_atom { lb } else { kept }))
+    let last_line = if tail || behind_atom { lb } else { kept };
+    let rest = (nl == 0 || front || tail || b < ol[lb].1) && !(kept_tail && nl > 0);
+    (0..=nl).all(|k| {
+        let joined = if k == 0 { !front } else if k == nl { rest } else { false };
+        if !joined { code(kept) } else if k == nl && nl > 0 { code(last_line) } else { code(kept) }
+    })
 }
 
-/// Whether a paste over `a..b` lands in code and joins none of it.
-pub(super) fn code_apart(e: &TextEdit, a: usize, b: usize, ft: &str) -> bool {
+/// Whether the line the lines a paste makes split from is code: they are code lines then, as typed text's are.
+pub(super) fn makes_code_lines(e: &TextEdit, a: usize, b: usize, ft: &str) -> bool {
     let ol = line_ranges(&e.text);
     let (la, lb) = (e.line_of_byte(a), e.line_of_byte(b));
-    let landing = if la < lb && a == ol[la].0 && (b == ol[lb].0 || e.paragraph(la).atom.is_some()) { lb } else { la };
-    (e.blocks()[landing] == Block::Code || e.blocks()[la] == Block::Code) && !joins_code_obs(e, a, b, ft)
+    let kept_tail = e.paragraph(lb).atom.is_some() && b == ol[lb].0 && ft.contains('\n');
+    let whole = la < lb && a == ol[la].0 && (b == ol[lb].0 || e.paragraph(la).atom.is_some());
+    let kept = if whole && !kept_tail { lb } else { la };
+    e.blocks()[kept] == Block::Code
 }
 
 /// An atom is never a soft line and never has one.
@@ -277,7 +279,7 @@ fn a_pasted_fragment_follows_the_rules_over_every_selection() {
                         if (at.indent, at.first_line_indent) != (0.0, 0.0) { fail("atom-indent", format!("{at:?}")); }
                     } else if !(k == last && flines[k].is_empty()) {
                         if at.atom.is_some() && !flines[k].is_empty() { fail("text-is-atom", format!("frag line {k} {t:?} is an atom")); }
-                        if k > 0 && k < last && !in_code {
+                        if k > 0 && k < last && !in_code && !makes_code_lines(&e, a, b, ft) {
                             if t != flines[k] { fail("mid-line-text", format!("{t:?}")); }
                             if at.id < 100 || (at.style, at.align) != (from.style, from.align) || bl != fb[k] || at.indent != 0.0 || at.first_line_indent != 0.0 { fail("new-para", format!("frag line {k}: {at:?} {bl:?}")); }
                         }
@@ -408,7 +410,6 @@ fn every_path_agrees_over_every_selection_of_every_document() {
         for a0 in 0..=n { for b0 in a0..=n {
             let mut pr = e.clone(); pr.set_selection(a0, b0);
             if pr.range() != (a0, b0) { continue; }
-            let code = e.blocks()[e.line_of_byte(a0)] == Block::Code;
             for s in inputs {
                 cases += 1;
                 let mut res: Vec<(&str, Vec<Row>, Vec<u32>)> = Vec::new();
@@ -452,10 +453,7 @@ fn every_path_agrees_over_every_selection_of_every_document() {
                     // A fragment with attributes that holds what is selected is a no-op only when its
                     // attributes are the selection's; otherwise it restyles, as the rules say.
                     if same && name.starts_with("frag") && *name != "frag" { continue; }
-                    // A fragment that lands in code and joins none of it keeps its own blocks: only typed and
-                    // plain text take the code block there.
-                    if code_apart(&e, a0, b0, s) && !matches!(*name, "insert" | "paste") { continue; }
-                    let key = format!("disagree/{name}{}{}", if same { "/SAME" } else { "" }, if code { "/code" } else { "" });
+                    let key = format!("disagree/{name}{}", if same { "/SAME" } else { "" });
                     if *r != res[0].1 { fails.entry(key).or_default().push(format!("{doc} {a0}..{b0} {:?} {s:?}\n      typed: {}\n      {name}: {}", &e.text[a0..b0], show(&res[0].1), show(r))); }
                     else if *sb != res[0].2 { fails.entry(format!("soft/{name}")).or_default().push(format!("{doc} {a0}..{b0} {:?} {s:?} typed {:?} got {:?}", &e.text[a0..b0], res[0].2, sb)); }
                 }
@@ -621,7 +619,7 @@ fn a_pasted_fragment_follows_the_rules_in_code_and_around_every_document() {
                             let code_line = bl == Block::Code;
                             let as_text = |o: ParagraphAttrs| { let mut o = o; o.atom = None; o.id = at.id; o };
                             let kept_atom = atom_touch && (la..=lb).any(|l| oattrs[l].atom.is_some() && (as_text(oattrs[l]) == at || { let mut o = as_text(oattrs[l]); o.page_break_before = false; o == at }));
-                            if kept_atom { continue; }
+                            if kept_atom || makes_code_lines(&e, a, b, ft) { continue; }
                             if (at.style, at.align) != (from.style, from.align) || bl != fb[k] || at.indent != 0.0 || at.first_line_indent != 0.0 || at.page_break_before {
                                 fail(&format!("new-para-k{}{}{}", if k == 0 { "first" } else if k == last { "last" } else { "mid" }, if atom_touch { "/atomtouch" } else { "" }, if code_line { "/codeline" } else { "" }), format!("frag line {k}: {at:?} {bl:?}"));
                             }
