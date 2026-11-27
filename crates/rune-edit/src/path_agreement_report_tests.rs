@@ -532,3 +532,92 @@ fn a_cut_to_the_end_of_the_document_leaves_the_last_paragraphs_line() {
     assert_eq!(e.text, "ab\ncd\nef");
     assert_eq!((e.paragraph(0).id, e.paragraph(2).id), (1, 3), "{:?}", e.paragraph_attrs());
 }
+
+fn soft_doc(text: &str, soft: &[u32], attributed: bool) -> TextEdit {
+    let blocks = vec![Block::Paragraph; text.split('\n').count()];
+    let mut e = if attributed { doc(text, blocks) } else { TextEdit::from_parts(text, vec![], blocks) };
+    e.set_soft_breaks(soft.to_vec());
+    e.take_changes();
+    e
+}
+
+/// A line's softness describes the break before it, and when lines merge that break survives only if it is the one
+/// before the first: a paragraph deleted to the end of the text, whose last line is soft, leaves the empty line of
+/// that paragraph (its id, hard), not a soft line glued on the paragraph above; the line left of a hard paragraph
+/// deleted in front of a soft line is hard.
+#[test]
+fn a_merged_line_takes_the_softness_of_the_first_line_and_the_end_of_the_text_the_paragraphs_first_line() {
+    let key = |k: Key| KeyEvent { key: k, mods: Mods::default() };
+    for attributed in [true, false] {
+        // (document, soft lines, selection, id of the line left, text left)
+        for (text, soft, sel, id) in [("ab\ncd\nef", &[2u32][..], (3, 8), 2u64), ("ab\ncd\nef", &[2], (0, 8), 2), ("ti\nab\ncd\nef", &[3], (3, 11), 3), ("ti\nab\ncd\nef", &[3], (0, 11), 3)] {
+            let name = format!("attributed {attributed} {text:?} {sel:?}");
+            let left = format!("{}{}", &text[..sel.0], "");
+            let base = soft_doc(text, soft, attributed);
+            let ok = |e: &TextEdit, t: &str, what: &str| {
+                assert_eq!(e.text, t, "{name} {what}");
+                assert!(e.soft_breaks().is_empty(), "{name} {what}: soft {:?}", e.soft_breaks());
+                if attributed { assert_eq!(e.paragraph(e.text.split('\n').count() - if t.ends_with("\n\n") { 2 } else { 1 }).id, id, "{name} {what}: {:?}", e.paragraph_attrs()); }
+            };
+            let mut e = base.clone(); e.set_selection(sel.0, sel.1); e.key(&key(Key::Backspace), None);
+            ok(&e, &left, "backspace");
+            let mut e = base.clone(); e.set_selection(sel.0, sel.1); e.insert("x");
+            ok(&e, &format!("{left}x"), "typed");
+            let mut e = base.clone(); e.set_selection(sel.0, sel.1); e.key(&key(Key::Enter), None);
+            assert_eq!(e.text, format!("{left}\n"), "{name} return");
+            assert!(e.soft_breaks().is_empty(), "{name} return: soft {:?}", e.soft_breaks());
+            // Cut, then paste back: the paragraph, with its soft line, is what it was.
+            let mut e = base.clone(); e.set_selection(sel.0, sel.1);
+            let html = e.selected_html();
+            e.key(&key(Key::Backspace), None);
+            let f = e.html_fragment(&html);
+            e.set_caret(sel.0);
+            e.paste_fragment(f, &text[sel.0..]);
+            assert_eq!(e.text, text, "{name} paste back");
+            assert_eq!(e.soft_breaks(), base.soft_breaks(), "{name} paste back");
+            if attributed { assert_eq!(e.paragraph_attrs(), base.paragraph_attrs(), "{name} paste back"); }
+        }
+        // The softness of an earlier line: deleting a hard paragraph in front of a soft line leaves it hard, and the
+        // first line's own softness stays.
+        let base = soft_doc("ab\ncd\nef\ngh", &[2], attributed);
+        let mut e = base.clone(); e.set_selection(3, 6); e.key(&key(Key::Backspace), None);
+        assert_eq!((e.text.as_str(), e.soft_breaks().to_vec()), ("ab\nef\ngh", vec![]), "attributed {attributed}: cd deleted in front of soft ef");
+        let mut e = base.clone(); e.set_selection(6, 9); e.key(&key(Key::Backspace), None);
+        assert_eq!((e.text.as_str(), e.soft_breaks().to_vec()), ("ab\ncd\ngh", vec![2]), "attributed {attributed}: soft ef deleted");
+    }
+}
+
+/// Unformatted text pasted at a paragraph's start: the lines that become new paragraphs take no marks from the one
+/// that starts there, and an open last line that joins it inherits as typed text does (its run size is kept), as one
+/// pasted from a field with no newline does.
+#[test]
+fn only_the_pasted_lines_that_become_paragraphs_take_no_marks() {
+    let size = Mark::Size(MarkSize::pt(18.0));
+    let mut d = TextEdit::from_parts("body\nTerm rest", vec![mr(5..14, size.clone()), mr(5..9, Mark::Bold)], vec![Block::Paragraph; 2]);
+    d.set_paragraph_attrs(vec![ParagraphAttrs::default().id(1), ParagraphAttrs::default().id(2)]);
+    d.set_paragraph_ids(100);
+    let on = |e: &TextEdit, text: &str| -> Vec<(String, String)> {
+        let mut v: Vec<(String, String)> = e.marks().iter().map(|m| (format!("{:?}", m.mark), e.text[m.start..m.end].to_string())).collect();
+        v.sort();
+        let _ = text;
+        v
+    };
+    let mut e = d.clone();
+    e.set_caret(5);
+    e.paste_html("<p>a</p><p>b</p>", "a\nb");
+    assert_eq!(e.text, "body\na\nbTerm rest");
+    let got = on(&e, &e.text);
+    assert!(got.iter().all(|(_, t)| !t.contains('a')), "the new paragraph a has no marks: {got:?}");
+    assert!(got.contains(&(format!("{size:?}"), "bTerm rest".into())), "b inherits the size as typed text does: {got:?}");
+    assert!(got.contains(&(format!("{:?}", Mark::Bold), "bTerm".into())), "and the bold: {got:?}");
+    let mut e = d.clone();
+    e.set_caret(5);
+    e.paste_html("<p>b</p>", "b");
+    assert!(on(&e, "").contains(&(format!("{size:?}"), "bTerm rest".into())), "{:?}", on(&e, ""));
+    // One undo step.
+    let mut e = d.clone();
+    e.set_caret(5);
+    e.paste_html("<p>a</p><p>b</p>", "a\nb");
+    e.undo();
+    assert_eq!(e.text, "body\nTerm rest");
+}
