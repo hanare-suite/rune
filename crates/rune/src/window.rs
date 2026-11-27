@@ -241,7 +241,7 @@ pub(crate) trait AnyHost {
     fn vanish(&mut self) {}
     /// The close about to come ends the app (`Host::close`).
     fn closing_ends_app(&mut self) {}
-    fn hold_quit(&mut self, _once: bool) -> bool { false }
+    fn hold_quit(&mut self) -> bool { false }
     /// Ends a tracking pop-up menu and answers waiting ones `None`, before the host drops or
     /// the loop exits.
     fn cancel_menus(&mut self) {}
@@ -568,7 +568,7 @@ impl ApplicationHandler<WakeEvent> for Windows {
             let _handling = crate::quit::handling();
             // The last window's close ends a fast-exiting app: the window can go at once.
             #[cfg(not(target_arch = "wasm32"))]
-            if matches!(event, WindowEvent::CloseRequested) && crate::quit::fast_exit_hook().is_some()
+            if matches!(event, WindowEvent::CloseRequested) && crate::quit::fast_exit_hook().is_some() && !crate::quit::any_guarded()
                 && !this.hosts.iter().flatten().any(|h| !h.owns(id) && !h.finished() && h.keeps_loop())
                 && let Some(host) = this.hosts.iter_mut().flatten().find(|h| h.owns(id) && h.keeps_loop())
             {
