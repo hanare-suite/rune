@@ -35,6 +35,11 @@ impl<S: 'static> CloseGuard<S> {
             #[cfg(not(feature = "hot"))]
             rt.update(self.ask);
         }
+        // An `ask` that leaves the guard up and asks to close the window all the same would only
+        // ask again: that close is dropped, in every host.
+        if held && self.is_guarded(&rt.state) && rt.core().shell_request == Some(crate::el::Shell::Close) {
+            rt.core_mut().shell_request = None;
+        }
         held
     }
 }
@@ -66,7 +71,17 @@ impl<S: 'static> App<S> {
     /// On a user's close request the app's [`App::on_close_request`] runs first and a
     /// [`CloseResponse::Defer`](crate::CloseResponse::Defer) stands on its own; a `Close` goes on
     /// to ask `guarded`, and then to `on_close`. A close the app asks for skips
-    /// `on_close_request` and meets the guard all the same, as does a macOS Quit.
+    /// `on_close_request` and meets the guard all the same, as does a macOS Quit. An `ask` that
+    /// asks to close the window while `guarded` still says true is asked once: that close is
+    /// dropped.
+    ///
+    /// When the close of the last main window would end the app and another window, open or a
+    /// hidden `App::keep_running` one, is guarded, that close is held too: the main window stays,
+    /// the guarded windows ask once, as for a held macOS Quit, and the question is not taken up
+    /// again. After the answer, closing the main window again ends the app, or asks again if a
+    /// guard still holds. A hidden `keep_running` window counts as guarded while `guarded` says
+    /// true, for that close and for a macOS Quit: its `ask` runs, and showing the window is the
+    /// app's job.
     pub fn on_close_guard(self, guarded: fn(&S) -> bool, ask: fn(&mut S, &mut Tx)) -> Self {
         self.shared.close_guard.set(CloseGuard { guarded, ask });
         self

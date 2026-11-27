@@ -25,10 +25,9 @@ impl AnyHost for Host {
     fn take_startup_error(&mut self) -> Option<String> { self.startup_error.take() }
     fn keeps_loop(&self) -> bool { self.keeps_loop }
     fn closing_ends_app(&mut self) { self.ends_app = true; }
-    /// A quit asks a window that holds back its close (`App::on_close_guard`).
-    fn hold_quit(&mut self, once: bool) -> bool {
+    fn hold_quit(&mut self) -> bool {
         if !self.app.has_close_guard() { return false; }
-        self.in_turn(|h| h.holds_quit(once))
+        self.in_turn(Host::holds_quit)
     }
     fn key(&self) -> Option<&str> { Some(self.native_handle.key()) }
     fn reopen_candidate(&self) -> crate::platform::reopen::Candidate {
@@ -222,7 +221,6 @@ impl Host {
         let entered = self.app.enter_turn();
         if entered { self.turn = Turn::Within; }
         let result = f(self);
-        #[cfg(target_os = "macos")]
         self.note_guard();
         if entered {
             self.app.leave_turn();

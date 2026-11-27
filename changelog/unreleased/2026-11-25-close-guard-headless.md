@@ -1,0 +1,1 @@
+- Headless runs change for apps without a guard too: `Tx::close_window` now runs `on_close` (it did nothing before), a window closes once and stays closed until `{"reopen": true}`, and `--tree` carries `"closed": true` once the window closed.
