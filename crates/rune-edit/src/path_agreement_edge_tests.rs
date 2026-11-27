@@ -110,8 +110,6 @@ fn an_atom_in_every_block_survives_copy_paste_and_cut_and_paste() {
             let tag = format!("/atom{ab:?}");
             // expected fragment: text == selection text (a trailing break gives an empty last line)
             let sel = &src.text[a..b];
-            // A selection of one line break copies as nothing.
-            if sel == "\n" { continue; }
             if f.text != sel { fails.entry(format!("frag-text{tag}/nb{nb:?}")).or_default().push(msg.clone()); continue; }
             let fl = f.text.split('\n').count();
             if f.blocks().len() != fl { fails.entry(format!("frag-lines{tag}")).or_default().push(msg.clone()); continue; }
@@ -309,8 +307,7 @@ fn an_empty_line_a_fragment_ending_in_an_atom_lands_at_stays_whole() {
                 recv.id = if ids { 2 } else { 0 };
                 let kept = (0..e.blocks().len()).any(|i| e.text.split('\n').nth(i) == Some("") && e.paragraph(i) == recv && e.blocks()[i] == *blk);
                 if !takes && !kept { fails.push(format!("{msg}: the empty line did not stay whole")); }
-                // (Without ids the report has no ids to follow.)
-                if let Err(w) = check(&before, &e, &ch).or_else(|w| if ids { Err(w) } else { Ok(()) }) { fails.push(format!("{msg}: report {w}")); }
+                if let Err(w) = check(&before, &e, &ch) { fails.push(format!("{msg}: report {w}")); }
                 y.set_history(true);
                 let st = snap(&y);
                 y.paste_fragment(f, "");
@@ -342,10 +339,11 @@ fn cut_and_paste_in_place_restores_whole_paragraphs_without_atoms() {
             let (la, lb) = (e.line_of_byte(a), e.line_of_byte(b));
             let whole = a == ol[la].0 && la < lb && b == ol[lb].0;
             let atoms = (la..=lb).any(|l| e.paragraph(l).atom.is_some());
-            let lossy = (la..=lb).any(|l| {
+            // (The line the selection ends before is not in the copy: only the lines cut count.)
+            let lossy = (la..lb).any(|l| {
                 let o = e.paragraph(l);
                 (o.style != 0 && e.blocks()[l] != Block::Paragraph) || o.page_break_before || o.indent != 0.0 || o.first_line_indent != 0.0 || e.blocks()[l] == Block::Code
-            }) || e.marks().iter().any(|m| m.mark.is_pill() && m.start < b && m.end > a) || e.soft_breaks().iter().any(|&l| (l as usize) >= la && (l as usize) <= lb);
+            }) || e.marks().iter().any(|m| m.mark.is_pill() && m.start < b && m.end > a) || e.soft_breaks().iter().any(|&l| (l as usize) >= la && (l as usize) < lb);
             if !whole || atoms || lossy || e.text[a..b] == *"\n" { continue; }
             cases += 1;
             let html = s.selected_html();

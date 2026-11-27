@@ -20,10 +20,11 @@ pub(super) struct Seen {
     attrs: Vec<ParagraphAttrs>,
     blocks: Vec<Block>,
     marks: Vec<MarkRange>,
+    soft: Vec<u32>,
 }
 
 pub(super) fn seen(e: &TextEdit) -> Seen {
-    Seen { text: e.text.clone(), attrs: e.paragraph_attrs(), blocks: e.blocks().to_vec(), marks: e.marks().to_vec() }
+    Seen { text: e.text.clone(), attrs: e.paragraph_attrs(), blocks: e.blocks().to_vec(), marks: e.marks().to_vec(), soft: e.soft_breaks().to_vec() }
 }
 
 /// Each line's first byte and the byte of the line break that ends it.
@@ -79,7 +80,9 @@ pub(super) fn check(before: &Seen, e: &TextEdit, changes: &[EditChange]) -> Resu
     }
     let mut ids: Vec<u64> = now.attrs.iter().map(|a| a.id).collect();
     ids.sort_unstable();
-    if ids.contains(&0) || ids.windows(2).any(|w| w[0] == w[1]) {
+    // Ids are the field's when it numbers paragraphs: a document without ids has none to be unique.
+    let numbered = before.attrs.iter().any(|a| a.id != 0);
+    if numbered && (ids.contains(&0) || ids.windows(2).any(|w| w[0] == w[1])) {
         return Err(format!("ids {:?}", now.attrs.iter().map(|a| a.id).collect::<Vec<_>>()));
     }
     if e.history_len() != (0, 0) {
@@ -111,6 +114,18 @@ pub(super) fn check(before: &Seen, e: &TextEdit, changes: &[EditChange]) -> Resu
     }
     if marked(&before.marks, old_hi, before.text.len()) != marked(&now.marks, new_hi, now.text.len()) {
         return Err(format!("marks after byte {old_hi} (now {new_hi}) went from {:?} to {:?}", before.marks, now.marks));
+    }
+    // A line whose paragraph the changes leave alone is as soft as it was.
+    for i in 0..head {
+        if before.soft.contains(&(i as u32)) != now.soft.contains(&(i as u32)) {
+            return Err(format!("line {i}, before the change, was soft {:?} and is {:?}", before.soft, now.soft));
+        }
+    }
+    for k in 1..=tail {
+        let (i, j) = (old_lines.len() - k, new_lines.len() - k);
+        if before.soft.contains(&(i as u32)) != now.soft.contains(&(j as u32)) {
+            return Err(format!("line {i}, after the change, was soft {:?} and is {:?} (now {j})", before.soft, now.soft));
+        }
     }
     Ok(())
 }

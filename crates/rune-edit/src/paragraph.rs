@@ -428,3 +428,7 @@ mod path_agreement_tests;
 #[cfg(test)]
 #[path = "path_agreement_edge_tests.rs"]
 mod path_agreement_edge_tests;
+
+#[cfg(test)]
+#[path = "path_agreement_report_tests.rs"]
+mod path_agreement_report_tests;

@@ -165,8 +165,8 @@ pub(super) fn line_ranges(text: &str) -> Vec<(usize, usize)> {
 fn a_pasted_fragment_follows_the_rules_over_every_selection() {
     let mut fails: BTreeMap<&'static str, Vec<String>> = BTreeMap::new();
     let mut cases = 0usize;
-    let frags: Vec<Frag> = fragments().into_iter().take(22).collect();
-    for (doc, e) in docs().into_iter().take(14) {
+    let frags: Vec<Frag> = fragments();
+    for (doc, e) in docs() {
         let n = e.text.len();
         let olines = line_ranges(&e.text);
         let oattrs = e.paragraph_attrs();
@@ -325,7 +325,7 @@ fn a_pasted_fragment_follows_the_rules_over_every_selection() {
     assert!(fails.is_empty(), "{}", summary(cases, &fails));
 }
 
-type Path = (&'static str, fn(&mut TextEdit, &str));
+pub(super) type Path = (&'static str, fn(&mut TextEdit, &str));
 fn html_of(s: &str, bold: bool) -> String {
     s.split('\n').map(|l| if bold && !l.is_empty() { format!("<p><b>{l}</b></p>") } else { format!("<p>{l}</p>") }).collect()
 }
@@ -337,7 +337,7 @@ fn richfrag(s: &str, mark: bool) -> TextEdit {
     f.set_paragraph_attrs((0..lines).map(|i| ParagraphAttrs::default().id(60 + i as u64)).collect());
     f
 }
-const PATHS: [Path; 9] = [
+pub(super) const PATHS: [Path; 9] = [
     ("typed", |e, s| { e.key(&KeyEvent { key: Key::Text(s.into()), mods: Mods::default() }, None); }),
     ("insert", |e, s| e.insert(s)),
     ("paste", |e, s| { e.paste(s); }),
@@ -381,7 +381,7 @@ fn every_path_agrees_over_every_selection_of_every_document() {
                     (p.1)(&mut x, s);
                     let ch = x.take_changes();
                     let r = rows(&x, &orig);
-                    if !idsoff { if let Err(w) = check(&before, &x, &ch) { fails.entry(format!("report/{}", p.0)).or_default().push(format!("{doc} {a0}..{b0} {s:?}: {w}")); } }
+                    if let Err(w) = check(&before, &x, &ch) { fails.entry(format!("report/{}", p.0)).or_default().push(format!("{doc} {a0}..{b0} {s:?}: {w}")); }
                     if !soft_ok(&x) { fails.entry(format!("soft-atom/{}", p.0)).or_default().push(format!("{doc} {a0}..{b0} {s:?}: {:?}", x.soft_breaks())); }
                     let ids: Vec<u64> = x.paragraph_attrs().iter().map(|a| a.id).collect();
                     let mut u = ids.clone(); u.sort(); u.dedup();
@@ -756,8 +756,13 @@ fn shift_return_is_the_text_of_a_break_with_a_soft_line_and_never_beside_an_atom
                 if l > 0 && s.paragraph(l - 1).atom.is_some() { fails.entry(format!("soft-after-atom{tag}")).or_default().push(msg.clone()); }
                 if l > 0 && s.blocks()[l] != s.blocks()[l - 1] { fails.entry(format!("soft-block{tag}")).or_default().push(msg.clone()); }
             }
-            // structure vs typed (an atom is never a soft line: beside one the break is a hard break)
+            // An atom is never a soft line: beside one the break is a hard break, so a caret gives Return's
+            // result, and a selection gives its deletion and then Shift+Return.
             if atom {
+                let mut other = e.clone();
+                other.set_selection(a, b);
+                if a == b { other.key(&KeyEvent { key: Key::Enter, mods: Mods::default() }, None); } else { other.insert(""); other.key(&shift, None); }
+                if (rows(&s, &orig), s.soft_breaks().to_vec()) != (rows(&other, &orig), other.soft_breaks().to_vec()) { fails.entry(format!("atom-shift{tag}")).or_default().push(format!("{msg}\n   expected {} soft {:?}", show(&rows(&other, &orig)), other.soft_breaks())); }
                 let mut y = e.clone();
                 y.set_history(true);
                 y.set_selection(a, b);
