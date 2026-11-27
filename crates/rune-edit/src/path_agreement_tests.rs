@@ -118,45 +118,68 @@ fn every_path_agrees_over_every_selection_of_every_document() {
     assert!(fails.is_empty(), "{} failures:\n{}", fails.len(), fails.join("\n"));
 }
 
+/// Fragments: text, paragraph attributes (an atom 20 points tall where one is set) and marks.
+fn fragments() -> Vec<(&'static str, Vec<ParagraphAttrs>, Vec<MarkRange>)> {
+    let d = ParagraphAttrs::default();
+    let q = || d.id(50).atom(20.0);
+    vec![
+        ("Q", vec![q()], vec![]),
+        ("A\nQ", vec![d.id(51).style(7), q()], vec![]),
+        ("Q\nA", vec![q(), d.id(51).style(7)], vec![]),
+        ("Q\n", vec![q(), d.id(51)], vec![]),
+        ("Q\nfg", vec![q(), d.id(51)], vec![MarkRange::new(2..4, Mark::Link("https://example.com".into()))]),
+        ("A\nQ\nB", vec![d.id(51), q(), d.id(52)], vec![MarkRange::new(0..1, Mark::Bold)]),
+        ("A\nQ\nQ\nB", vec![d.id(51), q(), q(), d.id(52)], vec![]),
+        ("x@p\nQ", vec![d.id(51), q()], vec![MarkRange::new(1..3, Mark::Pill("p1".into())), MarkRange::new(0..1, Mark::Italic)]),
+        ("A\nB\n", vec![d.id(51).style(7).align(ParagraphAlign::Center), d.id(52).style(8), d.id(53)], vec![]),
+        ("A\nB", vec![d.id(51).style(7).align(ParagraphAlign::Center), d.id(52).style(8)], vec![MarkRange::new(0..1, Mark::Bold)]),
+        ("A", vec![d.id(51).style(7).align(ParagraphAlign::Center)], vec![]),
+    ]
+}
+
 #[test]
 fn a_pasted_fragment_with_atoms_keeps_atoms_whole_and_ids_unique() {
-    let d = ParagraphAttrs::default();
-    let frags: Vec<(&str, Vec<ParagraphAttrs>)> = vec![
-        ("Q", vec![d.id(50).atom(20.0)]),
-        ("A\nQ", vec![d.id(51).style(7), d.id(50).atom(20.0)]),
-        ("Q\nA", vec![d.id(50).atom(20.0), d.id(51).style(7)]),
-        ("Q\n", vec![d.id(50).atom(20.0), d.id(51)]),
-        ("A\nQ\nB", vec![d.id(51), d.id(50).atom(20.0), d.id(52)]),
-        ("A\nB\n", vec![d.id(51).style(7).align(ParagraphAlign::Center), d.id(52).style(8), d.id(53)]),
-        ("A\nB", vec![d.id(51).style(7).align(ParagraphAlign::Center), d.id(52).style(8)]),
-        ("A", vec![d.id(51).style(7).align(ParagraphAlign::Center)]),
-    ];
     let mut fails = Vec::new();
     for (doc, e) in docs() {
         if doc.starts_with("noattrs") { continue; }
         let n = e.text.len();
         let labels: Vec<String> = e.text.split('\n').enumerate().filter(|(i, _)| e.paragraph(*i).atom.is_some()).map(|(_, t)| t.to_string()).chain(["Q".to_string()]).collect();
+        // The field's atoms, with their lines.
+        let mut at = 0;
+        let atoms: Vec<(std::ops::Range<usize>, ParagraphAttrs, Block)> = e.text.split('\n').enumerate().filter_map(|(i, t)| {
+            let r = at..at + t.len();
+            at += t.len() + 1;
+            e.paragraph(i).atom.map(|_| (r, e.paragraph(i), e.blocks()[i]))
+        }).collect();
         for a in 0..=n { for b in a..=n {
-            for (ft, fa) in &frags {
-                let mut f = TextEdit::from_parts(*ft, vec![], vec![]);
+            for (ft, fa, fm) in fragments() {
+                let mut f = TextEdit::from_parts(ft, fm, vec![]);
                 f.set_paragraph_attrs(fa.clone());
-                let p: Path = ("frag", |_, _| {});
-                let _ = p;
+                let frag_atoms = fa.iter().filter(|a| a.atom.is_some()).count();
                 let orig: Vec<u64> = e.paragraph_attrs().iter().map(|a| a.id).collect();
                 let mut x = e.clone();
                 x.set_selection(a, b);
                 let before = seen(&x);
                 x.paste_fragment(f.clone(), "");
                 let ch = x.take_changes();
-                if let Err(w) = check(&before, &x, &ch) { fails.push(format!("{doc} {a}..{b} {ft:?}: report {w}")); }
+                let why = |m: String| format!("{doc} {a}..{b} {ft:?}: {m}");
+                if let Err(w) = check(&before, &x, &ch) { fails.push(why(format!("report {w}"))); }
                 let ids: Vec<u64> = x.paragraph_attrs().iter().map(|a| a.id).collect();
                 let mut u = ids.clone(); u.sort(); u.dedup();
-                if u.len() != ids.len() { fails.push(format!("{doc} {a}..{b} {ft:?}: dup ids {ids:?}")); }
-                for (i, t) in x.text.split('\n').enumerate() {
-                    let at = x.paragraph(i);
-                    if at.atom.is_some() && !labels.iter().any(|l| l == t) { fails.push(format!("{doc} {a}..{b} {ft:?}: atom line {i} holds {t:?} {:?}", rows(&x, &orig))); }
-                    if at.atom.is_none() && at.id != 0 && e.paragraph_attrs().iter().any(|o| o.atom.is_some() && o.id == at.id) { fails.push(format!("{doc} {a}..{b} {ft:?}: text line {i} has atom id")); }
-                    if at.atom.is_some() && at.id == 50 { fails.push(format!("{doc} {a}..{b} {ft:?}: pasted atom kept fragment id")); }
+                if u.len() != ids.len() { fails.push(why(format!("dup ids {ids:?}"))); }
+                // A field's atom the selection leaves alone stays, with its attributes and block;
+                // a fragment's atoms are atoms of their own, under ids of their own.
+                let survivors: Vec<_> = atoms.iter().filter(|(r, ..)| !(a < r.end && b > r.start)).collect();
+                let lines: Vec<(&str, ParagraphAttrs, Block)> = x.text.split('\n').enumerate().map(|(i, t)| (t, x.paragraph(i), x.blocks()[i])).collect();
+                let now = lines.iter().filter(|l| l.1.atom.is_some()).count();
+                if now != survivors.len() + frag_atoms { fails.push(why(format!("{now} atoms, want {} and {frag_atoms}: {:?}", survivors.len(), rows(&x, &orig)))); }
+                for (_, attrs, block) in survivors {
+                    if !lines.iter().any(|l| l.1 == *attrs && l.2 == *block) { fails.push(why(format!("atom {} lost its attributes or block: {:?}", attrs.id, rows(&x, &orig)))); }
+                }
+                for (i, (t, at, _)) in lines.iter().enumerate() {
+                    if at.atom.is_some() && !labels.iter().any(|l| l == t) { fails.push(why(format!("atom line {i} holds {t:?} {:?}", rows(&x, &orig)))); }
+                    if at.atom.is_none() && at.id != 0 && e.paragraph_attrs().iter().any(|o| o.atom.is_some() && o.id == at.id) { fails.push(why(format!("text line {i} has atom id"))); }
+                    if at.atom == Some(20.0) && (at.id == 50 || orig.contains(&at.id)) { fails.push(why(format!("pasted atom {i} has id {}", at.id))); }
                 }
                 let mut y = e.clone();
                 y.set_history(true);
@@ -165,11 +188,12 @@ fn a_pasted_fragment_with_atoms_keeps_atoms_whole_and_ids_unique() {
                 y.paste_fragment(f, "");
                 let done = (y.text.clone(), y.paragraph_attrs().to_vec(), y.blocks().to_vec());
                 y.undo();
-                if (y.text.clone(), y.paragraph_attrs().to_vec(), y.blocks().to_vec()) != st { fails.push(format!("{doc} {a}..{b} {ft:?}: undo")); }
+                if (y.text.clone(), y.paragraph_attrs().to_vec(), y.blocks().to_vec()) != st { fails.push(why("undo".into())); }
                 y.redo();
-                if (y.text.clone(), y.paragraph_attrs().to_vec(), y.blocks().to_vec()) != done { fails.push(format!("{doc} {a}..{b} {ft:?}: redo")); }
+                if (y.text.clone(), y.paragraph_attrs().to_vec(), y.blocks().to_vec()) != done { fails.push(why("redo".into())); }
             }
         }}
     }
-    assert!(fails.is_empty(), "{} failures:\n{}", fails.len(), fails.join("\n"));
+    let shown: Vec<&String> = fails.iter().take(40).collect();
+    assert!(fails.is_empty(), "{} failures, the first {}:\n{}", fails.len(), shown.len(), shown.iter().map(|s| s.as_str()).collect::<Vec<_>>().join("\n"));
 }

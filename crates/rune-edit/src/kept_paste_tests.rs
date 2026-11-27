@@ -882,3 +882,15 @@ fn text_with_a_break_from_the_middle_of_a_line_to_the_middle_of_a_later_one_ends
         assert_eq!((lines(&e), e.blocks().to_vec()), (vec!["top", "XA", "Bnd"], blocks.to_vec()), "{name}");
     }
 }
+
+#[test]
+fn text_over_the_break_behind_an_atom_leaves_the_next_paragraph_its_block() {
+    let atom = row("Tabelle", 2, 2, 0.0, Some(40.0), Block::Paragraph);
+    for sel in [(11, 12), (11, 13)] {
+        let tail = if sel.1 == 12 { "xend" } else { "xnd" };
+        for (name, edit) in ONE {
+            let got = leaves(atom_between(), sel, name, edit);
+            assert_eq!(got, vec![aaa(), atom.clone(), row(tail, 3, 3, 0.0, None, bullet())], "{name} over {sel:?}");
+        }
+    }
+}
